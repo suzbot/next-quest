@@ -139,3 +139,51 @@ None. Vanilla HTML/CSS/JS.
 | Error handling UI (toasts, alerts) | Bare-text phase, console errors sufficient |
 | Offline/sync | Local-only app, always "offline" |
 | Performance optimization | List will be <100 items, no optimization needed |
+
+---
+
+## Implementation Steps
+
+Each step is a vertical slice — buildable, testable, and committable on its own.
+
+### Step 1: Add and See Quests [COMPLETE]
+
+**Requirements covered:**
+- Quest properties: title, cycle *(req: Quest Properties)*
+- Add quest with defaults *(req: Actions > Add quest)*
+- View quest list ordered by sort order *(req: Quest List View)*
+- Display title and cycle per quest *(req: Quest List View > show)*
+- Data persists across restarts *(req: implicit — it's a real app)*
+- Monospace font *(req: Visual Design)*
+
+**What was built:**
+- SQLite schema (quest + quest_completion tables)
+- `get_quests` and `add_quest` backend commands
+- Frontend list rendering and add form
+- Tests for data layer + config validation
+
+### Step 2: Complete Quests
+
+**Requirements covered:**
+- Mark done button *(req: Actions > Mark done)*
+- Completion records created with timestamp *(req: Actions > Mark done)*
+- Multiple completions per day allowed *(req: Behaviors > Multiple completions)*
+- Last completed date/time displayed *(req: Quest List View > show)*
+- Visual states: due/refreshed, recently completed, completed one-off *(req: Quest List View > Visual states)*
+- Cycle refresh logic *(req: Behaviors > Cycle refresh)*
+- One-off quests show strikethrough on completion *(req: Quest List View > Visual states)*
+- Recurring quests move to bottom on completion *(req: Actions > Mark done)*
+
+### Step 3: Edit and Delete Quests
+
+**Requirements covered:**
+- Edit quest title, cycle *(req: Actions > Edit quest)*
+- Delete quest *(req: Actions > Delete quest)*
+- Inline edit mode with keyboard support *(req: Interaction Requirements)*
+
+### Step 4: Reorder Quests
+
+**Requirements covered:**
+- Re-sequence via keyboard (Alt+Up/Down) *(req: Actions > Re-sequence, Interaction Requirements)*
+- Drag-and-drop reordering *(req: Actions > Re-sequence)*
+- Full keyboard navigation for all actions *(req: Interaction Requirements)*

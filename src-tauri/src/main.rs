@@ -25,6 +25,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::get_quests,
             commands::add_quest,
+            commands::complete_quest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

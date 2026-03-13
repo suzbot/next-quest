@@ -21,3 +21,12 @@ pub fn add_quest(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::add_quest(&conn, title, cycle_days)
 }
+
+#[tauri::command]
+pub fn complete_quest(
+    state: State<DbState>,
+    quest_id: String,
+) -> Result<db::Quest, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::complete_quest(&conn, quest_id)
+}

@@ -61,7 +61,7 @@
       color: #888;
     }
 
-    #add-form button {
+    button {
       background: #16213e;
       border: 1px solid #444;
       color: #c8c8c8;
@@ -71,8 +71,8 @@
       cursor: pointer;
     }
 
-    #add-form button:hover,
-    #add-form button:focus {
+    button:hover,
+    button:focus {
       border-color: #888;
       color: #fff;
       outline: none;
@@ -92,18 +92,38 @@
       padding: 6px 8px;
       border-bottom: 1px solid #222;
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 8px;
     }
 
     .quest-title {
       flex: 1;
     }
 
-    .quest-cycle {
-      color: #666;
+    .quest-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-size: 12px;
-      margin-left: 12px;
+      color: #666;
+    }
+
+    /* Visual states */
+    .quest-due .quest-title {
+      color: #e0e0e0;
+    }
+
+    .quest-completed .quest-title {
+      color: #555;
+    }
+
+    .quest-done-oneoff .quest-title {
+      text-decoration: line-through;
+      color: #555;
+    }
+
+    .quest-done-oneoff button {
+      visibility: hidden;
     }
 
     .empty-state {
@@ -151,12 +171,36 @@
           const cycleText = q.cycle_days
             ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
             : "One-off";
-          return `<li class="quest-item">
+
+          // Determine visual state class
+          let stateClass;
+          if (!q.active && q.cycle_days === null) {
+            stateClass = "quest-done-oneoff";
+          } else if (q.is_due) {
+            stateClass = "quest-due";
+          } else {
+            stateClass = "quest-completed";
+          }
+
+          const lastDone = q.last_completed
+            ? formatTimestamp(q.last_completed)
+            : "";
+
+          return `<li class="quest-item ${stateClass}" data-id="${q.id}">
+            <button class="done-btn" onclick="completeQuest('${q.id}')">[Done]</button>
             <span class="quest-title">${escapeHtml(q.title)}</span>
-            <span class="quest-cycle">${cycleText}</span>
+            <span class="quest-meta">
+              <span class="quest-cycle">${cycleText}</span>
+              ${lastDone ? `<span class="quest-last-done">${lastDone}</span>` : ""}
+            </span>
           </li>`;
         })
         .join("");
+    }
+
+    async function completeQuest(id) {
+      await invoke("complete_quest", { questId: id });
+      await loadQuests();
     }
 
     addForm.addEventListener("submit", async (e) => {
@@ -172,6 +216,15 @@
       titleInput.focus();
       await loadQuests();
     });
+
+    function formatTimestamp(iso) {
+      const d = new Date(iso);
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const hours = String(d.getHours()).padStart(2, "0");
+      const mins = String(d.getMinutes()).padStart(2, "0");
+      return `${month}/${day} ${hours}:${mins}`;
+    }
 
     function escapeHtml(str) {
       const div = document.createElement("div");

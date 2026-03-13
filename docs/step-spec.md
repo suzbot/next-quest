@@ -1,43 +1,44 @@
-# Step Spec: Phase 0, Step 1 — "Add and See Quests"
+# Step Spec: Phase 0, Step 2 — "Complete Quests"
 
 ## Goal
 
-Add quests and see them in a list. The most basic proof that the app
-stores and displays data.
+Mark quests as done, see when they were last completed, and see visual
+distinction between quests that are due vs. recently completed vs. finished.
 
 ## Scope
 
 **Backend:**
-- Initialize SQLite database on app launch (create file + tables if they don't exist)
-- Implement `add_quest` command (title, cycle_days) → creates quest, returns it
-- Implement `get_quests` command → returns all active quests ordered by sort_order desc
+- Implement `complete_quest` command (quest_id) → creates a quest_completion record, returns updated quest
+- If the quest is one-off (cycle_days is null), set `active = 0` on completion
+- Update `get_quests` to return completed one-offs (active = 0) alongside active quests
+- Update `get_quests` to include `last_completed` (most recent completion timestamp) and `is_due` (computed from cycle) in the returned data
 
 **Frontend:**
-- Quest list: renders quests returned by `get_quests`
-- Each quest shows: title, cycle ("Every N days" or "One-off")
-- Add quest form: text input for title, input for cycle_days, submit button
-- Cycle defaults to recurring / 1 day. User can set to 0 or blank for one-off.
-- On add: calls `add_quest`, re-fetches and re-renders list
-- Keyboard: Tab between form fields and submit. Enter to submit.
-- All text rendered in a monospace font.
+- Add a "Done" button (or key) on each quest
+- Display last completed date/time per quest (if ever completed)
+- Three visual states via text styling:
+  - **Due/refreshed**: normal/emphasized text — cycle elapsed or never completed
+  - **Recently completed**: muted/de-emphasized text — recurring quest, cycle not yet elapsed
+  - **Completed one-off**: strikethrough text — stays visible as accomplishment
+- On completing a recurring quest: it moves to the bottom of the list
+- Keyboard: Enter or a key on a focused quest marks it done
 
 ## NOT in this step
 
-- Mark done / completion tracking
 - Edit quest
 - Delete quest
 - Reorder / drag-and-drop
-- Visual states (due/de-emphasized/strikethrough)
-- Last completed display
+- Keyboard navigation between quests (Tab through list items — Step 4)
 
 ## Done When
 
-- App launches and shows an empty list
-- You can type a quest name, set a cycle, and hit submit
-- The quest appears in the list
-- Quests survive closing and reopening the app (persisted to SQLite)
+- You can mark a quest as done and see the "Last Done" timestamp update
+- Completing a recurring quest de-emphasizes it and moves it to the bottom
+- Completing a one-off quest shows it with strikethrough
+- A recurring quest returns to emphasized style after its cycle elapses
+- Completing a quest multiple times in a day works and updates the timestamp each time
+- Tests cover: completion recording, one-off deactivation, is_due calculation, last_completed derivation
 
 ## Next Step Preview
 
-Step 2: "Complete Quests" — mark done button, completion records, last-done
-display, visual states.
+Step 3: "Edit and Delete" — inline editing of quest properties, delete with confirmation.

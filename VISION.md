@@ -128,6 +128,7 @@ The smallest new thing that's already useful:
 ## Phase 2: "Level Up"
 
 - Graphics
+- Quest completion feedback — visual/animated reaction when marking a quest done (flash, sound, XP popup, etc.)
 - More quest attributes and logic
 - Smarter quest giving
 - Sagas for bigger goals
