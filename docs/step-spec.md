@@ -1,63 +1,85 @@
-# Step Spec: Phase 0.5, Step 1 — "Schema, Seeds, and Difficulty"
+# Step Spec: Phase 0.5, Step 4 — "Character View"
 
 ## Goal
 
-Lay the foundation for character progression. Create all new tables, seed
-default character/attributes/skills on first launch, and add difficulty to
-quests.
+Give the player a place to see what all that quest-completing has earned them.
+A second page showing character level, attributes, and skills — plus the
+ability to rename the character and reset all XP for testing.
 
 ## Scope
 
-**Schema:**
-- Create `character` table (id, name, xp)
-- Create `attribute` table (id, name, sort_order, xp)
-- Create `skill` table (id, name, attribute_id, sort_order, xp)
-- Create `quest_skill` join table (quest_id, skill_id)
-- Create `quest_attribute` join table (quest_id, attribute_id)
-- Add `difficulty` column to `quest` (TEXT NOT NULL DEFAULT 'easy')
-- Add `xp_earned` column to `quest_completion` (INTEGER NOT NULL DEFAULT 0)
+**Navigation:**
+- Two buttons at the top of the page: `[Quests]` and `[Character]`
+- Toggles between two container divs. No routing, no URL changes.
+- Quests view is the default. Character view loads its data when shown.
 
-**Seed data (runs once, when character table is empty):**
-- One character: "Adventurer", 0 XP
-- 5 attributes: Health, Pluck, Knowledge, Connection, Responsibility
-- 12 skills with attribute mappings (see mechanics.md)
+**Character view layout (text-based, monospace):**
+```
+[Quests] [Character]
 
-**Backend commands:**
-- `get_character` → returns character name, xp, level, xp_for_current_level,
-  xp_into_current_level
-- `update_character(name)` → updates character name, returns updated character
-- `get_attributes` → returns all attributes with xp and level info
-- `get_skills` → returns all skills with xp, level info, and attribute_id
-- `level_from_xp(xp, scale)` → pure function, Fibonacci curve lookup.
-  Three scales: character (seeds 300/500), attribute (60/100), skill (30/50).
+ADVENTURER                Level 1 (0/300 XP)
+                          [Rename] [Reset]
 
-**Frontend:**
-- Add difficulty dropdown to quest add form (default: Easy)
-- Add difficulty dropdown to quest edit form
-- Show difficulty label on quest rows
-- Migration for existing quests: all get difficulty 'easy'
+ATTRIBUTES
+  Health              Lv 1   (0/60 XP)
+  Pluck               Lv 1   (0/60 XP)
+  Knowledge           Lv 1   (0/60 XP)
+  Connection          Lv 1   (0/60 XP)
+  Responsibility      Lv 1   (0/60 XP)
+
+SKILLS                                    ATTRIBUTE
+  Cooking             Lv 1   (0/30 XP)    Health
+  Healing             Lv 1   (0/30 XP)    Health
+  Acrobatics          Lv 1   (0/30 XP)    Health
+  Cleaning            Lv 1   (0/30 XP)    Pluck
+  ...
+```
+
+**Character name editing:**
+- Clicking `[Rename]` replaces the name with a text input + `[Save]` button
+- Enter saves, Escape cancels
+- Calls `update_character`
+
+**Reset buttons (temporary dev/testing tools):**
+- Placed below the character view content
+- Three buttons: `[Reset Char]` `[Reset Quests]` `[Reset History]`
+- Each button has a two-click "Sure?" confirmation: first click changes label
+  to `[Sure?]`, second click executes, timeout reverts after ~2 seconds
+- `Reset Char` — zeroes XP on character, all attributes, and all skills
+- `Reset Quests` — deletes all quests (and their link rows)
+- `Reset History` — deletes all completion records
+
+**Backend:**
+- New command: `reset_character` → zeroes all XP
+- New command: `reset_quests` → deletes all quests, quest_skill, quest_attribute rows
+- New command: `reset_completions` → deletes all quest_completion rows
+- All other commands already exist from Steps 1-3
+
+**Frontend data flow:**
+- Switching to character view calls `get_character`, `get_attributes`,
+  `get_skills` and renders the display
+- Attribute names are cached and used to label skills' mapped attributes
 
 ## NOT in this step
 
-- Quest-to-skill/attribute links (Step 2)
-- XP calculation or distribution on completion (Step 3)
-- Character view page (Step 4)
-- Navigation between pages (Step 4)
+- XP tuning (post-Phase 0.5)
+- Visual polish, pixel fonts, progress bars (Phase 2)
+- Add/rename/remove attributes or skills (Phase 2)
 
 ## Done When
 
-- App launches with character, attributes, and skills seeded in the database
-- `get_character` returns level info derived from XP
-- `get_attributes` and `get_skills` return all defaults with level info
-- `update_character` changes the name
-- `level_from_xp` correctly computes levels at all three scales
-- Quest add/edit shows difficulty dropdown, default Easy
-- Existing quests gain difficulty 'easy' via migration
-- Quest rows display difficulty
-- Tests cover: seed data, level curve at all three scales, difficulty migration,
-  character CRUD
+- Navigation buttons switch between quests and character views
+- Character view displays name, level, XP progress
+- All 5 attributes shown with level and XP progress
+- All 12 skills shown with level, XP progress, and mapped attribute name
+- Character name is editable via rename flow
+- Reset Char zeroes all XP
+- Reset Quests deletes all quests and links
+- Reset History deletes all completions
+- All three reset buttons have "Sure?" confirmation
+- This completes Phase 0.5
 
-## Next Step Preview
+## Phase 0.5 Complete When This Step Ships
 
-Step 2: "Quest Links" — link quests to skills and attributes, with UI for
-selecting links during add/edit.
+After this step, all four Phase 0.5 features are in place:
+schema/seeds/difficulty, quest links, XP engine, and character view.

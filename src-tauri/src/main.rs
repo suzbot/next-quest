@@ -31,6 +31,15 @@ fn main() {
             commands::delete_quest,
             commands::delete_completion,
             commands::reorder_quests,
+            commands::get_character,
+            commands::update_character,
+            commands::get_attributes,
+            commands::get_skills,
+            commands::get_quest_links,
+            commands::set_quest_links,
+            commands::reset_character,
+            commands::reset_quests,
+            commands::reset_completions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

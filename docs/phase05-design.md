@@ -251,4 +251,5 @@ Each step is a vertical slice — buildable, testable, and committable on its ow
 - Navigation buttons (Quests / Character)
 - Character view page with all progression data
 - Character name editing
+- Character reset button (zeroes all XP on character, attributes, and skills — for clearing test data during development)
 - Tests for level_from_xp at all three scales

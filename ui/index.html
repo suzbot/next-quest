@@ -212,9 +212,185 @@
     body.is-dragging { -webkit-user-select: none; user-select: none; }
     .quest-item.drop-above { border-top: 2px solid #888; }
     .quest-item.drop-below { border-bottom: 2px solid #888; }
+
+    .link-tags-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 4px 0;
+      align-items: center;
+    }
+
+    .link-tags-row .link-group-label {
+      font-size: 11px;
+      color: #666;
+      margin-right: 2px;
+    }
+
+    .link-tags-row .link-separator {
+      width: 8px;
+    }
+
+    .link-tag {
+      font-family: inherit;
+      font-size: 11px;
+      padding: 2px 6px;
+      background: #16213e;
+      border: 1px solid #333;
+      color: #555;
+      cursor: pointer;
+    }
+
+    .link-tag.selected {
+      border-color: #888;
+      color: #e0e0e0;
+      background: #1a3a5c;
+    }
+
+    .link-tag:hover {
+      border-color: #666;
+      color: #aaa;
+    }
+
+    #add-links-row {
+      margin-bottom: 12px;
+      padding: 0 0 0 0;
+    }
+
+    .quest-links {
+      font-size: 11px;
+      color: #557;
+    }
+
+    .quest-edit-links {
+      padding: 2px 8px 6px 8px;
+      border-bottom: 1px solid #222;
+    }
+
+    .completion-xp {
+      font-size: 11px;
+      color: #5a8a5a;
+    }
+
+    .xp-flash {
+      font-size: 12px;
+      color: #5a8a5a;
+      margin-left: 4px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .nav button {
+      padding: 4px 12px;
+      font-size: 13px;
+    }
+
+    .nav button.active {
+      border-color: #888;
+      color: #fff;
+    }
+
+    #character-view {
+      font-size: 14px;
+    }
+
+    .char-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .char-name {
+      font-size: 18px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      color: #e0e0e0;
+    }
+
+    .char-level {
+      color: #888;
+      font-size: 13px;
+    }
+
+    .char-rename-input {
+      background: #16213e;
+      border: 1px solid #666;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 16px;
+      padding: 4px 8px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+    }
+
+    .char-section {
+      margin-bottom: 16px;
+    }
+
+    .char-row {
+      display: flex;
+      padding: 3px 8px;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .char-row-name {
+      width: 160px;
+      color: #c8c8c8;
+    }
+
+    .char-row-level {
+      width: 50px;
+      color: #888;
+    }
+
+    .char-row-xp {
+      width: 120px;
+      color: #666;
+    }
+
+    .char-row-attr {
+      color: #557;
+      font-size: 12px;
+    }
+
+    .reset-section {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid #222;
+      display: flex;
+      gap: 8px;
+    }
+
+    .reset-section button {
+      font-size: 12px;
+      color: #666;
+      border-color: #333;
+    }
+
+    .reset-section button:hover {
+      color: #c88;
+      border-color: #844;
+    }
+
+    .reset-section button.confirm {
+      color: #c44;
+      border-color: #a33;
+    }
   </style>
 </head>
 <body>
+  <div class="nav">
+    <button id="nav-quests" class="active" onclick="showView('quests')">[Quests]</button>
+    <button id="nav-character" onclick="showView('character')">[Character]</button>
+  </div>
+
+  <div id="quests-view">
   <h1>Next Quest</h1>
 
   <form id="add-form">
@@ -227,13 +403,33 @@
       Days
       <input type="number" id="quest-cycle" value="1" min="1">
     </label>
+    <select id="quest-difficulty">
+      <option value="trivial">Trivial</option>
+      <option value="easy" selected>Easy</option>
+      <option value="moderate">Moderate</option>
+      <option value="challenging">Challenging</option>
+      <option value="epic">Epic</option>
+    </select>
+    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">[Links]</button>
     <button type="submit">Add</button>
   </form>
+
+  <div id="add-links-row" class="hidden"></div>
 
   <ul id="quest-list"></ul>
 
   <h2>Completed</h2>
   <ul id="completion-list"></ul>
+  </div>
+
+  <div id="character-view" class="hidden">
+    <div id="char-content"></div>
+    <div class="reset-section">
+      <button onclick="resetWithConfirm(this, 'reset_character', loadCharacterView)">[Reset Char]</button>
+      <button onclick="resetWithConfirm(this, 'reset_quests', loadAll)">[Reset Quests]</button>
+      <button onclick="resetWithConfirm(this, 'reset_completions', loadAll)">[Reset History]</button>
+    </div>
+  </div>
 
   <script>
     const { invoke } = window.__TAURI__.core;
@@ -245,22 +441,89 @@
     const typeSelect = document.getElementById("quest-type");
     const cycleInput = document.getElementById("quest-cycle");
     const cycleLabel = document.getElementById("cycle-label");
+    const difficultySelect = document.getElementById("quest-difficulty");
+    const addLinksRow = document.getElementById("add-links-row");
 
     let editingId = null;
     let cachedQuests = [];
     let draggedId = null;
+    let cachedSkills = [];
+    let cachedAttributes = [];
+    let skillNameMap = {};
+    let attrNameMap = {};
 
     function toggleCycleInput() {
       cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
     }
 
+    function toggleAddLinks() {
+      addLinksRow.classList.toggle("hidden");
+    }
+
+    function renderAddLinkTags() {
+      addLinksRow.innerHTML = renderLinkTagsHtml("add", [], []);
+    }
+
+    function renderLinkTagsHtml(prefix, selectedSkillIds, selectedAttrIds) {
+      const skillTags = cachedSkills.map(s => {
+        const sel = selectedSkillIds.includes(s.id) ? "selected" : "";
+        return `<button type="button" class="link-tag ${sel}"
+                  data-id="${s.id}" data-kind="skill"
+                  onclick="toggleLinkTag(this)">${escapeHtml(s.name)}</button>`;
+      }).join("");
+
+      const attrTags = cachedAttributes.map(a => {
+        const sel = selectedAttrIds.includes(a.id) ? "selected" : "";
+        return `<button type="button" class="link-tag ${sel}"
+                  data-id="${a.id}" data-kind="attr"
+                  onclick="toggleLinkTag(this)">${escapeHtml(a.name)}</button>`;
+      }).join("");
+
+      return `<div class="link-tags-row">
+        <span class="link-group-label">Skills</span>${skillTags}
+        <span class="link-separator"></span>
+        <span class="link-group-label">Attrs</span>${attrTags}
+      </div>`;
+    }
+
+    function toggleLinkTag(btn) {
+      btn.classList.toggle("selected");
+    }
+
+    function getSelectedLinkIds(container) {
+      const skillIds = [];
+      const attributeIds = [];
+      container.querySelectorAll(".link-tag.selected").forEach(btn => {
+        if (btn.dataset.kind === "skill") skillIds.push(btn.dataset.id);
+        else attributeIds.push(btn.dataset.id);
+      });
+      return { skillIds, attributeIds };
+    }
+
+    function linkNamesText(q) {
+      const names = [];
+      q.skill_ids.forEach(id => { if (skillNameMap[id]) names.push(skillNameMap[id]); });
+      q.attribute_ids.forEach(id => { if (attrNameMap[id]) names.push(attrNameMap[id]); });
+      return names.join(", ");
+    }
+
     async function loadAll() {
-      const [quests, completions] = await Promise.all([
-        invoke("get_quests"),
-        invoke("get_completions"),
-      ]);
-      renderQuests(quests);
-      renderCompletions(completions);
+      const fetches = [invoke("get_quests"), invoke("get_completions")];
+      if (cachedSkills.length === 0) {
+        fetches.push(invoke("get_skills"), invoke("get_attributes"));
+      }
+      const results = await Promise.all(fetches);
+      if (results.length === 4) {
+        cachedSkills = results[2];
+        cachedAttributes = results[3];
+        skillNameMap = {};
+        attrNameMap = {};
+        cachedSkills.forEach(s => skillNameMap[s.id] = s.name);
+        cachedAttributes.forEach(a => attrNameMap[a.id] = a.name);
+        renderAddLinkTags();
+      }
+      renderQuests(results[0]);
+      renderCompletions(results[1]);
     }
 
     function renderQuests(quests) {
@@ -281,6 +544,10 @@
       }
     }
 
+    function difficultyLabel(d) {
+      return d.charAt(0).toUpperCase() + d.slice(1);
+    }
+
     function renderQuestRow(q) {
       const cycleText = q.quest_type === "recurring"
         ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
@@ -297,6 +564,9 @@
 
       const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
 
+      const links = linkNamesText(q);
+      const linksHtml = links ? `<span class="quest-links">${escapeHtml(links)}</span>` : "";
+
       const doneBtn = q.active
         ? `<button class="done-btn" onclick="completeQuest('${q.id}')">[Done]</button>`
         : "";
@@ -307,6 +577,8 @@
         ${doneBtn}
         <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
         <span class="quest-meta">
+          ${linksHtml}
+          <span>${difficultyLabel(q.difficulty)}</span>
           <span>${cycleText}</span>
           ${lastDone ? `<span>${lastDone}</span>` : ""}
         </span>
@@ -317,6 +589,7 @@
     function renderEditMode(q) {
       const isRecurring = q.quest_type === "recurring";
       const cycleVal = q.cycle_days || 1;
+      const diff = q.difficulty;
       return `<li class="quest-edit" data-id="${q.id}">
         <input type="text" id="edit-title" value="${escapeAttr(q.title)}"
                onkeydown="handleEditKey(event, '${q.id}')">
@@ -329,9 +602,19 @@
           <input type="number" id="edit-cycle" value="${cycleVal}" min="1"
                  onkeydown="handleEditKey(event, '${q.id}')">
         </label>
+        <select id="edit-difficulty" onkeydown="handleEditKey(event, '${q.id}')">
+          <option value="trivial" ${diff === "trivial" ? "selected" : ""}>Trivial</option>
+          <option value="easy" ${diff === "easy" ? "selected" : ""}>Easy</option>
+          <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Moderate</option>
+          <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Challenging</option>
+          <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
+        </select>
         <button onclick="saveEdit('${q.id}')">[Save]</button>
         <button onclick="cancelEdit()">[Esc]</button>
         <span class="edit-hint">Enter=save Esc=cancel</span>
+      </li>
+      <li class="quest-edit-links" id="edit-links-container">
+        ${renderLinkTagsHtml("edit", q.skill_ids || [], q.attribute_ids || [])}
       </li>`;
     }
 
@@ -348,11 +631,15 @@
       }
 
       completionList.innerHTML = completions
-        .map(c => `<li class="completion-item">
+        .map(c => {
+          const xpText = c.xp_earned > 0 ? `<span class="completion-xp">+${c.xp_earned} XP</span>` : "";
+          return `<li class="completion-item">
             <span class="completion-title">${escapeHtml(c.quest_title)}</span>
+            ${xpText}
             <span class="completion-time">${formatTimestamp(c.completed_at)}</span>
             <button onclick="deleteCompletion('${c.id}')">[Del]</button>
-          </li>`)
+          </li>`;
+        })
         .join("");
     }
 
@@ -406,20 +693,39 @@
       if (!title) return;
 
       const questType = document.getElementById("edit-type").value;
-      const params = { questId: id, title, questType };
+      const difficulty = document.getElementById("edit-difficulty").value;
+      const params = { questId: id, title, questType, difficulty };
 
       if (questType === "recurring") {
         params.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
       }
 
       await invoke("update_quest", params);
+
+      const linksContainer = document.getElementById("edit-links-container");
+      if (linksContainer) {
+        const { skillIds, attributeIds } = getSelectedLinkIds(linksContainer);
+        await invoke("set_quest_links", { questId: id, skillIds, attributeIds });
+      }
+
       editingId = null;
       await loadAll();
     }
 
     async function completeQuest(id) {
-      await invoke("complete_quest", { questId: id });
-      await loadAll();
+      const completion = await invoke("complete_quest", { questId: id });
+
+      if (completion.xp_earned > 0) {
+        const row = questList.querySelector(`[data-id="${id}"]`);
+        if (row) {
+          const flash = document.createElement("span");
+          flash.className = "xp-flash";
+          flash.textContent = `+${completion.xp_earned} XP`;
+          row.querySelector(".quest-title")?.after(flash);
+        }
+      }
+
+      setTimeout(() => loadAll(), 800);
     }
 
     async function deleteQuest(id, title) {
@@ -564,14 +870,23 @@
       if (!title) return;
 
       const questType = typeSelect.value;
-      const params = { title, questType };
+      const difficulty = difficultySelect.value;
+      const params = { title, questType, difficulty };
 
       if (questType === "recurring") {
         params.cycleDays = parseInt(cycleInput.value, 10) || 1;
       }
 
-      await invoke("add_quest", params);
+      const quest = await invoke("add_quest", params);
+
+      const { skillIds, attributeIds } = getSelectedLinkIds(addLinksRow);
+      if (skillIds.length > 0 || attributeIds.length > 0) {
+        await invoke("set_quest_links", { questId: quest.id, skillIds, attributeIds });
+      }
+
       titleInput.value = "";
+      addLinksRow.classList.add("hidden");
+      renderAddLinkTags();
       titleInput.focus();
       await loadAll();
     });
@@ -593,6 +908,132 @@
 
     function escapeAttr(str) {
       return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    // --- Navigation ---
+
+    const questsView = document.getElementById("quests-view");
+    const characterView = document.getElementById("character-view");
+    const charContent = document.getElementById("char-content");
+    let renamingChar = false;
+
+    function showView(view) {
+      document.getElementById("nav-quests").classList.toggle("active", view === "quests");
+      document.getElementById("nav-character").classList.toggle("active", view === "character");
+      questsView.classList.toggle("hidden", view !== "quests");
+      characterView.classList.toggle("hidden", view !== "character");
+      if (view === "character") loadCharacterView();
+    }
+
+    async function loadCharacterView() {
+      const [character, attributes, skills] = await Promise.all([
+        invoke("get_character"),
+        invoke("get_attributes"),
+        invoke("get_skills"),
+      ]);
+      renderCharacterView(character, attributes, skills);
+    }
+
+    function renderCharacterView(character, attributes, skills) {
+      const nameHtml = renamingChar
+        ? `<input type="text" class="char-rename-input" id="char-name-input"
+                  value="${escapeAttr(character.name)}"
+                  onkeydown="handleRenameKey(event)">
+           <button onclick="saveCharName()">[Save]</button>
+           <button onclick="cancelRename()">[Esc]</button>`
+        : `<span class="char-name">${escapeHtml(character.name)}</span>
+           <button onclick="startRename()">[Rename]</button>`;
+
+      const attrRows = attributes.map(a =>
+        `<div class="char-row">
+          <span class="char-row-name">${escapeHtml(a.name)}</span>
+          <span class="char-row-level">Lv ${a.level}</span>
+          <span class="char-row-xp">(${a.xp_into_current_level}/${a.xp_for_current_level} XP)</span>
+        </div>`
+      ).join("");
+
+      // Build attr ID → name map from the attributes array
+      const attrMap = {};
+      attributes.forEach(a => attrMap[a.id] = a.name);
+
+      const skillRows = skills.map(s =>
+        `<div class="char-row">
+          <span class="char-row-name">${escapeHtml(s.name)}</span>
+          <span class="char-row-level">Lv ${s.level}</span>
+          <span class="char-row-xp">(${s.xp_into_current_level}/${s.xp_for_current_level} XP)</span>
+          <span class="char-row-attr">${escapeHtml(attrMap[s.attribute_id] || "")}</span>
+        </div>`
+      ).join("");
+
+      charContent.innerHTML = `
+        <div class="char-header">
+          ${nameHtml}
+          <span class="char-level">Level ${character.level} (${character.xp_into_current_level}/${character.xp_for_current_level} XP)</span>
+        </div>
+        <div class="char-section">
+          <h2>Attributes</h2>
+          ${attrRows}
+        </div>
+        <div class="char-section">
+          <h2>Skills</h2>
+          ${skillRows}
+        </div>
+      `;
+
+      if (renamingChar) {
+        const input = document.getElementById("char-name-input");
+        if (input) { input.focus(); input.select(); }
+      }
+    }
+
+    function startRename() {
+      renamingChar = true;
+      loadCharacterView();
+    }
+
+    function cancelRename() {
+      renamingChar = false;
+      loadCharacterView();
+    }
+
+    function handleRenameKey(e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        saveCharName();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelRename();
+      }
+    }
+
+    async function saveCharName() {
+      const input = document.getElementById("char-name-input");
+      const name = input?.value.trim();
+      if (!name) return;
+      await invoke("update_character", { name });
+      renamingChar = false;
+      await loadCharacterView();
+    }
+
+    function resetWithConfirm(btn, command, callback) {
+      if (btn.dataset.confirming) {
+        btn.dataset.confirming = "";
+        invoke(command).then(() => callback());
+        btn.textContent = btn.dataset.original;
+        btn.classList.remove("confirm");
+        return;
+      }
+      btn.dataset.confirming = "true";
+      btn.dataset.original = btn.textContent;
+      btn.textContent = "[Sure?]";
+      btn.classList.add("confirm");
+      setTimeout(() => {
+        if (btn.dataset.confirming) {
+          btn.dataset.confirming = "";
+          btn.textContent = btn.dataset.original;
+          btn.classList.remove("confirm");
+        }
+      }, 2000);
     }
 
     loadAll();
