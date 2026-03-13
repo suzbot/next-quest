@@ -438,6 +438,13 @@
       margin-top: 8px;
       min-height: 20px;
     }
+
+    .qg-timer {
+      font-size: 32px;
+      color: #888;
+      margin-bottom: 24px;
+      letter-spacing: 2px;
+    }
   </style>
 </head>
 <body>
@@ -518,6 +525,12 @@
     let dueQuests = [];
     let nextQuestIndex = 0;
     let qgXpFlashTimeout = null;
+
+    // Break timer state
+    let timerQuestId = null;
+    let timerQuestTitle = null;
+    let timerStart = null;
+    let timerInterval = null;
 
     function toggleCycleInput() {
       cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
@@ -642,10 +655,15 @@
         ? `<button class="done-btn" onclick="completeQuest('${q.id}')">[Done]</button>`
         : "";
 
+      const questNowBtn = q.active
+        ? `<button onclick="listQuestNow('${q.id}', '${escapeAttr(q.title)}')">[Quest Now]</button>`
+        : "";
+
       return `<li class="quest-item ${stateClass}" data-id="${q.id}" tabindex="0"
                   onkeydown="handleQuestKey(event, '${q.id}', '${escapeAttr(q.title)}')"
                   onpointerdown="${q.active ? `onPointerDown(event, '${q.id}')` : ''}">
         ${doneBtn}
+        ${questNowBtn}
         <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
         <span class="quest-meta">
           ${linksHtml}
@@ -991,6 +1009,10 @@
     let renamingChar = false;
 
     function showView(view) {
+      // Navigating away from Quest Giver cancels any running timer
+      if (view !== "quest-giver" && timerInterval) {
+        cancelTimer();
+      }
       document.getElementById("nav-quest-giver").classList.toggle("active", view === "quest-giver");
       document.getElementById("nav-quests").classList.toggle("active", view === "quests");
       document.getElementById("nav-character").classList.toggle("active", view === "character");
@@ -1022,6 +1044,13 @@
     }
 
     function renderQuestGiver() {
+      // Timer mode
+      if (timerInterval) {
+        renderTimerMode();
+        return;
+      }
+
+      // Selection mode
       const quest = getQuestGiverQuest();
 
       if (cachedQuests.filter(q => q.active).length === 0) {
@@ -1038,10 +1067,75 @@
         <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
         <div class="qg-actions">
           <button onclick="qgDone('${quest.id}')">[Done]</button>
+          <button onclick="qgQuestNow('${quest.id}', '${escapeAttr(quest.title)}')">[Quest Now]</button>
           <button onclick="qgSomethingElse()">[Something Else]</button>
         </div>
         <div class="qg-xp-flash" id="qg-xp-flash"></div>
       `;
+    }
+
+    function renderTimerMode() {
+      const elapsed = Date.now() - timerStart;
+      qgContent.innerHTML = `
+        <div class="qg-quest-name">${escapeHtml(timerQuestTitle)}</div>
+        <div class="qg-timer">${formatTimer(elapsed)}</div>
+        <div class="qg-actions">
+          <button onclick="timerDone()">[Done]</button>
+          <button onclick="cancelTimer()">[Cancel]</button>
+        </div>
+        <div class="qg-xp-flash" id="qg-xp-flash"></div>
+      `;
+    }
+
+    function formatTimer(ms) {
+      const totalSecs = Math.floor(ms / 1000);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    function startTimer(questId, questTitle) {
+      timerQuestId = questId;
+      timerQuestTitle = questTitle;
+      timerStart = Date.now();
+      timerInterval = setInterval(() => {
+        if (!questGiverView.classList.contains("hidden")) {
+          renderTimerMode();
+        }
+      }, 1000);
+    }
+
+    function cancelTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+      timerQuestId = null;
+      timerQuestTitle = null;
+      timerStart = null;
+      timerInterval = null;
+    }
+
+    function qgQuestNow(questId, questTitle) {
+      startTimer(questId, questTitle);
+      renderQuestGiver();
+    }
+
+    async function timerDone() {
+      const questId = timerQuestId;
+      cancelTimer();
+      const completion = await invoke("complete_quest", { questId });
+
+      if (completion.xp_earned > 0) {
+        // Briefly show selection mode with XP flash
+        nextQuestIndex = 0;
+        await loadAll();
+        const flash = document.getElementById("qg-xp-flash");
+        if (flash) flash.textContent = `+${completion.xp_earned} XP`;
+        return;
+      }
+
+      nextQuestIndex = 0;
+      await loadAll();
     }
 
     async function qgDone(questId) {
@@ -1061,6 +1155,12 @@
         nextQuestIndex = (nextQuestIndex + 1) % dueQuests.length;
       }
       renderQuestGiver();
+    }
+
+    // Quest Now from list view
+    function listQuestNow(questId, questTitle) {
+      startTimer(questId, questTitle);
+      showView("quest-giver");
     }
 
     async function loadCharacterView() {

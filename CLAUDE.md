@@ -83,6 +83,7 @@ Do NOT skip steps or combine them without discussing it first. Do NOT draft docs
 | rusqlite 0.31 | Rust | SQLite database access (bundled) | Read/write quest data |
 | uuid 1 | Rust | Generate unique IDs (v4) | Quest and completion IDs |
 | dirs 6 | Rust | Platform data directory paths | Locate app data folder |
+| libc 0.2 | Rust | C standard library bindings | Local timezone conversion for quest due dates |
 
 ## Pacing & Breaks
 
