@@ -1,100 +1,108 @@
-# Step Spec: Phase 1, Step 2 — "Quest Now & Break Timer"
+# Step Spec: Phase 1, Step 3 — "Backend Foundations for Menu Bar"
 
 ## Goal
 
-Add the ability to commit to a quest and track time away. Pressing Quest Now
-starts a timer and puts the app in "go do it" mode. Done completes the quest,
-Cancel abandons it. Navigating away from the Quest Giver tab cancels the timer —
-the app is pushing you away from the screen, not inviting you to stay.
+Move timer state and quest selection logic into the Rust backend so that
+both the main window and the upcoming tray menu share one source of truth.
+Frontend migrates to use the new commands. No tray yet — this step is
+invisible to the user but sets up the architecture.
 
 ## Scope
 
-### Quest Giver View: Quest Now Button
+### New State: TimerState
 
-Add a `[Quest Now]` button to the selection mode, between Done and Something Else:
+In-memory state (not persisted to database) managed alongside DbState:
 
-```
-      Take a shower
-
-  [Done]  [Quest Now]  [Something Else]
-```
-
-### Quest Giver View: Timer Mode
-
-When Quest Now is pressed, the view switches to timer mode:
-
-```
-         QUEST GIVER
-
-    Take a shower
-
-        03:42
-
-    [Done]  [Cancel]
-```
-
-- Timer displays elapsed time as MM:SS (advances to H:MM:SS after 59:59)
-- **Done** — stops timer, completes quest, awards XP, shows XP flash,
-  returns to selection mode
-- **Cancel** — stops timer, no completion, returns to selection mode
-
-### Navigating Away Cancels Timer
-
-Clicking [Quests] or [Character] while a timer is running silently cancels
-the timer and returns the Quest Giver to selection mode. No confirmation
-prompt — the cost of an accidental cancel is trivially recoverable (just
-press Quest Now again).
-
-### Quest Now from List View
-
-Add a `[Quest Now]` button to each active quest row in the list view.
-
-Clicking it:
-1. Sets the timer quest to that quest
-2. Starts the timer
-3. Switches to the Quest Giver tab in timer mode
-
-### Timer Implementation
-
-Pure frontend. No backend changes, no persistence.
-
-```javascript
-let timerQuestId = null;      // quest being worked on (null = selection mode)
-let timerQuestTitle = null;   // cached title for display
-let timerStart = null;        // Date.now() when Quest Now pressed
-let timerInterval = null;     // setInterval handle
-```
-
-- `setInterval` at 1-second resolution
-- Closing the app loses the timer (acceptable for now)
-
-### Timer Display Format
-
-```javascript
-function formatTimer(ms) {
-  const totalSecs = Math.floor(ms / 1000);
-  const h = Math.floor(totalSecs / 3600);
-  const m = Math.floor((totalSecs % 3600) / 60);
-  const s = totalSecs % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+```rust
+pub struct TimerState {
+    pub quest_id: Option<String>,
+    pub quest_title: Option<String>,
+    pub started_at: Option<u64>,  // Unix millis
 }
 ```
 
+Wrapped in `Mutex<TimerState>` and managed by Tauri.
+
+### New Commands: Timer
+
+| Command | Params | Returns | Behavior |
+|---|---|---|---|
+| `start_timer` | `quest_id: String` | `TimerInfo` | Looks up quest title, sets timer state |
+| `cancel_timer` | — | `()` | Clears timer state |
+| `complete_timer` | — | `Completion` | Completes the timed quest, clears timer, returns completion |
+| `get_timer_state` | — | `TimerInfo` | Returns current timer state |
+
+`TimerInfo` struct returned to frontend:
+```rust
+pub struct TimerInfo {
+    pub active: bool,
+    pub quest_id: Option<String>,
+    pub quest_title: Option<String>,
+    pub started_at: Option<u64>,
+}
+```
+
+`complete_timer` calls `db::complete_quest` internally, then clears the
+timer. If no timer is active, returns an error.
+
+### New Command: Quest Selection
+
+```rust
+pub fn get_next_quest(skip_count: i32) -> Result<Option<Quest>, String>
+```
+
+Applies the selection logic currently in frontend JS:
+1. Get all active quests (via existing `get_quests`)
+2. Filter to due quests (`is_due == true`), in sort order
+3. Skip `skip_count` entries (for Something Else cycling), wrapping around
+4. If no due quests: fall back to the active quest completed longest ago
+5. Return the selected quest, or None if no quests exist
+
+`skip_count` is managed by the frontend (incremented on Something Else,
+reset to 0 on Done/load). This keeps the backend stateless for selection
+while centralizing the logic.
+
+### Frontend Migration
+
+**Quest Giver view** changes from filtering `cachedQuests` to calling
+`get_next_quest`:
+- `renderQuestGiver()` calls `invoke("get_next_quest", { skipCount: nextQuestIndex })`
+- Done: calls `invoke("complete_quest")`, resets `nextQuestIndex = 0`, reloads
+- Something Else: increments `nextQuestIndex`, re-renders
+- Quest Now: calls `invoke("start_timer", { questId })`, renders timer mode
+
+**Timer mode** changes:
+- `qgQuestNow()` → `invoke("start_timer", { questId })`
+- `timerDone()` → `invoke("complete_timer")` (combined stop + complete)
+- `cancelTimer()` → `invoke("cancel_timer")`
+- Timer display: frontend stores `startedAt` locally after starting,
+  computes elapsed from `Date.now() - startedAt`. No polling.
+
+**Quest Now from list** → same: calls `invoke("start_timer")`, switches tab.
+
+**Navigate away cancels** → calls `invoke("cancel_timer")` instead of
+clearing local state.
+
+### Timer Cancel on Tab Switch
+
+The existing behavior (navigating away from Quest Giver cancels the timer)
+now calls the backend `cancel_timer` command instead of clearing local JS
+state.
+
 ## NOT in this step
 
-- Timer persistence across app restarts
-- XP for time away
-- Menu bar / system tray (Group B)
-- Overlay interruption (Group C)
+- System tray icon and menu (Step 4)
+- Close-to-tray lifecycle (Step 4)
+- Event sync between tray and window (Step 4)
+- Call to Adventure overlay (Group C)
 
 ## Done When
 
-- Quest Now button appears in Quest Giver selection mode
-- Pressing Quest Now switches to timer mode with running clock
-- Done stops timer, completes quest, shows XP, returns to selection
-- Cancel stops timer, returns to selection without completing
-- Switching tabs while timer is running cancels the timer
-- Quest Now button appears on each active quest in the list view
-- Pressing Quest Now in the list switches to Quest Giver tab in timer mode
-- All existing tests pass, app builds and runs
+- `start_timer`, `cancel_timer`, `complete_timer`, `get_timer_state` commands work
+- `get_next_quest` command returns the correct quest based on skip_count
+- Frontend Quest Giver uses `get_next_quest` instead of local filtering
+- Frontend timer uses backend state instead of local JS state
+- Timer cancel on tab switch calls backend
+- Quest Now from list calls backend timer
+- All existing tests pass, new backend tests for selection and timer
+- App behavior is identical to before from the user's perspective

@@ -3,7 +3,7 @@
 mod commands;
 mod db;
 
-use commands::DbState;
+use commands::{AppTimerState, DbState, TimerStateInner};
 use std::sync::Mutex;
 
 fn main() {
@@ -22,6 +22,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(DbState(Mutex::new(conn)))
+        .manage(AppTimerState(Mutex::new(TimerStateInner::default())))
         .invoke_handler(tauri::generate_handler![
             commands::get_quests,
             commands::get_completions,
@@ -40,6 +41,11 @@ fn main() {
             commands::reset_character,
             commands::reset_quests,
             commands::reset_completions,
+            commands::get_next_quest,
+            commands::start_timer,
+            commands::cancel_timer,
+            commands::complete_timer,
+            commands::get_timer_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

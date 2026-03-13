@@ -65,7 +65,7 @@ pub enum LevelScale {
     Skill,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct Quest {
     pub id: String,
     pub title: String,
@@ -411,6 +411,32 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     }
 
     Ok(quests)
+}
+
+pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<Quest>, String> {
+    let quests = get_quests(conn)?;
+    let due: Vec<&Quest> = quests.iter().filter(|q| q.active && q.is_due).collect();
+
+    if !due.is_empty() {
+        let idx = (skip_count as usize) % due.len();
+        return Ok(Some(due[idx].clone()));
+    }
+
+    // Fallback: active quest completed longest ago
+    let mut active_with_completion: Vec<&Quest> = quests
+        .iter()
+        .filter(|q| q.active && q.last_completed.is_some())
+        .collect();
+
+    if active_with_completion.is_empty() {
+        return Ok(None);
+    }
+
+    active_with_completion.sort_by(|a, b| {
+        a.last_completed.as_deref().unwrap_or("").cmp(&b.last_completed.as_deref().unwrap_or(""))
+    });
+
+    Ok(Some(active_with_completion[0].clone()))
 }
 
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
@@ -1937,5 +1963,51 @@ mod tests {
             serde_json::Value::Bool(true),
             "withGlobalTauri must be true in tauri.conf.json — without it, the frontend cannot call backend commands"
         );
+    }
+
+    // --- Quest selection ---
+
+    #[test]
+    fn get_next_quest_returns_first_due() {
+        let conn = test_db();
+        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+
+        let next = get_next_quest(&conn, 0).unwrap().unwrap();
+        // sort_order DESC means higher sort_order first — Second was added last with higher sort_order
+        assert_eq!(next.title, "Second");
+    }
+
+    #[test]
+    fn get_next_quest_skip_cycles() {
+        let conn = test_db();
+        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+
+        let q0 = get_next_quest(&conn, 0).unwrap().unwrap();
+        let q1 = get_next_quest(&conn, 1).unwrap().unwrap();
+        assert_ne!(q0.id, q1.id);
+        // Wraps around
+        let q2 = get_next_quest(&conn, 2).unwrap().unwrap();
+        assert_eq!(q0.id, q2.id);
+    }
+
+    #[test]
+    fn get_next_quest_empty_db() {
+        let conn = test_db();
+        assert!(get_next_quest(&conn, 0).unwrap().is_none());
+    }
+
+    #[test]
+    fn get_next_quest_none_due_falls_back() {
+        let conn = test_db();
+        // Add a quest with a long cycle so it won't be due after completion
+        let q = add_quest(&conn, "Long cycle".into(), QuestType::Recurring, Some(999), Difficulty::Easy).unwrap();
+        complete_quest(&conn, q.id.clone()).unwrap();
+
+        // Not due, but should fall back to longest-ago-completed
+        let next = get_next_quest(&conn, 0).unwrap();
+        assert!(next.is_some());
+        assert_eq!(next.unwrap().id, q.id);
     }
 }

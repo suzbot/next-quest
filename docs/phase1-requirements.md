@@ -11,10 +11,10 @@ becomes: get interrupted → see one quest → act on it or skip it.
 
 - **Next Quest View** = the quest giver face. Shows one quest at a time with
   actions to take. This is what the app opens to, and what you land on when
-  an interruption brings you back.
+  a Call to Adventure brings you back.
 - **Quest Selection** = the logic that picks which quest to show. Simple and
   deterministic for now: due quests in list order, with fallbacks.
-- **Overlay Interruption** = an always-on-top visual notification that appears
+- **Overlay Call to Adventure** = an always-on-top visual notification that appears
   over whatever you're doing. A knock on the door — not a notification center
   entry you can ignore.
 - **Break Timer** = a simple timer that runs while you're away doing a quest.
@@ -85,18 +85,18 @@ dropdown panel.
 - Current/next quest name
 - Done / Quest Now / Something Else actions
 - Break timer status (when active)
-- Interruption on/off toggle
+- Call to Adventure on/off toggle
 - Link to open the full window
 
 **Full window** (opens from dropdown or overlay click):
 - Quest list view (existing)
 - Character view (existing)
 - Next Quest view
-- App settings (interruption interval)
+- App settings (Call to Adventure interval)
 
 ---
 
-## Overlay Interruption
+## Overlay Call to Adventure
 
 When the app determines a quest is available, it can interrupt the user with
 an always-on-top overlay — a visual knock on the door that appears over
@@ -136,7 +136,7 @@ A simple elapsed-time timer.
 | Smart quest selection (energy, time of day, difficulty weighting) | Phase 2 |
 | Quest details on the overlay itself | Later if needed |
 | Overlay sound/audio | Separate from peon-ping |
-| Snooze duration configuration per-interruption | Later if needed |
+| Snooze duration configuration per-overlay | Later if needed |
 | Multiple quest givers | Phase 2 |
 | Training / Patrolling / Battling modes | Phase 3 |
 
@@ -149,7 +149,7 @@ priority order. Exact step breakdown will happen in design/step specs.
 
 ### Group A: Quest Giver Core
 The new interaction model. Can be built and used within the existing window
-before any menu bar or interruption work.
+before any menu bar or Call to Adventure work.
 
 - Quest selection logic (due detection, list ordering, fallback, wrap-around)
 - Local midnight reset for cycle due dates
@@ -168,10 +168,10 @@ functional.
 - System tray icon and dropdown panel
 - Mirror Next Quest actions in the dropdown
 - Break timer status in dropdown
-- Interruption toggle in dropdown
+- Call to Adventure toggle in dropdown
 - Open full window from dropdown
 
-### Group C: Overlay Interruption
+### Group C: Overlay Call to Adventure
 The interrupt system that reaches out to the user. Depends on Group B for
 the menu bar toggle, but could be built in parallel with a temporary toggle.
 

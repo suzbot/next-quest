@@ -1,10 +1,28 @@
 use rusqlite::Connection;
+use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
 
 use crate::db;
 
 pub struct DbState(pub Mutex<Connection>);
+
+#[derive(Default)]
+pub struct TimerStateInner {
+    pub quest_id: Option<String>,
+    pub quest_title: Option<String>,
+    pub started_at: Option<u64>,
+}
+
+pub struct AppTimerState(pub Mutex<TimerStateInner>);
+
+#[derive(Serialize)]
+pub struct TimerInfo {
+    pub active: bool,
+    pub quest_id: Option<String>,
+    pub quest_title: Option<String>,
+    pub started_at: Option<u64>,
+}
 
 #[tauri::command]
 pub fn get_quests(state: State<DbState>) -> Result<Vec<db::Quest>, String> {
@@ -142,4 +160,96 @@ pub fn reset_quests(state: State<DbState>) -> Result<(), String> {
 pub fn reset_completions(state: State<DbState>) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::reset_completions(&conn)
+}
+
+// --- Quest Selection ---
+
+#[tauri::command]
+pub fn get_next_quest(
+    state: State<DbState>,
+    skip_count: i32,
+) -> Result<Option<db::Quest>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_next_quest(&conn, skip_count)
+}
+
+// --- Timer ---
+
+#[tauri::command]
+pub fn start_timer(
+    db_state: State<DbState>,
+    timer_state: State<AppTimerState>,
+    quest_id: String,
+) -> Result<TimerInfo, String> {
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+
+    // Look up quest title
+    let quests = db::get_quests(&conn)?;
+    let quest = quests.iter().find(|q| q.id == quest_id)
+        .ok_or_else(|| format!("Quest not found: {}", quest_id))?;
+    let title = quest.title.clone();
+
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis() as u64;
+
+    let mut timer = timer_state.0.lock().map_err(|e| e.to_string())?;
+    timer.quest_id = Some(quest_id.clone());
+    timer.quest_title = Some(title.clone());
+    timer.started_at = Some(now_millis);
+
+    Ok(TimerInfo {
+        active: true,
+        quest_id: Some(quest_id),
+        quest_title: Some(title),
+        started_at: Some(now_millis),
+    })
+}
+
+#[tauri::command]
+pub fn cancel_timer(
+    timer_state: State<AppTimerState>,
+) -> Result<(), String> {
+    let mut timer = timer_state.0.lock().map_err(|e| e.to_string())?;
+    timer.quest_id = None;
+    timer.quest_title = None;
+    timer.started_at = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn complete_timer(
+    db_state: State<DbState>,
+    timer_state: State<AppTimerState>,
+) -> Result<db::Completion, String> {
+    let quest_id = {
+        let timer = timer_state.0.lock().map_err(|e| e.to_string())?;
+        timer.quest_id.clone().ok_or("No timer is active")?
+    };
+
+    // Complete the quest
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    let completion = db::complete_quest(&conn, quest_id)?;
+
+    // Clear timer
+    let mut timer = timer_state.0.lock().map_err(|e| e.to_string())?;
+    timer.quest_id = None;
+    timer.quest_title = None;
+    timer.started_at = None;
+
+    Ok(completion)
+}
+
+#[tauri::command]
+pub fn get_timer_state(
+    timer_state: State<AppTimerState>,
+) -> Result<TimerInfo, String> {
+    let timer = timer_state.0.lock().map_err(|e| e.to_string())?;
+    Ok(TimerInfo {
+        active: timer.quest_id.is_some(),
+        quest_id: timer.quest_id.clone(),
+        quest_title: timer.quest_title.clone(),
+        started_at: timer.started_at,
+    })
 }

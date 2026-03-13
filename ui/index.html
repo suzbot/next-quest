@@ -522,15 +522,12 @@
     let attrNameMap = {};
 
     // Quest Giver state
-    let dueQuests = [];
     let nextQuestIndex = 0;
-    let qgXpFlashTimeout = null;
 
-    // Break timer state
-    let timerQuestId = null;
-    let timerQuestTitle = null;
-    let timerStart = null;
-    let timerInterval = null;
+    // Break timer state (display only — state lives in backend)
+    let timerStartLocal = null;   // Date.now() cached locally for display
+    let timerTitleLocal = null;   // cached quest title for display
+    let timerInterval = null;     // setInterval handle
 
     function toggleCycleInput() {
       cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
@@ -604,7 +601,6 @@
       }
       renderQuests(results[0]);
       renderCompletions(results[1]);
-      buildDueQuests();
       if (!questGiverView.classList.contains("hidden")) {
         renderQuestGiver();
       }
@@ -656,7 +652,7 @@
         : "";
 
       const questNowBtn = q.active
-        ? `<button onclick="listQuestNow('${q.id}', '${escapeAttr(q.title)}')">[Quest Now]</button>`
+        ? `<button onclick="listQuestNow('${q.id}')">[Quest Now]</button>`
         : "";
 
       return `<li class="quest-item ${stateClass}" data-id="${q.id}" tabindex="0"
@@ -1025,33 +1021,15 @@
 
     // --- Quest Giver ---
 
-    function buildDueQuests() {
-      dueQuests = cachedQuests.filter(q => q.active && q.is_due);
-      if (nextQuestIndex >= dueQuests.length) {
-        nextQuestIndex = 0;
-      }
-    }
-
-    function getQuestGiverQuest() {
-      if (dueQuests.length > 0) {
-        return dueQuests[nextQuestIndex % dueQuests.length];
-      }
-      // Fallback: active quest completed longest ago
-      const active = cachedQuests.filter(q => q.active && q.last_completed);
-      if (active.length === 0) return null;
-      active.sort((a, b) => (a.last_completed || "").localeCompare(b.last_completed || ""));
-      return active[0];
-    }
-
-    function renderQuestGiver() {
-      // Timer mode
+    async function renderQuestGiver() {
+      // Timer mode — check backend state
       if (timerInterval) {
         renderTimerMode();
         return;
       }
 
-      // Selection mode
-      const quest = getQuestGiverQuest();
+      // Selection mode — ask backend for the next quest
+      const quest = await invoke("get_next_quest", { skipCount: nextQuestIndex });
 
       if (cachedQuests.filter(q => q.active).length === 0) {
         qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quests tab.</div>';
@@ -1067,7 +1045,7 @@
         <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
         <div class="qg-actions">
           <button onclick="qgDone('${quest.id}')">[Done]</button>
-          <button onclick="qgQuestNow('${quest.id}', '${escapeAttr(quest.title)}')">[Quest Now]</button>
+          <button onclick="qgQuestNow('${quest.id}')">[Quest Now]</button>
           <button onclick="qgSomethingElse()">[Something Else]</button>
         </div>
         <div class="qg-xp-flash" id="qg-xp-flash"></div>
@@ -1075,9 +1053,9 @@
     }
 
     function renderTimerMode() {
-      const elapsed = Date.now() - timerStart;
+      const elapsed = Date.now() - timerStartLocal;
       qgContent.innerHTML = `
-        <div class="qg-quest-name">${escapeHtml(timerQuestTitle)}</div>
+        <div class="qg-quest-name">${escapeHtml(timerTitleLocal)}</div>
         <div class="qg-timer">${formatTimer(elapsed)}</div>
         <div class="qg-actions">
           <button onclick="timerDone()">[Done]</button>
@@ -1096,10 +1074,10 @@
       return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     }
 
-    function startTimer(questId, questTitle) {
-      timerQuestId = questId;
-      timerQuestTitle = questTitle;
-      timerStart = Date.now();
+    async function startTimer(questId) {
+      const info = await invoke("start_timer", { questId });
+      timerStartLocal = Date.now();
+      timerTitleLocal = info.quest_title;
       timerInterval = setInterval(() => {
         if (!questGiverView.classList.contains("hidden")) {
           renderTimerMode();
@@ -1107,35 +1085,37 @@
       }, 1000);
     }
 
-    function cancelTimer() {
+    async function cancelTimer() {
       if (timerInterval) clearInterval(timerInterval);
-      timerQuestId = null;
-      timerQuestTitle = null;
-      timerStart = null;
+      timerStartLocal = null;
+      timerTitleLocal = null;
       timerInterval = null;
+      await invoke("cancel_timer");
     }
 
-    function qgQuestNow(questId, questTitle) {
-      startTimer(questId, questTitle);
+    async function qgQuestNow(questId) {
+      await startTimer(questId);
       renderQuestGiver();
     }
 
     async function timerDone() {
-      const questId = timerQuestId;
-      cancelTimer();
-      const completion = await invoke("complete_quest", { questId });
+      if (timerInterval) clearInterval(timerInterval);
+      timerStartLocal = null;
+      timerTitleLocal = null;
+      timerInterval = null;
+      const completion = await invoke("complete_timer");
 
-      if (completion.xp_earned > 0) {
-        // Briefly show selection mode with XP flash
-        nextQuestIndex = 0;
-        await loadAll();
-        const flash = document.getElementById("qg-xp-flash");
-        if (flash) flash.textContent = `+${completion.xp_earned} XP`;
-        return;
-      }
-
+      // Show the quest name briefly with XP flash before refreshing
       nextQuestIndex = 0;
-      await loadAll();
+      if (completion.xp_earned > 0) {
+        qgContent.innerHTML = `
+          <div class="qg-quest-name">${escapeHtml(completion.quest_title)}</div>
+          <div class="qg-xp-flash">+${completion.xp_earned} XP</div>
+        `;
+        setTimeout(() => loadAll(), 800);
+      } else {
+        await loadAll();
+      }
     }
 
     async function qgDone(questId) {
@@ -1151,15 +1131,13 @@
     }
 
     function qgSomethingElse() {
-      if (dueQuests.length > 0) {
-        nextQuestIndex = (nextQuestIndex + 1) % dueQuests.length;
-      }
+      nextQuestIndex++;
       renderQuestGiver();
     }
 
     // Quest Now from list view
-    function listQuestNow(questId, questTitle) {
-      startTimer(questId, questTitle);
+    async function listQuestNow(questId) {
+      await startTimer(questId);
       showView("quest-giver");
     }
 
