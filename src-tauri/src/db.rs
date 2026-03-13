@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
 
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum QuestType {
@@ -356,7 +357,7 @@ fn seed_data(conn: &Connection) {
 }
 
 pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
-    let now = chrono_now();
+    let today = local_today_days();
     let mut stmt = conn
         .prepare(
             "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
@@ -376,7 +377,8 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
             let active = row.get::<_, i32>(5)? != 0;
             let difficulty_str: String = row.get(7)?;
             let last_completed: Option<String> = row.get(8)?;
-            let is_due = compute_is_due(&quest_type, active, last_completed.as_deref(), cycle_days, &now);
+            let last_completed_days = last_completed.as_deref().and_then(utc_iso_to_local_days);
+            let is_due = compute_is_due(&quest_type, active, last_completed_days, cycle_days, today);
             Ok(Quest {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -590,24 +592,28 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let quest_type = QuestType::from_str(&quest_type_str);
     let xp_earned = calculate_xp(&difficulty, &quest_type, cycle_days);
 
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
     // Distribute XP
-    award_xp(conn, &quest_id, xp_earned)?;
+    award_xp(&tx, &quest_id, xp_earned)?;
 
     let completion_id = Uuid::new_v4().to_string();
     let completed_at = chrono_now();
 
-    conn.execute(
+    tx.execute(
         "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned],
     )
     .map_err(|e| e.to_string())?;
 
     // If one-off quest, deactivate it
-    conn.execute(
+    tx.execute(
         "UPDATE quest SET active = 0 WHERE id = ?1 AND quest_type = 'one_off'",
         rusqlite::params![quest_id],
     )
     .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
 
     Ok(Completion {
         id: completion_id,
@@ -691,8 +697,7 @@ pub fn update_quest(
         .map_err(|e| e.to_string())?;
     }
 
-    let now = chrono_now();
-    query_single_quest(conn, &quest_id, &now)
+    query_single_quest(conn, &quest_id)
 }
 
 pub fn delete_quest(conn: &Connection, quest_id: String) -> Result<(), String> {
@@ -796,28 +801,8 @@ pub fn reset_completions(conn: &Connection) -> Result<(), String> {
 }
 
 pub fn get_quest_links(conn: &Connection, quest_id: String) -> Result<QuestLinks, String> {
-    let mut skill_stmt = conn
-        .prepare("SELECT skill_id FROM quest_skill WHERE quest_id = ?1")
-        .map_err(|e| e.to_string())?;
-    let skill_ids: Vec<String> = skill_stmt
-        .query_map(rusqlite::params![quest_id], |row| row.get(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    let mut attr_stmt = conn
-        .prepare("SELECT attribute_id FROM quest_attribute WHERE quest_id = ?1")
-        .map_err(|e| e.to_string())?;
-    let attribute_ids: Vec<String> = attr_stmt
-        .query_map(rusqlite::params![quest_id], |row| row.get(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    Ok(QuestLinks {
-        skill_ids,
-        attribute_ids,
-    })
+    let (skill_ids, attribute_ids) = load_quest_link_ids(conn, &quest_id)?;
+    Ok(QuestLinks { skill_ids, attribute_ids })
 }
 
 pub fn set_quest_links(
@@ -952,7 +937,8 @@ fn load_quest_link_ids(conn: &Connection, quest_id: &str) -> Result<(Vec<String>
     Ok((skill_ids, attribute_ids))
 }
 
-fn query_single_quest(conn: &Connection, quest_id: &str, now: &str) -> Result<Quest, String> {
+fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String> {
+    let today = local_today_days();
     let (skill_ids, attribute_ids) = load_quest_link_ids(conn, quest_id)?;
     conn.query_row(
         "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
@@ -967,7 +953,8 @@ fn query_single_quest(conn: &Connection, quest_id: &str, now: &str) -> Result<Qu
             let active = row.get::<_, i32>(5)? != 0;
             let difficulty_str: String = row.get(7)?;
             let last_completed: Option<String> = row.get(8)?;
-            let is_due = compute_is_due(&quest_type, active, last_completed.as_deref(), cycle_days, now);
+            let last_completed_days = last_completed.as_deref().and_then(utc_iso_to_local_days);
+            let is_due = compute_is_due(&quest_type, active, last_completed_days, cycle_days, today);
             Ok(Quest {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -1103,21 +1090,17 @@ pub fn get_skills(conn: &Connection) -> Result<Vec<Skill>, String> {
     Ok(skills)
 }
 
-fn compute_is_due(quest_type: &QuestType, active: bool, last_completed: Option<&str>, cycle_days: Option<i32>, now: &str) -> bool {
+fn compute_is_due(quest_type: &QuestType, active: bool, last_completed_days: Option<i64>, cycle_days: Option<i32>, today_local_days: i64) -> bool {
     if !active {
         return false;
     }
     match quest_type {
-        QuestType::OneOff => last_completed.is_none(),
+        QuestType::OneOff => last_completed_days.is_none(),
         QuestType::Recurring => {
-            match (cycle_days, last_completed) {
+            match (cycle_days, last_completed_days) {
                 (_, None) => true,
-                (Some(cycle), Some(last)) => {
-                    if let (Some(last_days), Some(now_days)) = (date_to_days(last), date_to_days(now)) {
-                        now_days - last_days >= cycle as i64
-                    } else {
-                        true
-                    }
+                (Some(cycle), Some(last_days)) => {
+                    today_local_days - last_days >= cycle as i64
                 }
                 (None, Some(_)) => false,
             }
@@ -1125,19 +1108,57 @@ fn compute_is_due(quest_type: &QuestType, active: bool, last_completed: Option<&
     }
 }
 
-fn date_to_days(iso: &str) -> Option<i64> {
-    let parts: Vec<&str> = iso.split('T').next()?.split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let y: i64 = parts[0].parse().ok()?;
-    let m: i64 = parts[1].parse().ok()?;
-    let d: i64 = parts[2].parse().ok()?;
-
-    // Adjust year/month for March-based counting (Jan/Feb become months 13/14 of prior year)
+/// Convert year/month/day to a day count (for calendar day comparison).
+fn ymd_to_days(y: i64, m: i64, d: i64) -> i64 {
     let (y_adj, m_adj) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
-    // Cumulative days using the March-based formula
-    Some(365 * y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400 + (153 * (m_adj - 3) + 2) / 5 + d)
+    365 * y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400 + (153 * (m_adj - 3) + 2) / 5 + d
+}
+
+/// Convert a UTC ISO timestamp to Unix seconds.
+fn iso_utc_to_unix_secs(iso: &str) -> Option<i64> {
+    let (date_part, time_part) = iso.split_once('T')?;
+    let dp: Vec<&str> = date_part.split('-').collect();
+    if dp.len() != 3 { return None; }
+    let y: i64 = dp[0].parse().ok()?;
+    let m: i64 = dp[1].parse().ok()?;
+    let d: i64 = dp[2].parse().ok()?;
+
+    let time_str = time_part.trim_end_matches('Z');
+    let tp: Vec<&str> = time_str.split(':').collect();
+    let h: i64 = tp.first()?.parse().ok()?;
+    let min: i64 = tp.get(1)?.parse().ok()?;
+    let s: i64 = tp.get(2)?.parse().ok()?;
+
+    let epoch_days = ymd_to_days(1970, 1, 1);
+    let this_days = ymd_to_days(y, m, d);
+    Some((this_days - epoch_days) * 86400 + h * 3600 + min * 60 + s)
+}
+
+/// Convert Unix seconds to local calendar day count using libc::localtime_r.
+#[cfg(unix)]
+fn unix_to_local_days(unix_secs: i64) -> i64 {
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    let time_t = unix_secs as libc::time_t;
+    unsafe { libc::localtime_r(&time_t, &mut tm) };
+    let y = tm.tm_year as i64 + 1900;
+    let m = tm.tm_mon as i64 + 1;
+    let d = tm.tm_mday as i64;
+    ymd_to_days(y, m, d)
+}
+
+/// Convert a UTC ISO timestamp to local calendar day count.
+fn utc_iso_to_local_days(iso: &str) -> Option<i64> {
+    let unix_secs = iso_utc_to_unix_secs(iso)?;
+    Some(unix_to_local_days(unix_secs))
+}
+
+/// Get today's date as a local calendar day count.
+fn local_today_days() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs() as i64;
+    unix_to_local_days(secs)
 }
 
 fn chrono_now() -> String {
@@ -1449,29 +1470,51 @@ mod tests {
 
     #[test]
     fn is_due_logic() {
+        let mar12 = ymd_to_days(2026, 3, 12);
+        let mar11 = ymd_to_days(2026, 3, 11);
         // Recurring, never completed
-        assert!(compute_is_due(&QuestType::Recurring, true, None, Some(1), "2026-03-12T00:00:00Z"));
-        // Recurring, just completed
-        assert!(!compute_is_due(&QuestType::Recurring, true, Some("2026-03-12T00:00:00Z"), Some(1), "2026-03-12T23:59:00Z"));
-        // Recurring, cycle elapsed
-        assert!(compute_is_due(&QuestType::Recurring, true, Some("2026-03-11T00:00:00Z"), Some(1), "2026-03-12T00:00:00Z"));
+        assert!(compute_is_due(&QuestType::Recurring, true, None, Some(1), mar12));
+        // Recurring, completed same day
+        assert!(!compute_is_due(&QuestType::Recurring, true, Some(mar12), Some(1), mar12));
+        // Recurring, cycle elapsed (1 day)
+        assert!(compute_is_due(&QuestType::Recurring, true, Some(mar11), Some(1), mar12));
         // One-off, never completed
-        assert!(compute_is_due(&QuestType::OneOff, true, None, None, "2026-03-12T00:00:00Z"));
-        // One-off, completed
-        assert!(!compute_is_due(&QuestType::OneOff, true, Some("2026-03-12T00:00:00Z"), None, "2026-03-12T00:00:00Z"));
+        assert!(compute_is_due(&QuestType::OneOff, true, None, None, mar12));
+        // One-off, completed (has a day value = completed)
+        assert!(!compute_is_due(&QuestType::OneOff, true, Some(mar12), None, mar12));
         // Inactive = never due
-        assert!(!compute_is_due(&QuestType::Recurring, false, None, Some(1), "2026-03-12T00:00:00Z"));
-        assert!(!compute_is_due(&QuestType::OneOff, false, None, None, "2026-03-12T00:00:00Z"));
+        assert!(!compute_is_due(&QuestType::Recurring, false, None, Some(1), mar12));
+        assert!(!compute_is_due(&QuestType::OneOff, false, None, None, mar12));
     }
 
     #[test]
     fn is_due_month_boundary() {
+        let feb28 = ymd_to_days(2026, 2, 28);
+        let mar1 = ymd_to_days(2026, 3, 1);
+        let jan31 = ymd_to_days(2026, 1, 31);
+        let feb1 = ymd_to_days(2026, 2, 1);
         // Feb 28 → Mar 1 is 1 day, not 3
-        assert!(!compute_is_due(&QuestType::Recurring, true, Some("2026-02-28T10:00:00Z"), Some(2), "2026-03-01T10:00:00Z"));
-        assert!(compute_is_due(&QuestType::Recurring, true, Some("2026-02-28T10:00:00Z"), Some(1), "2026-03-01T10:00:00Z"));
+        assert!(!compute_is_due(&QuestType::Recurring, true, Some(feb28), Some(2), mar1));
+        assert!(compute_is_due(&QuestType::Recurring, true, Some(feb28), Some(1), mar1));
         // Jan 31 → Feb 1 is 1 day
-        assert!(compute_is_due(&QuestType::Recurring, true, Some("2026-01-31T10:00:00Z"), Some(1), "2026-02-01T10:00:00Z"));
-        assert!(!compute_is_due(&QuestType::Recurring, true, Some("2026-01-31T10:00:00Z"), Some(2), "2026-02-01T10:00:00Z"));
+        assert!(compute_is_due(&QuestType::Recurring, true, Some(jan31), Some(1), feb1));
+        assert!(!compute_is_due(&QuestType::Recurring, true, Some(jan31), Some(2), feb1));
+    }
+
+    #[test]
+    fn local_time_conversion() {
+        // ymd_to_days produces consistent day counts
+        assert_eq!(ymd_to_days(2026, 3, 12) - ymd_to_days(2026, 3, 11), 1);
+        assert_eq!(ymd_to_days(2026, 3, 1) - ymd_to_days(2026, 2, 28), 1);
+        assert_eq!(ymd_to_days(2026, 1, 1) - ymd_to_days(2025, 12, 31), 1);
+
+        // iso_utc_to_unix_secs round-trips correctly
+        assert_eq!(iso_utc_to_unix_secs("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_utc_to_unix_secs("1970-01-01T00:01:00Z"), Some(60));
+        assert_eq!(iso_utc_to_unix_secs("1970-01-02T00:00:00Z"), Some(86400));
+
+        // utc_iso_to_local_days returns a value (timezone-dependent, so just check it's Some)
+        assert!(utc_iso_to_local_days("2026-03-12T12:00:00Z").is_some());
     }
 
     // --- Seed data ---

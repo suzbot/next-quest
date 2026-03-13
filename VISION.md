@@ -81,7 +81,7 @@ The system that keeps the system fresh:
 
 ---
 
-## (Phase 0): "The List"
+## (Phase 0): "The List" ✓
 
 Basic Function to start using the app
 
@@ -94,7 +94,7 @@ Basic Function to start using the app
   d. Ability to re-sequence tasks
 
 
-## Phase 0.5 - "Table Stakes"
+## Phase 0.5 - "Table Stakes" ✓
 
 Getting in line with what's already out there (Dominate Life), so I use this instead
 
@@ -122,6 +122,8 @@ The smallest new thing that's already useful:
 4. **Quest selection**: app picks one for you based on simplest rule (not-recently-done)
 6. **Break timer**: Keeps track of how long you are AFK after selecting "Quest Now"
 7. **Quest reset**: recurring quests are suggested according to their cycle
+8. **Local time for quest due dates**: Quest cycles currently use UTC — switch to local time so daily quests reset at the user's midnight, not UTC midnight
+9. **Consolidate duplicate link-loading code**: `load_quest_link_ids` and `get_quest_links` do the same queries — unify them to keep db.rs maintainable as it grows
 
 
 ## Phase 2: "Level Up"

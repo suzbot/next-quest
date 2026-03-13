@@ -206,7 +206,7 @@
       padding: 16px 0;
     }
 
-    .hidden { display: none; }
+    .hidden { display: none !important; }
 
     .quest-item.dragging { opacity: 0.3; }
     body.is-dragging { -webkit-user-select: none; user-select: none; }
@@ -382,15 +382,77 @@
       color: #c44;
       border-color: #a33;
     }
+
+    /* Quest Giver view */
+    #quest-giver-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+      text-align: center;
+    }
+
+    .qg-label {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      color: #888;
+      margin-bottom: 24px;
+    }
+
+    #qg-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .qg-quest-name {
+      font-size: 22px;
+      color: #e0e0e0;
+      margin-bottom: 32px;
+      max-width: 400px;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .qg-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .qg-actions button {
+      padding: 8px 20px;
+      font-size: 15px;
+    }
+
+    .qg-empty {
+      color: #555;
+      font-style: italic;
+      font-size: 15px;
+    }
+
+    .qg-xp-flash {
+      font-size: 14px;
+      color: #5a8a5a;
+      margin-top: 8px;
+      min-height: 20px;
+    }
   </style>
 </head>
 <body>
   <div class="nav">
-    <button id="nav-quests" class="active" onclick="showView('quests')">[Quests]</button>
+    <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')">[Quest Giver]</button>
+    <button id="nav-quests" onclick="showView('quests')">[Quests]</button>
     <button id="nav-character" onclick="showView('character')">[Character]</button>
   </div>
 
-  <div id="quests-view">
+  <div id="quest-giver-view">
+    <div class="qg-label">Quest Giver</div>
+    <div id="qg-content"></div>
+  </div>
+
+  <div id="quests-view" class="hidden">
   <h1>Next Quest</h1>
 
   <form id="add-form">
@@ -451,6 +513,11 @@
     let cachedAttributes = [];
     let skillNameMap = {};
     let attrNameMap = {};
+
+    // Quest Giver state
+    let dueQuests = [];
+    let nextQuestIndex = 0;
+    let qgXpFlashTimeout = null;
 
     function toggleCycleInput() {
       cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
@@ -524,6 +591,10 @@
       }
       renderQuests(results[0]);
       renderCompletions(results[1]);
+      buildDueQuests();
+      if (!questGiverView.classList.contains("hidden")) {
+        renderQuestGiver();
+      }
     }
 
     function renderQuests(quests) {
@@ -912,17 +983,84 @@
 
     // --- Navigation ---
 
+    const questGiverView = document.getElementById("quest-giver-view");
+    const qgContent = document.getElementById("qg-content");
     const questsView = document.getElementById("quests-view");
     const characterView = document.getElementById("character-view");
     const charContent = document.getElementById("char-content");
     let renamingChar = false;
 
     function showView(view) {
+      document.getElementById("nav-quest-giver").classList.toggle("active", view === "quest-giver");
       document.getElementById("nav-quests").classList.toggle("active", view === "quests");
       document.getElementById("nav-character").classList.toggle("active", view === "character");
+      questGiverView.classList.toggle("hidden", view !== "quest-giver");
       questsView.classList.toggle("hidden", view !== "quests");
       characterView.classList.toggle("hidden", view !== "character");
       if (view === "character") loadCharacterView();
+      if (view === "quest-giver") renderQuestGiver();
+    }
+
+    // --- Quest Giver ---
+
+    function buildDueQuests() {
+      dueQuests = cachedQuests.filter(q => q.active && q.is_due);
+      if (nextQuestIndex >= dueQuests.length) {
+        nextQuestIndex = 0;
+      }
+    }
+
+    function getQuestGiverQuest() {
+      if (dueQuests.length > 0) {
+        return dueQuests[nextQuestIndex % dueQuests.length];
+      }
+      // Fallback: active quest completed longest ago
+      const active = cachedQuests.filter(q => q.active && q.last_completed);
+      if (active.length === 0) return null;
+      active.sort((a, b) => (a.last_completed || "").localeCompare(b.last_completed || ""));
+      return active[0];
+    }
+
+    function renderQuestGiver() {
+      const quest = getQuestGiverQuest();
+
+      if (cachedQuests.filter(q => q.active).length === 0) {
+        qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quests tab.</div>';
+        return;
+      }
+
+      if (!quest) {
+        qgContent.innerHTML = '<div class="qg-empty">All caught up. Rest well, adventurer.</div>';
+        return;
+      }
+
+      qgContent.innerHTML = `
+        <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
+        <div class="qg-actions">
+          <button onclick="qgDone('${quest.id}')">[Done]</button>
+          <button onclick="qgSomethingElse()">[Something Else]</button>
+        </div>
+        <div class="qg-xp-flash" id="qg-xp-flash"></div>
+      `;
+    }
+
+    async function qgDone(questId) {
+      const completion = await invoke("complete_quest", { questId });
+
+      if (completion.xp_earned > 0) {
+        const flash = document.getElementById("qg-xp-flash");
+        if (flash) flash.textContent = `+${completion.xp_earned} XP`;
+      }
+
+      nextQuestIndex = 0;
+      setTimeout(() => loadAll(), 800);
+    }
+
+    function qgSomethingElse() {
+      if (dueQuests.length > 0) {
+        nextQuestIndex = (nextQuestIndex + 1) % dueQuests.length;
+      }
+      renderQuestGiver();
     }
 
     async function loadCharacterView() {
