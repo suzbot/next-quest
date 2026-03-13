@@ -105,11 +105,10 @@ Getting in line with what's already out there (Dominate Life), so I use this ins
  
 2. Incorporate Difficulty Level to Task (Trivial, Easy, Moderate, Challenging, Epic)
 
- 3. Link tasks to skills/attributes/values, so that on task completion
+ 3. Link tasks to skills/attributes, so that on task completion
     a. General XP / Level goes up based on cycle and difficulty of completed task
     b. Attribute XP/level progresses based on cycle and difficulty, if associated to completed task
     c. Skill XP/level progresses based on cycle and difficulty, if associated to completed task
-    d. Values are adjusted toward one end of the spectrum or the other
 
 
 ## (Phase 1): "The Quest Giver"
@@ -130,13 +129,15 @@ The smallest new thing that's already useful:
 - Graphics
 - Quest completion feedback — visual/animated reaction when marking a quest done (flash, sound, XP popup, etc.)
 - More quest attributes and logic
+- XP time-elapsed modifier: diminishing returns for repeating a quest quickly (same-day laundry), increasing reward as time passes to encourage doing it, but log-curve so procrastination isn't linearly rewarded
 - Smarter quest giving
 - Sagas for bigger goals
 - Multiple Quest Givers
 - Receive coin and items from questing
 - Badges, Rewards
 - Buy stuff with gold
-- Editable Attributes and SKills
+- Editable Attributes and Skills
+- Character Class selection
 - Elemental Alignment Matrix: Fire (Fight, Shout, Hot and Bright) <-> Water (Follow, Attune, Adapt, Flow, Listen, Reflect), Earth (Grounded, Solidity, Present,) <-> Sky (Abstract, Future/Past, Thinking, Planning, Remembering) Centered: Green, Growth
 
 
