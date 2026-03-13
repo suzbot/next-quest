@@ -42,7 +42,7 @@ The list has two sections:
 ### Actions
 
 - **Add quest**: Create a new quest. Title is required. Cycle defaults to recurring/1 day (user can change to one-off or a different cycle).
-- **Edit quest**: Change title or cycle of an active quest. Cycle can be changed between recurring and one-off (setting cycle to 0 = one-off).
+- **Edit quest**: Change title, type (recurring/one-off), or cycle of an active quest.
 - **Delete quest**: Remove a quest from the active list. Does not delete its completion records.
 - **Mark done**: Record a completion. Can be done multiple times per day. On completion:
   - A completion record is created with the current timestamp and appears in the completion section.

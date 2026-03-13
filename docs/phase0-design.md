@@ -20,7 +20,8 @@ on first launch.
 CREATE TABLE quest (
     id          TEXT PRIMARY KEY,   -- UUID as text
     title       TEXT NOT NULL,
-    cycle_days  INTEGER,           -- NULL = one-off quest
+    quest_type  TEXT NOT NULL DEFAULT 'recurring',  -- 'recurring' or 'one_off'
+    cycle_days  INTEGER,           -- days between refreshes (NULL for one-off)
     sort_order  INTEGER NOT NULL,  -- higher = more prominent
     active      INTEGER NOT NULL DEFAULT 1,  -- 1 = active, 0 = inactive
     created_at  TEXT NOT NULL       -- ISO 8601 timestamp
@@ -36,7 +37,9 @@ CREATE TABLE quest_completion (
 
 **Notes:**
 - SQLite doesn't have native UUID or boolean types — we use TEXT and INTEGER.
-- `cycle_days` is nullable: present = recurring, null = one-off.
+- `quest_type` is an explicit enum field: `'recurring'` or `'one_off'`. This replaced
+  an earlier design where type was inferred from `cycle_days` being null/0 (ambiguous).
+- `cycle_days` is always set for recurring quests, always NULL for one-off quests.
 - `active` is set to 0 when a one-off quest is completed (deactivated, not deleted).
   The quest template is preserved. Can still be explicitly deleted via [Del].
 - `quest_completion.quest_title` is snapshotted at completion time so the record
@@ -64,8 +67,8 @@ CREATE TABLE quest_completion (
 |---|---|---|---|
 | `get_quests` | — | List of active quests with last_completed and due status | Fetches active quests ordered by sort_order descending |
 | `get_completions` | — | List of completion records | Fetches all completions ordered by completed_at descending |
-| `add_quest` | title, cycle_days | The created quest | Creates quest with next available sort_order |
-| `update_quest` | id, title?, cycle_days? | The updated quest | Updates provided fields |
+| `add_quest` | title, quest_type, cycle_days? | The created quest | Creates quest with next available sort_order |
+| `update_quest` | id, title?, quest_type?, cycle_days? | The updated quest | Updates provided fields |
 | `delete_quest` | id | — | Deletes quest row. Nullifies quest_id on its completions. |
 | `complete_quest` | id | The created completion | Creates a quest_completion record with title snapshot. If one-off, sets active = 0. |
 | `delete_completion` | id | — | Deletes a single completion record |
@@ -78,6 +81,7 @@ Quest (active list):
 {
     "id": "uuid",
     "title": "Take a shower",
+    "quest_type": "recurring",
     "cycle_days": 1,
     "sort_order": 10,
     "active": true,
@@ -193,22 +197,37 @@ Each step is a vertical slice — buildable, testable, and committable on its ow
 - Frontend visual states (due/de-emphasized/strikethrough)
 - Tests for completion logic and is_due calculation
 
-### Step 3: Redesign Completions + Edit/Delete [IN PROGRESS]
+### Step 3: Redesign Completions + Edit/Delete [COMPLETE]
 
 **Requirements covered:**
 - Completions as visible, independent records *(req: Core Concepts, Completion Records)*
 - Completion history section in list *(req: List Layout)*
 - Delete completion individually *(req: Actions > Delete completion)*
 - Delete quest without deleting completions *(req: Core Concepts)*
-- One-off quest disappears on completion *(req: Actions > Mark done)*
-- Edit quest title and cycle *(req: Actions > Edit quest)*
-- Convert recurring to one-off (cycle 0) *(req: Actions > Edit quest)*
+- One-off quest deactivates on completion *(req: Actions > Mark done)*
+- Edit quest title, type, and cycle *(req: Actions > Edit quest)*
 - Delete quest *(req: Actions > Delete quest)*
 
-### Step 4: Reorder Quests
+**What was built:**
+- Explicit `quest_type` enum (recurring/one_off) replacing null/0 cycle_days ambiguity
+- `get_completions`, `delete_quest`, `delete_completion`, `update_quest` backend commands
+- Schema migrations: quest_title on completions, quest_type on quests, nullable quest_id
+- Two-section UI: active quests + completion history
+- Inline edit mode with type dropdown (keyboard: E to edit, Enter to save, Esc to cancel)
+- 25 tests covering all data operations
+
+### Step 4: Reorder Quests [COMPLETE]
 
 **Requirements covered:**
 - Re-sequence active quests via keyboard *(req: Actions > Re-sequence)*
 - Drag-and-drop reordering *(req: Actions > Re-sequence)*
 - Only active quests reorderable *(req: List Layout)*
 - Full keyboard navigation *(req: Interaction Requirements)*
+
+**What was built:**
+- `reorder_quests` backend command with batch sort_order updates in a transaction
+- Arrow key focus navigation between quest rows
+- Alt+Up/Down keyboard reordering with focus follow
+- Pointer-event based drag-and-drop (HTML5 drag-and-drop unreliable in Tauri's WKWebView)
+- Inactive one-off quests excluded from reordering
+- 28 tests total

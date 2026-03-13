@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** Phase 0 — "The List"
+**Current phase:** Phase 0 complete. Next: Phase 0.5 — "Table Stakes"
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 
@@ -33,19 +33,10 @@ Tauri app: Rust backend + web frontend.
 
 ### File Structure
 
-```
-ui/
-  index.html              # Frontend entry point (HTML/CSS/JS)
-src-tauri/
-  src/main.rs             # Rust entry point — launches the app
-  Cargo.toml              # Rust dependencies
-  tauri.conf.json         # App config (window size, title, build paths)
-  build.rs                # Tauri build hook
-package.json              # Node/frontend manifest
-CLAUDE.md                 # Dev guidelines (this file)
-VISION.md                 # Product vision and roadmap
-DATA_MODEL.md             # Entity definitions and relationships
-```
+- `src-tauri/src/db.rs` — all data logic, migrations, and tests
+- `src-tauri/src/commands.rs` — thin Tauri command wrappers (delegates to db.rs)
+- `ui/index.html` — single-file frontend (HTML/CSS/JS)
+- `docs/` — requirements, design docs, step specs
 
 ### Data Model
 
@@ -89,6 +80,9 @@ Do NOT skip steps or combine them without discussing it first. Do NOT draft docs
 | serde 1 | Rust | Serialization/deserialization of data structures | Passing data between Rust and frontend |
 | serde_json 1 | Rust | JSON parsing | Data format for Rust ↔ frontend communication |
 | tauri-build 2 | Rust (build only) | Compiles Tauri config at build time | Required by Tauri |
+| rusqlite 0.31 | Rust | SQLite database access (bundled) | Read/write quest data |
+| uuid 1 | Rust | Generate unique IDs (v4) | Quest and completion IDs |
+| dirs 6 | Rust | Platform data directory paths | Locate app data folder |
 
 ## Pacing & Breaks
 

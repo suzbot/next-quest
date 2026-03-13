@@ -476,7 +476,11 @@ fn date_to_days(iso: &str) -> Option<i64> {
     let y: i64 = parts[0].parse().ok()?;
     let m: i64 = parts[1].parse().ok()?;
     let d: i64 = parts[2].parse().ok()?;
-    Some(y * 365 + y / 4 - y / 100 + y / 400 + m * 30 + d)
+
+    // Adjust year/month for March-based counting (Jan/Feb become months 13/14 of prior year)
+    let (y_adj, m_adj) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
+    // Cumulative days using the March-based formula
+    Some(365 * y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400 + (153 * (m_adj - 3) + 2) / 5 + d)
 }
 
 fn chrono_now() -> String {
@@ -801,6 +805,16 @@ mod tests {
         // Inactive = never due
         assert!(!compute_is_due(&QuestType::Recurring, false, None, Some(1), "2026-03-12T00:00:00Z"));
         assert!(!compute_is_due(&QuestType::OneOff, false, None, None, "2026-03-12T00:00:00Z"));
+    }
+
+    #[test]
+    fn is_due_month_boundary() {
+        // Feb 28 → Mar 1 is 1 day, not 3
+        assert!(!compute_is_due(&QuestType::Recurring, true, Some("2026-02-28T10:00:00Z"), Some(2), "2026-03-01T10:00:00Z"));
+        assert!(compute_is_due(&QuestType::Recurring, true, Some("2026-02-28T10:00:00Z"), Some(1), "2026-03-01T10:00:00Z"));
+        // Jan 31 → Feb 1 is 1 day
+        assert!(compute_is_due(&QuestType::Recurring, true, Some("2026-01-31T10:00:00Z"), Some(1), "2026-02-01T10:00:00Z"));
+        assert!(!compute_is_due(&QuestType::Recurring, true, Some("2026-01-31T10:00:00Z"), Some(2), "2026-02-01T10:00:00Z"));
     }
 
     #[test]
