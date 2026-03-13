@@ -28,7 +28,8 @@ CREATE TABLE quest (
 
 CREATE TABLE quest_completion (
     id            TEXT PRIMARY KEY,  -- UUID as text
-    quest_id      TEXT NOT NULL REFERENCES quest(id),
+    quest_id      TEXT,              -- FK to quest (nullable — quest may be deleted)
+    quest_title   TEXT NOT NULL,     -- snapshot of title at completion time
     completed_at  TEXT NOT NULL      -- ISO 8601 timestamp
 );
 ```
@@ -36,9 +37,19 @@ CREATE TABLE quest_completion (
 **Notes:**
 - SQLite doesn't have native UUID or boolean types — we use TEXT and INTEGER.
 - `cycle_days` is nullable: present = recurring, null = one-off.
-- `active` is set to 0 when a one-off quest is completed. Keeps the record for
-  strikethrough display. Deletion removes the row entirely.
+- `active` is set to 0 when a one-off quest is completed (deactivated, not deleted).
+  The quest template is preserved. Can still be explicitly deleted via [Del].
+- `quest_completion.quest_title` is snapshotted at completion time so the record
+  is self-contained even if the quest is later deleted or renamed.
+- `quest_completion.quest_id` is nullable — if the quest is deleted, completions
+  remain with a null foreign key.
 - Timestamps stored as ISO 8601 strings (e.g. "2026-03-12T22:30:00Z").
+
+### Key Design Decision: Quests and Completions Are Independent
+
+- Deleting a quest does NOT delete its completions.
+- Deleting a completion does NOT affect the quest.
+- Completions are visible, first-class rows in the UI — not hidden metadata.
 
 ### Derived Values (computed, not stored)
 
@@ -49,25 +60,23 @@ CREATE TABLE quest_completion (
 
 ### Tauri Commands
 
-These are the functions the frontend can call. Each one handles its own
-database access and returns JSON to the frontend.
-
 | Command | Input | Returns | What it does |
 |---|---|---|---|
-| `get_quests` | — | List of quests with last_completed and due status | Fetches all active quests + completed one-offs, ordered by sort_order descending |
+| `get_quests` | — | List of active quests with last_completed and due status | Fetches active quests ordered by sort_order descending |
+| `get_completions` | — | List of completion records | Fetches all completions ordered by completed_at descending |
 | `add_quest` | title, cycle_days | The created quest | Creates quest with next available sort_order |
-| `update_quest` | id, title?, cycle_days?, sort_order? | The updated quest | Updates provided fields |
-| `delete_quest` | id | — | Deletes quest and its completion records |
-| `complete_quest` | id | The updated quest with new last_completed | Creates a quest_completion record. If one-off, sets active = 0. |
-| `reorder_quests` | list of {id, sort_order} | — | Batch updates sort_order for multiple quests |
+| `update_quest` | id, title?, cycle_days? | The updated quest | Updates provided fields |
+| `delete_quest` | id | — | Deletes quest row. Nullifies quest_id on its completions. |
+| `complete_quest` | id | The created completion | Creates a quest_completion record with title snapshot. If one-off, sets active = 0. |
+| `delete_completion` | id | — | Deletes a single completion record |
+| `reorder_quests` | list of {id, sort_order} | — | Batch updates sort_order for active quests |
 
-### Return Shape
+### Return Shapes
 
-Each quest returned to the frontend looks like:
-
+Quest (active list):
 ```json
 {
-    "id": "uuid-here",
+    "id": "uuid",
     "title": "Take a shower",
     "cycle_days": 1,
     "sort_order": 10,
@@ -78,25 +87,33 @@ Each quest returned to the frontend looks like:
 }
 ```
 
-`last_completed` and `is_due` are computed by the backend at query time,
-not stored.
+Completion (history list):
+```json
+{
+    "id": "uuid",
+    "quest_id": "uuid-or-null",
+    "quest_title": "Take a shower",
+    "completed_at": "2026-03-12T08:00:00Z"
+}
+```
 
 ## Frontend (Vanilla HTML/CSS/JS)
 
 ### Layout
 
-Single page with:
-- **Quest list**: ordered list of quests
-- **Add quest form**: inline at top or bottom of list
-- **Edit mode**: inline editing on a quest (click or keyboard to enter edit mode)
+Single page with two sections:
+- **Add quest form**: at top
+- **Active quests**: ordered by sort_order descending. Reorderable.
+- **Completion history**: below active quests. Reverse chronological. Not reorderable.
 
 ### Visual States
 
-Quests render differently based on state:
-- **Due/refreshed** (recurring, cycle elapsed or never completed): default/emphasized text
-- **Recently completed** (recurring, cycle not elapsed): muted/de-emphasized text
-- **Completed one-off**: strikethrough text
-- All states just use basic text styling — no graphics, no icons for now
+Active quests:
+- **Due/refreshed**: emphasized text — cycle elapsed or never completed
+- **Recently completed**: muted text — cycle not elapsed, still completable
+
+Completions:
+- **Strikethrough text** with timestamp and [Del] button
 
 ### Keyboard Navigation
 
@@ -106,21 +123,19 @@ Quests render differently based on state:
 - **Delete or Backspace**: Delete focused quest (with confirmation)
 - **E or Enter on title**: Enter edit mode for focused quest
 - **Escape**: Cancel edit
-- Specific bindings can be refined during implementation — the principle is
-  that every action is keyboard-reachable.
+- Specific bindings refined during implementation.
 
 ### Data Flow
 
-1. On page load: call `get_quests`, render the list
-2. User action (add/edit/delete/complete/reorder): call the appropriate command
-3. On command response: re-render the list with returned data
+1. On page load: call `get_quests` + `get_completions`, render both sections
+2. User action: call the appropriate command
+3. On response: re-fetch and re-render both sections
 
-No local state caching in Phase 0 — the backend is the source of truth,
-and we re-fetch after every mutation. Simple and correct.
+No local state caching — the backend is the source of truth.
 
 ## Dependencies
 
-### Rust (new)
+### Rust (new in Phase 0)
 
 | Crate | What it does | Why we need it |
 |---|---|---|
@@ -135,7 +150,7 @@ None. Vanilla HTML/CSS/JS.
 
 | Deferred | Why |
 |---|---|
-| Database migrations / schema versioning | One table, no changes expected until Phase 0.5 |
+| Database migrations / schema versioning | Simple schema, changes handled in code until Phase 0.5 |
 | Error handling UI (toasts, alerts) | Bare-text phase, console errors sufficient |
 | Offline/sync | Local-only app, always "offline" |
 | Performance optimization | List will be <100 items, no optimization needed |
@@ -151,9 +166,9 @@ Each step is a vertical slice — buildable, testable, and committable on its ow
 **Requirements covered:**
 - Quest properties: title, cycle *(req: Quest Properties)*
 - Add quest with defaults *(req: Actions > Add quest)*
-- View quest list ordered by sort order *(req: Quest List View)*
-- Display title and cycle per quest *(req: Quest List View > show)*
-- Data persists across restarts *(req: implicit — it's a real app)*
+- View quest list ordered by sort order *(req: List Layout)*
+- Display title and cycle per quest *(req: List Layout)*
+- Data persists across restarts
 - Monospace font *(req: Visual Design)*
 
 **What was built:**
@@ -162,28 +177,38 @@ Each step is a vertical slice — buildable, testable, and committable on its ow
 - Frontend list rendering and add form
 - Tests for data layer + config validation
 
-### Step 2: Complete Quests
+### Step 2: Complete Quests [COMPLETE]
 
 **Requirements covered:**
 - Mark done button *(req: Actions > Mark done)*
 - Completion records created with timestamp *(req: Actions > Mark done)*
-- Multiple completions per day allowed *(req: Behaviors > Multiple completions)*
-- Last completed date/time displayed *(req: Quest List View > show)*
-- Visual states: due/refreshed, recently completed, completed one-off *(req: Quest List View > Visual states)*
+- Multiple completions per day *(req: Behaviors > Multiple completions)*
+- Last completed display *(req: List Layout)*
+- Visual states for active quests *(req: Active Quest Visual States)*
 - Cycle refresh logic *(req: Behaviors > Cycle refresh)*
-- One-off quests show strikethrough on completion *(req: Quest List View > Visual states)*
-- Recurring quests move to bottom on completion *(req: Actions > Mark done)*
 
-### Step 3: Edit and Delete Quests
+**What was built:**
+- `complete_quest` backend command
+- `get_quests` returns last_completed and is_due
+- Frontend visual states (due/de-emphasized/strikethrough)
+- Tests for completion logic and is_due calculation
+
+### Step 3: Redesign Completions + Edit/Delete [IN PROGRESS]
 
 **Requirements covered:**
-- Edit quest title, cycle *(req: Actions > Edit quest)*
+- Completions as visible, independent records *(req: Core Concepts, Completion Records)*
+- Completion history section in list *(req: List Layout)*
+- Delete completion individually *(req: Actions > Delete completion)*
+- Delete quest without deleting completions *(req: Core Concepts)*
+- One-off quest disappears on completion *(req: Actions > Mark done)*
+- Edit quest title and cycle *(req: Actions > Edit quest)*
+- Convert recurring to one-off (cycle 0) *(req: Actions > Edit quest)*
 - Delete quest *(req: Actions > Delete quest)*
-- Inline edit mode with keyboard support *(req: Interaction Requirements)*
 
 ### Step 4: Reorder Quests
 
 **Requirements covered:**
-- Re-sequence via keyboard (Alt+Up/Down) *(req: Actions > Re-sequence, Interaction Requirements)*
+- Re-sequence active quests via keyboard *(req: Actions > Re-sequence)*
 - Drag-and-drop reordering *(req: Actions > Re-sequence)*
-- Full keyboard navigation for all actions *(req: Interaction Requirements)*
+- Only active quests reorderable *(req: List Layout)*
+- Full keyboard navigation *(req: Interaction Requirements)*

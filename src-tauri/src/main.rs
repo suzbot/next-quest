@@ -24,8 +24,12 @@ fn main() {
         .manage(DbState(Mutex::new(conn)))
         .invoke_handler(tauri::generate_handler![
             commands::get_quests,
+            commands::get_completions,
             commands::add_quest,
             commands::complete_quest,
+            commands::update_quest,
+            commands::delete_quest,
+            commands::delete_completion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

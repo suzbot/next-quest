@@ -19,15 +19,15 @@
       padding: 16px;
     }
 
-    h1 {
-      font-size: 18px;
+    h1, h2 {
       text-transform: uppercase;
       letter-spacing: 3px;
-      margin-bottom: 16px;
       color: #e0e0e0;
     }
 
-    /* Add quest form */
+    h1 { font-size: 18px; margin-bottom: 16px; }
+    h2 { font-size: 13px; margin: 20px 0 8px 0; color: #888; }
+
     #add-form {
       display: flex;
       gap: 8px;
@@ -56,6 +56,15 @@
       text-align: center;
     }
 
+    #add-form select {
+      background: #16213e;
+      border: 1px solid #444;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 6px 8px;
+    }
+
     #add-form label {
       font-size: 12px;
       color: #888;
@@ -78,15 +87,13 @@
       outline: none;
     }
 
+    select:focus,
     input:focus {
       border-color: #888;
       outline: none;
     }
 
-    /* Quest list */
-    #quest-list {
-      list-style: none;
-    }
+    ul { list-style: none; }
 
     .quest-item {
       padding: 6px 8px;
@@ -96,9 +103,17 @@
       gap: 8px;
     }
 
+    .quest-item:focus {
+      outline: 1px solid #666;
+      outline-offset: -1px;
+    }
+
     .quest-title {
       flex: 1;
+      cursor: pointer;
     }
+
+    .quest-title:hover { color: #fff; }
 
     .quest-meta {
       display: flex;
@@ -108,22 +123,81 @@
       color: #666;
     }
 
-    /* Visual states */
-    .quest-due .quest-title {
-      color: #e0e0e0;
+    .quest-edit {
+      padding: 6px 8px;
+      border-bottom: 1px solid #222;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
-    .quest-completed .quest-title {
+    .quest-edit input[type="text"] {
+      flex: 1;
+      background: #16213e;
+      border: 1px solid #666;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 4px 6px;
+    }
+
+    .quest-edit input[type="number"] {
+      width: 60px;
+      background: #16213e;
+      border: 1px solid #666;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 4px 6px;
+      text-align: center;
+    }
+
+    .quest-edit select {
+      background: #16213e;
+      border: 1px solid #666;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 4px 6px;
+    }
+
+    .quest-edit label {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .edit-hint {
+      font-size: 11px;
       color: #555;
     }
 
-    .quest-done-oneoff .quest-title {
+    .quest-due .quest-title { color: #e0e0e0; }
+    .quest-cooldown .quest-title { color: #555; }
+
+    .quest-inactive { opacity: 0.4; }
+    .quest-inactive .quest-title {
+      color: #555;
+      cursor: default;
+    }
+
+    .completion-item {
+      padding: 4px 8px;
+      border-bottom: 1px solid #1a1a2e;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .completion-title {
+      flex: 1;
       text-decoration: line-through;
       color: #555;
     }
 
-    .quest-done-oneoff button {
-      visibility: hidden;
+    .completion-time {
+      color: #444;
+      font-size: 12px;
     }
 
     .empty-state {
@@ -131,6 +205,8 @@
       font-style: italic;
       padding: 16px 0;
     }
+
+    .hidden { display: none; }
   </style>
 </head>
 <body>
@@ -138,26 +214,46 @@
 
   <form id="add-form">
     <input type="text" id="quest-title" placeholder="Quest name..." autofocus>
-    <label>
+    <select id="quest-type" onchange="toggleCycleInput()">
+      <option value="recurring">Recurring</option>
+      <option value="one_off">One-off</option>
+    </select>
+    <label id="cycle-label">
       Days
-      <input type="number" id="quest-cycle" value="1" min="0">
+      <input type="number" id="quest-cycle" value="1" min="1">
     </label>
     <button type="submit">Add</button>
   </form>
 
   <ul id="quest-list"></ul>
 
+  <h2>Completed</h2>
+  <ul id="completion-list"></ul>
+
   <script>
     const { invoke } = window.__TAURI__.core;
 
     const questList = document.getElementById("quest-list");
+    const completionList = document.getElementById("completion-list");
     const addForm = document.getElementById("add-form");
     const titleInput = document.getElementById("quest-title");
+    const typeSelect = document.getElementById("quest-type");
     const cycleInput = document.getElementById("quest-cycle");
+    const cycleLabel = document.getElementById("cycle-label");
 
-    async function loadQuests() {
-      const quests = await invoke("get_quests");
+    let editingId = null;
+
+    function toggleCycleInput() {
+      cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
+    }
+
+    async function loadAll() {
+      const [quests, completions] = await Promise.all([
+        invoke("get_quests"),
+        invoke("get_completions"),
+      ]);
       renderQuests(quests);
+      renderCompletions(completions);
     }
 
     function renderQuests(quests) {
@@ -167,40 +263,159 @@
       }
 
       questList.innerHTML = quests
-        .map(q => {
-          const cycleText = q.cycle_days
-            ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
-            : "One-off";
-
-          // Determine visual state class
-          let stateClass;
-          if (!q.active && q.cycle_days === null) {
-            stateClass = "quest-done-oneoff";
-          } else if (q.is_due) {
-            stateClass = "quest-due";
-          } else {
-            stateClass = "quest-completed";
-          }
-
-          const lastDone = q.last_completed
-            ? formatTimestamp(q.last_completed)
-            : "";
-
-          return `<li class="quest-item ${stateClass}" data-id="${q.id}">
-            <button class="done-btn" onclick="completeQuest('${q.id}')">[Done]</button>
-            <span class="quest-title">${escapeHtml(q.title)}</span>
-            <span class="quest-meta">
-              <span class="quest-cycle">${cycleText}</span>
-              ${lastDone ? `<span class="quest-last-done">${lastDone}</span>` : ""}
-            </span>
-          </li>`;
-        })
+        .map(q => editingId === q.id ? renderEditMode(q) : renderQuestRow(q))
         .join("");
+
+      if (editingId) {
+        const el = document.getElementById("edit-title");
+        if (el) el.focus();
+      }
+    }
+
+    function renderQuestRow(q) {
+      const cycleText = q.quest_type === "recurring"
+        ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
+        : "One-off";
+
+      let stateClass;
+      if (!q.active) {
+        stateClass = "quest-inactive";
+      } else if (q.is_due) {
+        stateClass = "quest-due";
+      } else {
+        stateClass = "quest-cooldown";
+      }
+
+      const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
+
+      const doneBtn = q.active
+        ? `<button class="done-btn" onclick="completeQuest('${q.id}')">[Done]</button>`
+        : "";
+
+      return `<li class="quest-item ${stateClass}" data-id="${q.id}" tabindex="0"
+                  onkeydown="handleQuestKey(event, '${q.id}', '${escapeAttr(q.title)}')">
+        ${doneBtn}
+        <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
+        <span class="quest-meta">
+          <span>${cycleText}</span>
+          ${lastDone ? `<span>${lastDone}</span>` : ""}
+        </span>
+        <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">[Del]</button>
+      </li>`;
+    }
+
+    function renderEditMode(q) {
+      const isRecurring = q.quest_type === "recurring";
+      const cycleVal = q.cycle_days || 1;
+      return `<li class="quest-edit" data-id="${q.id}">
+        <input type="text" id="edit-title" value="${escapeAttr(q.title)}"
+               onkeydown="handleEditKey(event, '${q.id}')">
+        <select id="edit-type" onchange="toggleEditCycle()" onkeydown="handleEditKey(event, '${q.id}')">
+          <option value="recurring" ${isRecurring ? "selected" : ""}>Recurring</option>
+          <option value="one_off" ${!isRecurring ? "selected" : ""}>One-off</option>
+        </select>
+        <label id="edit-cycle-label" class="${isRecurring ? "" : "hidden"}">
+          Days
+          <input type="number" id="edit-cycle" value="${cycleVal}" min="1"
+                 onkeydown="handleEditKey(event, '${q.id}')">
+        </label>
+        <button onclick="saveEdit('${q.id}')">[Save]</button>
+        <button onclick="cancelEdit()">[Esc]</button>
+        <span class="edit-hint">Enter=save Esc=cancel</span>
+      </li>`;
+    }
+
+    function toggleEditCycle() {
+      const editType = document.getElementById("edit-type");
+      const editCycleLabel = document.getElementById("edit-cycle-label");
+      editCycleLabel.classList.toggle("hidden", editType.value === "one_off");
+    }
+
+    function renderCompletions(completions) {
+      if (completions.length === 0) {
+        completionList.innerHTML = '<li class="empty-state">No completions yet.</li>';
+        return;
+      }
+
+      completionList.innerHTML = completions
+        .map(c => `<li class="completion-item">
+            <span class="completion-title">${escapeHtml(c.quest_title)}</span>
+            <span class="completion-time">${formatTimestamp(c.completed_at)}</span>
+            <button onclick="deleteCompletion('${c.id}')">[Del]</button>
+          </li>`)
+        .join("");
+    }
+
+    function handleQuestKey(e, id, title) {
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        startEdit(id);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteQuest(id, title);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        completeQuest(id);
+      }
+    }
+
+    function startEdit(id) {
+      editingId = id;
+      loadAll();
+    }
+
+    function cancelEdit() {
+      editingId = null;
+      loadAll();
+    }
+
+    function handleEditKey(e, id) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        saveEdit(id);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelEdit();
+      }
+    }
+
+    async function saveEdit(id) {
+      const title = document.getElementById("edit-title").value.trim();
+      if (!title) return;
+
+      const questType = document.getElementById("edit-type").value;
+      const params = { questId: id, title, questType };
+
+      if (questType === "recurring") {
+        params.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
+      }
+
+      await invoke("update_quest", params);
+      editingId = null;
+      await loadAll();
     }
 
     async function completeQuest(id) {
       await invoke("complete_quest", { questId: id });
-      await loadQuests();
+      await loadAll();
+    }
+
+    async function deleteQuest(id, title) {
+      try {
+        await invoke("delete_quest", { questId: id });
+      } catch (e) {
+        const errDiv = document.createElement("div");
+        errDiv.style.cssText = "color:red;padding:8px;border:1px solid red;margin:4px 0";
+        errDiv.textContent = "Delete failed: " + e;
+        questList.prepend(errDiv);
+        return;
+      }
+      await loadAll();
+    }
+
+    async function deleteCompletion(id) {
+      await invoke("delete_completion", { completionId: id });
+      await loadAll();
     }
 
     addForm.addEventListener("submit", async (e) => {
@@ -208,13 +423,17 @@
       const title = titleInput.value.trim();
       if (!title) return;
 
-      const cycleDays = parseInt(cycleInput.value, 10);
-      const cycle_days = cycleDays > 0 ? cycleDays : null;
+      const questType = typeSelect.value;
+      const params = { title, questType };
 
-      await invoke("add_quest", { title, cycleDays: cycle_days });
+      if (questType === "recurring") {
+        params.cycleDays = parseInt(cycleInput.value, 10) || 1;
+      }
+
+      await invoke("add_quest", params);
       titleInput.value = "";
       titleInput.focus();
-      await loadQuests();
+      await loadAll();
     });
 
     function formatTimestamp(iso) {
@@ -232,7 +451,11 @@
       return div.innerHTML;
     }
 
-    loadQuests();
+    function escapeAttr(str) {
+      return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    loadAll();
   </script>
 </body>
 </html>
