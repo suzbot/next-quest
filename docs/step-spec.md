@@ -1,56 +1,64 @@
-# Step Spec: Phase 0, Step 3 — "Completion Redesign + Edit/Delete"
+# Step Spec: Phase 0, Step 4 — "Reorder Quests"
 
 ## Goal
 
-Completions become visible, independent records. Quests can be edited and
-deleted. Schema migrated to support the new model.
+Active quests can be reordered via keyboard and drag-and-drop. Sort order
+persists across restarts.
 
 ## Scope
 
-**Schema migration:**
-- Add `quest_title` (TEXT NOT NULL) to `quest_completion` — snapshot of title at completion time
-- Make `quest_id` nullable on `quest_completion` — quest may be deleted while completions remain
-- Backfill `quest_title` on existing completion records from their linked quest
-- Migration runs automatically on app launch (detect missing column, alter table)
-
 **Backend:**
-- Update `complete_quest` to snapshot `quest_title` into the completion record
-- Implement `get_completions` → returns all completions, ordered by completed_at descending
-- Implement `delete_completion` (completion_id) → deletes a single completion record
-- Update `delete_quest` → deletes the quest row, sets `quest_id = NULL` on its completions (does NOT delete them)
-- Fix `update_quest` to handle cycle_days = 0 as one-off (set to NULL)
+- Implement `reorder_quests` command — accepts a list of `{id, sort_order}`
+  pairs and batch-updates sort_order on the quest table.
+- Validate: all provided IDs must exist. Reject the batch if any are missing.
 
-**Frontend:**
-- Split list into two sections:
-  - **Active quests** (top): ordered by sort_order desc. Includes deactivated one-offs (greyed out).
-  - **Completion history** (bottom): reverse chronological. Strikethrough. Each row shows quest title, timestamp, [Del].
-- Active quest visual states:
-  - Due/refreshed: emphasized
-  - Recently completed (recurring): de-emphasized
-  - Deactivated one-off: greyed out, no [Done] button
-- Edit mode:
-  - Click title OR press E while quest row is focused to enter edit mode
-  - Tab to focus quest rows (tabindex on list items)
-  - Enter saves, Escape cancels
-- Delete quest: [Del] button, confirmation prompt. Available on all quests including deactivated one-offs.
-- Delete completion: [Del] button on completion rows, no confirmation needed (low stakes).
+**Frontend — Keyboard reordering:**
+- Alt+Up / Alt+Down moves the focused quest up/down in the active list.
+- Focus follows the moved quest (it stays focused after the move).
+- Arrow keys (Up/Down) move focus between quest rows without reordering.
+- Only active quests are reorderable. Inactive (greyed-out) one-offs cannot
+  be moved.
+
+**Frontend — Drag-and-drop reordering:**
+- Drag an active quest row to a new position in the active list.
+- Drop indicator shows where the quest will land.
+- Only active quests are draggable. Inactive one-offs are not draggable.
+- No external drag-and-drop library — vanilla HTML5 drag events.
+
+**Frontend — Focus navigation:**
+- Up/Down arrow keys move focus between quest rows (tab already works but
+  arrows are more natural for a list).
+- Focus does not leave the active quest section via arrows (stops at top/bottom).
 
 ## NOT in this step
 
-- Reorder / drag-and-drop (Step 4)
-- Full keyboard navigation between list items with arrow keys (Step 4)
+- Reordering completions (they stay reverse chronological, always)
+- Drag between sections (active ↔ completions)
+- Touch/mobile drag support
+- Undo reorder
+
+## Implementation Notes
+
+- `sort_order` is already stored as an integer on each quest. Higher = more
+  prominent (displayed first). The reorder command just reassigns these values.
+- After a reorder, the frontend calls `get_quests` to re-render with the
+  updated order (same pattern as all other mutations).
+- Keyboard reorder: on Alt+Up/Down, swap sort_order values of the focused quest
+  and its neighbor, then call `reorder_quests` with the two affected IDs.
+- Drag reorder: on drop, recalculate sort_order for all active quests based on
+  their new DOM positions, then call `reorder_quests` with the full list.
 
 ## Done When
 
-- Completions appear as their own rows in a history section below active quests
-- Completing a quest creates a visible completion row with title and timestamp
-- Deleting a quest leaves its completions in the history
-- Individual completions can be deleted
-- Editing a quest title, cycle works (including setting cycle to 0 for one-off)
-- Edit mode can be entered with keyboard (E key on focused row)
-- Existing data is migrated on app launch (no data loss)
-- Tests cover: schema migration, completion with title snapshot, delete quest preserves completions, delete completion, update cycle to one-off
+- Alt+Up / Alt+Down moves an active quest up/down and persists the new order
+- Focus follows the moved quest after reorder
+- Arrow keys navigate between quest rows
+- Dragging a quest to a new position works and persists
+- Inactive one-off quests cannot be moved or dragged
+- Completions section is unaffected
+- Tests cover: reorder_quests command, invalid ID rejection
 
 ## Next Step Preview
 
-Step 4: "Reorder Quests" — keyboard and drag-and-drop resequencing for active quests only.
+Step 5: Final cleanup — update design doc, mark Phase 0 complete, review for
+any remaining gaps before Phase 0.5.

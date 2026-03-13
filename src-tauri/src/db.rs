@@ -39,6 +39,12 @@ pub struct Quest {
     pub is_due: bool,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct QuestOrder {
+    pub id: String,
+    pub sort_order: i32,
+}
+
 #[derive(Serialize, Debug)]
 pub struct Completion {
     pub id: String,
@@ -374,6 +380,25 @@ pub fn delete_quest(conn: &Connection, quest_id: String) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+pub fn reorder_quests(conn: &Connection, orders: Vec<QuestOrder>) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("UPDATE quest SET sort_order = ?1 WHERE id = ?2")
+            .map_err(|e| e.to_string())?;
+        for o in &orders {
+            let rows = stmt
+                .execute(rusqlite::params![o.sort_order, o.id])
+                .map_err(|e| e.to_string())?;
+            if rows == 0 {
+                return Err(format!("Quest not found: {}", o.id));
+            }
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -723,6 +748,40 @@ mod tests {
     fn update_nonexistent_errors() {
         let conn = test_db();
         assert!(update_quest(&conn, "nope".into(), Some("x".into()), None, None).is_err());
+    }
+
+    // --- Reorder ---
+
+    #[test]
+    fn reorder_quests_swaps_order() {
+        let conn = test_db();
+        let a = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1)).unwrap();
+        let b = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1)).unwrap();
+        // B has higher sort_order, so it's first in get_quests (DESC)
+        let quests = get_quests(&conn).unwrap();
+        assert_eq!(quests[0].title, "B");
+        assert_eq!(quests[1].title, "A");
+
+        // Swap their sort_orders
+        reorder_quests(&conn, vec![
+            QuestOrder { id: a.id, sort_order: b.sort_order },
+            QuestOrder { id: b.id, sort_order: a.sort_order },
+        ]).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        assert_eq!(quests[0].title, "A");
+        assert_eq!(quests[1].title, "B");
+    }
+
+    #[test]
+    fn reorder_quests_invalid_id_errors() {
+        let conn = test_db();
+        let q = add_quest(&conn, "Real".into(), QuestType::Recurring, Some(1)).unwrap();
+        let result = reorder_quests(&conn, vec![
+            QuestOrder { id: q.id, sort_order: 5 },
+            QuestOrder { id: "nonexistent".into(), sort_order: 3 },
+        ]);
+        assert!(result.is_err());
     }
 
     // --- is_due logic ---

@@ -207,6 +207,11 @@
     }
 
     .hidden { display: none; }
+
+    .quest-item.dragging { opacity: 0.3; }
+    body.is-dragging { -webkit-user-select: none; user-select: none; }
+    .quest-item.drop-above { border-top: 2px solid #888; }
+    .quest-item.drop-below { border-bottom: 2px solid #888; }
   </style>
 </head>
 <body>
@@ -242,6 +247,8 @@
     const cycleLabel = document.getElementById("cycle-label");
 
     let editingId = null;
+    let cachedQuests = [];
+    let draggedId = null;
 
     function toggleCycleInput() {
       cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
@@ -257,6 +264,8 @@
     }
 
     function renderQuests(quests) {
+      cachedQuests = quests;
+
       if (quests.length === 0) {
         questList.innerHTML = '<li class="empty-state">No quests yet. Add one above.</li>';
         return;
@@ -293,7 +302,8 @@
         : "";
 
       return `<li class="quest-item ${stateClass}" data-id="${q.id}" tabindex="0"
-                  onkeydown="handleQuestKey(event, '${q.id}', '${escapeAttr(q.title)}')">
+                  onkeydown="handleQuestKey(event, '${q.id}', '${escapeAttr(q.title)}')"
+                  onpointerdown="${q.active ? `onPointerDown(event, '${q.id}')` : ''}">
         ${doneBtn}
         <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
         <span class="quest-meta">
@@ -347,7 +357,19 @@
     }
 
     function handleQuestKey(e, id, title) {
-      if (e.key === "e" || e.key === "E") {
+      if (e.key === "ArrowUp" && e.altKey) {
+        e.preventDefault();
+        moveQuest(id, -1);
+      } else if (e.key === "ArrowDown" && e.altKey) {
+        e.preventDefault();
+        moveQuest(id, 1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusAdjacentQuest(id, -1);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusAdjacentQuest(id, 1);
+      } else if (e.key === "e" || e.key === "E") {
         e.preventDefault();
         startEdit(id);
       } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -416,6 +438,124 @@
     async function deleteCompletion(id) {
       await invoke("delete_completion", { completionId: id });
       await loadAll();
+    }
+
+    function focusAdjacentQuest(id, direction) {
+      const items = Array.from(questList.querySelectorAll(".quest-item"));
+      const idx = items.findIndex(el => el.dataset.id === id);
+      const target = items[idx + direction];
+      if (target) target.focus();
+    }
+
+    async function moveQuest(id, direction) {
+      const items = Array.from(questList.querySelectorAll(".quest-item"));
+      const idx = items.findIndex(el => el.dataset.id === id);
+      const neighborIdx = idx + direction;
+
+      if (neighborIdx < 0 || neighborIdx >= items.length) return;
+      if (items[idx].classList.contains("quest-inactive")) return;
+      if (items[neighborIdx].classList.contains("quest-inactive")) return;
+
+      const neighborId = items[neighborIdx].dataset.id;
+      const moving = cachedQuests.find(q => q.id === id);
+      const neighbor = cachedQuests.find(q => q.id === neighborId);
+      if (!moving || !neighbor) return;
+
+      await invoke("reorder_quests", {
+        orders: [
+          { id: moving.id, sort_order: neighbor.sort_order },
+          { id: neighbor.id, sort_order: moving.sort_order },
+        ]
+      });
+
+      await loadAll();
+      const movedEl = questList.querySelector(`[data-id="${id}"]`);
+      if (movedEl) movedEl.focus();
+    }
+
+    let dragStartY = 0;
+    let isDragging = false;
+
+    function onPointerDown(e, id) {
+      if (e.target.closest("button")) return;
+      draggedId = id;
+      dragStartY = e.clientY;
+      isDragging = false;
+
+      const onMove = (me) => {
+        if (!isDragging && Math.abs(me.clientY - dragStartY) > 5) {
+          isDragging = true;
+          document.body.classList.add("is-dragging");
+          window.getSelection()?.removeAllRanges();
+          const el = questList.querySelector(`[data-id="${draggedId}"]`);
+          if (el) el.classList.add("dragging");
+        }
+        if (!isDragging) return;
+
+        clearDropIndicators();
+        const target = getDropTarget(me.clientY);
+        if (target && target.id !== draggedId) {
+          const rect = target.el.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          target.el.classList.add(me.clientY < mid ? "drop-above" : "drop-below");
+        }
+      };
+
+      const onUp = async (ue) => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+
+        if (!isDragging) { draggedId = null; return; }
+
+        const target = getDropTarget(ue.clientY);
+        clearDropIndicators();
+        document.body.classList.remove("is-dragging");
+        questList.querySelectorAll(".dragging").forEach(el => el.classList.remove("dragging"));
+
+        if (!target || target.id === draggedId) { draggedId = null; return; }
+
+        const activeQuests = cachedQuests.filter(q => q.active);
+        const draggedIdx = activeQuests.findIndex(q => q.id === draggedId);
+        if (draggedIdx === -1) { draggedId = null; return; }
+
+        const rect = target.el.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        let targetIdx = activeQuests.findIndex(q => q.id === target.id);
+        if (ue.clientY >= mid && targetIdx < draggedIdx) targetIdx++;
+        if (ue.clientY < mid && targetIdx > draggedIdx) targetIdx--;
+
+        const reordered = [...activeQuests];
+        const [moved] = reordered.splice(draggedIdx, 1);
+        reordered.splice(targetIdx, 0, moved);
+
+        const sortOrders = activeQuests.map(q => q.sort_order).sort((a, b) => b - a);
+        const orders = reordered.map((q, i) => ({ id: q.id, sort_order: sortOrders[i] }));
+
+        await invoke("reorder_quests", { orders });
+        draggedId = null;
+        isDragging = false;
+        await loadAll();
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    }
+
+    function getDropTarget(clientY) {
+      const items = Array.from(questList.querySelectorAll(".quest-item:not(.quest-inactive)"));
+      for (const el of items) {
+        const rect = el.getBoundingClientRect();
+        if (clientY >= rect.top && clientY <= rect.bottom) {
+          return { el, id: el.dataset.id };
+        }
+      }
+      return null;
+    }
+
+    function clearDropIndicators() {
+      questList.querySelectorAll(".drop-above, .drop-below").forEach(el => {
+        el.classList.remove("drop-above", "drop-below");
+      });
     }
 
     addForm.addEventListener("submit", async (e) => {
