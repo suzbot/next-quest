@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** MVP — "The Quest Giver"
+**Current phase:** Phase 0 — "The List"
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 
@@ -12,7 +12,17 @@ Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a 
 
 ## Quick Commands
 
-Build and run (TBD — will fill in once project is scaffolded)
+Build (debug):
+cargo tauri build --debug
+
+Run the built app:
+./src-tauri/target/debug/next-quest
+
+Tests:
+cd src-tauri && cargo test
+
+Dev mode (hot reload, when we add a frontend dev server):
+cargo tauri dev
 
 ## Architecture
 
@@ -23,7 +33,19 @@ Tauri app: Rust backend + web frontend.
 
 ### File Structure
 
-(TBD — will fill in once project is scaffolded)
+```
+ui/
+  index.html              # Frontend entry point (HTML/CSS/JS)
+src-tauri/
+  src/main.rs             # Rust entry point — launches the app
+  Cargo.toml              # Rust dependencies
+  tauri.conf.json         # App config (window size, title, build paths)
+  build.rs                # Tauri build hook
+package.json              # Node/frontend manifest
+CLAUDE.md                 # Dev guidelines (this file)
+VISION.md                 # Product vision and roadmap
+DATA_MODEL.md             # Entity definitions and relationships
+```
 
 ### Data Model
 
@@ -31,13 +53,51 @@ See [DATA_MODEL.md](DATA_MODEL.md) for entities, relationships, and quest select
 
 ## Collaboration
 
-**Discuss → Design → Tests → Implementation → Human Testing → Documentation**
+### Process for Each Feature/Phase
 
-- **Before writing code**: Discuss approach. Frame the problem first — current state, desired state, confirm alignment before implementing.
-- **Communication**: Functional terms, not code mechanics. Prose for tradeoffs, not multiple-choice. Recommend with options. The user is a PM — she'll engage deeply on entities, relationships, and system design, not syntax.
-- **Interaction**: The user has a vision — help realize it. If you don't understand the intent, ask for context. Don't ask "are you sure?" — if there are substantive concerns, present trade-offs. Trust user observations as evidence.
+1. **Requirements Discussion** — Talk through what we're building. Ask questions, surface ambiguities, explore edge cases. No docs yet — just conversation.
+2. **Requirements Doc** — Claude drafts, user refines. Lives in `docs/`. This is what we're building and why.
+3. **Tech Design Discussion** — Talk through how to build it. Entities, relationships, data flow, trade-offs.
+4. **Design Doc** — Claude drafts, user refines. Lives in `docs/`. This is how we're building it.
+5. **Step Spec** — Small implementation spec for the current slice of work. Scoped to what can be built, tested, and committed in one session.
+6. **Implementation** — Code to the step spec. Tests where appropriate.
+7. **Human Testing** — User runs the app and verifies.
+8. **Documentation** — Update data model, CLAUDE.md, and any other docs to reflect what was built.
+
+Do NOT skip steps or combine them without discussing it first. Do NOT draft docs that introduce decisions we haven't discussed.
+
+### Communication Style
+
+- **Functional terms, not code mechanics.** Prose for tradeoffs, not multiple-choice. Recommend with options.
+- **The user is a PM** — she'll engage deeply on entities, relationships, and system design, not syntax.
+- **Help realize the vision.** If you don't understand the intent, ask for context. Don't ask "are you sure?" — if there are substantive concerns, present trade-offs.
+- **Trust user observations as evidence.** Verify where they point, don't reason about why they can't be true.
 - **When things go wrong**: Gather evidence first before reasoning about causes. Don't speculate. Surface when stuck.
-- **Quality gates**: User must test before marking complete. Keep docs current.
+
+## Dependencies & Security
+
+- **Minimal dependencies**: Every npm package or Rust crate added to the app must be justified. Prefer fewer, well-known packages over many small ones.
+- **Document what we install**: When adding a dependency, log it in this section with what it does and why we need it. The user can't evaluate security claims about unfamiliar packages — the record itself is the guardrail.
+- **Prefer standard library**: Use Rust's std and browser-native APIs before reaching for a package.
+- **No silent installs**: Never add dependencies as a side effect of another step. Each one gets called out explicitly.
+
+### Installed Dependencies
+
+| Package | Type | What it does | Why we need it |
+|---|---|---|---|
+| tauri 2 | Rust | App framework — webview, window management, system APIs | Core framework |
+| serde 1 | Rust | Serialization/deserialization of data structures | Passing data between Rust and frontend |
+| serde_json 1 | Rust | JSON parsing | Data format for Rust ↔ frontend communication |
+| tauri-build 2 | Rust (build only) | Compiles Tauri config at build time | Required by Tauri |
+
+## Pacing & Breaks
+
+This is an ADHD productivity app being built by someone with ADHD. The development process must practice what the app preaches.
+
+- **Build in stopping points**: After each meaningful milestone (something builds, something runs, something is visible), pause and check in. Don't chain three more steps onto a win.
+- **Scope work in small chunks**: Propose work in pieces that can each be completed, tested, and committed independently. If a step has more than ~3 substeps, break it down further.
+- **It's always okay to stop**: Any commit point is a valid stopping point. Frame it that way — "this is a good place to pause if you want" — not as a cliffhanger to the next thing.
+- **Don't manufacture urgency**: Avoid "while we're at it" and "we should also." Stick to what was discussed.
 
 ## Design Principles
 

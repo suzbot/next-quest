@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Next Quest</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #1a1a2e;
+      color: #c8c8c8;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 14px;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 18px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      margin-bottom: 16px;
+      color: #e0e0e0;
+    }
+
+    /* Add quest form */
+    #add-form {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+
+    #add-form input[type="text"] {
+      flex: 1;
+      background: #16213e;
+      border: 1px solid #444;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 6px 8px;
+    }
+
+    #add-form input[type="number"] {
+      width: 60px;
+      background: #16213e;
+      border: 1px solid #444;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 6px 8px;
+      text-align: center;
+    }
+
+    #add-form label {
+      font-size: 12px;
+      color: #888;
+    }
+
+    #add-form button {
+      background: #16213e;
+      border: 1px solid #444;
+      color: #c8c8c8;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    #add-form button:hover,
+    #add-form button:focus {
+      border-color: #888;
+      color: #fff;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #888;
+      outline: none;
+    }
+
+    /* Quest list */
+    #quest-list {
+      list-style: none;
+    }
+
+    .quest-item {
+      padding: 6px 8px;
+      border-bottom: 1px solid #222;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .quest-title {
+      flex: 1;
+    }
+
+    .quest-cycle {
+      color: #666;
+      font-size: 12px;
+      margin-left: 12px;
+    }
+
+    .empty-state {
+      color: #555;
+      font-style: italic;
+      padding: 16px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Next Quest</h1>
+
+  <form id="add-form">
+    <input type="text" id="quest-title" placeholder="Quest name..." autofocus>
+    <label>
+      Days
+      <input type="number" id="quest-cycle" value="1" min="0">
+    </label>
+    <button type="submit">Add</button>
+  </form>
+
+  <ul id="quest-list"></ul>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    const questList = document.getElementById("quest-list");
+    const addForm = document.getElementById("add-form");
+    const titleInput = document.getElementById("quest-title");
+    const cycleInput = document.getElementById("quest-cycle");
+
+    async function loadQuests() {
+      const quests = await invoke("get_quests");
+      renderQuests(quests);
+    }
+
+    function renderQuests(quests) {
+      if (quests.length === 0) {
+        questList.innerHTML = '<li class="empty-state">No quests yet. Add one above.</li>';
+        return;
+      }
+
+      questList.innerHTML = quests
+        .map(q => {
+          const cycleText = q.cycle_days
+            ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
+            : "One-off";
+          return `<li class="quest-item">
+            <span class="quest-title">${escapeHtml(q.title)}</span>
+            <span class="quest-cycle">${cycleText}</span>
+          </li>`;
+        })
+        .join("");
+    }
+
+    addForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const title = titleInput.value.trim();
+      if (!title) return;
+
+      const cycleDays = parseInt(cycleInput.value, 10);
+      const cycle_days = cycleDays > 0 ? cycleDays : null;
+
+      await invoke("add_quest", { title, cycleDays: cycle_days });
+      titleInput.value = "";
+      titleInput.focus();
+      await loadQuests();
+    });
+
+    function escapeHtml(str) {
+      const div = document.createElement("div");
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    loadQuests();
+  </script>
+</body>
+</html>

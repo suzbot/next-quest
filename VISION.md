@@ -2,26 +2,27 @@
 
 ## The Core Insight
 
-The app is a **quest giver**, not a quest list.
+The app is not just quest list, it is a **quest giver**.
 
 The #1 ADHD trap with task apps is that *managing the system becomes the task*.
-Next Quest flips this: you tell it your goals and values once, and it tells you
+Next Quest flips this: you tell it your goals and values, and it suggests
 **one thing to do right now**. It's the NPC you walk up to who says
-"Your next quest is..." — not the 47-page journal you never open again.
+"Your next quest is..."
 
 ### RPG Theme
-The entire UX is framed as an RPG. You're not "checking off tasks" — you're
-completing quests, earning XP, leveling up your character, and progressing
-through skill trees. The language, visuals, and feedback loops all reinforce
-this framing. Tasks are quests. Categories are guilds or skill lines. Big goals
-are quest chains. Daily stuff is grinding. Hard stuff is boss fights.
+The entire UX is framed as an RPG. You're not "checking off tasks" — 
+you're completing quests, earning XP, leveling up your character, and progressing skills. 
+The language, visuals, and feedback loops all reinforce this framing. 
+Tasks are quests. Multi-step endeavors are Epics or Sagas.
 
 ### Hard Rule: No Streaks
 Streaks are punishment systems disguised as motivation. One missed day breaks
 the streak, and now the system that was supposed to help you feels like another
 thing you failed at. Next Quest never tracks consecutive days. Every day is a
-fresh start. Your XP and levels only go up — they never decay, reset, or
-punish absence. You pick up exactly where you left off.
+fresh start.
+
+Instead of tasks being on a strict schedule, there's a refresh rate of when the quest giver will start reminding you of them.
+This doesn't keep you from completing them and earning XP as early and as often as you want.
 
 ---
 
@@ -29,45 +30,27 @@ punish absence. You pick up exactly where you left off.
 
 | Problem | Design Response |
 |---|---|
-| Hyperfocus on computer — forget to do life | **Interrupt system**: timed prompts that pull you away |
+
 | No routine sticks | **Quest rotation**: the app remembers recurring tasks so you don't have to |
 | Can't initiate | **One quest at a time**: no list paralysis, just "do this" |
-| Big goals feel overwhelming | **Quest chains**: big goals broken into tiny steps, revealed one at a time |
-| To-do lists grow forever | **The app manages the list, not you**: you seed it, it curates |
-| Don't know where to start (home repair, etc.) | **Template quest chains**: prebuilt breakdowns for common life tasks |
+| Big goals feel overwhelming | **Epics**: big goals broken into tiny steps, revealed one at a time |
+| Hyperfocus on computer — forget to do life | **Interrupt system**: timed prompts that pull you away |
 | Limited energy budget | **Energy modes**: "Daily Maintenance" vs "Boss Fight" mode |
 | Need to clear small stuff before tackling big stuff | **Gearing Up**: daily mode clears the deck, then unlocks boss mode |
+| Don't know where to start (home repair, etc.) | **Template epics**: prebuilt breakdowns for common life tasks |
 
 ## What Motivates (The Reward System)
 
-- **Character progression**: RPG-style avatar that visibly levels up
 - **Skill/Attribute/Badge system** (from Dominate Life model):
   - **Attributes** = personal values (Discipline, Health, Creativity, etc.)
   - **Skills** = directional goals (Reading, Fitness, Cooking, etc.)
   - **Badges** = discrete achievements (2026 Spring Cleaning, Read 12 Books, etc.)
 - **XP for stepping away**: lock timer gives XP (Focus Hero model)
 - **Visual meters**: progress bars, daily completion arcs (NO streaks — ever)
+- **Character progression**: RPG-style avatar that visibly levels up
 - **Bounded rewards**: "Do this quest, earn 30 min free computer time"
 
-## Modes
 
-### Daily Maintenance Mode ("Grinding")
-- Recurring quests: shower, meds, dishes, laundry, etc.
-- Low-energy, rote tasks
-- Quick XP, keeps the basics running
-- Clears the mental deck
-
-### Boss Fight Mode ("Raiding")
-- Bigger goal quest chains (revealed one step at a time)
-- Requires more focus/energy
-- Unlocked after daily basics are handled (or manually overridden)
-- Deeper XP rewards, badge progress
-
-### Focus Mode ("AFK Quest")
-- Computer locks/dims, timer runs
-- XP accrues while you're away on your quest
-- Return triggers quest completion + reward feedback
-- Optional: background audio continues (ambient/podcast)
 
 ## Novelty Engine (Future)
 
@@ -84,11 +67,11 @@ The system that keeps the system fresh:
 
 ```
 +---------------------------+
-|   Quest Giver UI          |  <- What you see: one quest, your character, meters
+|   Quest Giver UI          |  <- What you see: one quest, your list, your character, meters
 +---------------------------+
-|   Quest Selector Engine   |  <- Picks the next quest based on mode, energy, time
+|   Quest Selector Engine   |  <- Picks the next quest based on mode, energy, last completed, time of day, difficulty, etc
 +---------------------------+
-|   Quest Library           |  <- All quests: recurring, chains, templates, custom
+|   Quest Library           |  <- All quests: recurring, sagas, templates, custom
 +---------------------------+
 |   Character & Progression |  <- XP, levels, skills, attributes, badges
 +---------------------------+
@@ -98,52 +81,71 @@ The system that keeps the system fresh:
 
 ---
 
-## MVP (Phase 1): "The Quest Giver"
+## (Phase 0): "The List"
 
-The smallest thing that's already useful:
+Basic Function to start using the app
+
+1. **Quest list view**: where you seed and review a basic tasks structure
+  a. Ability to view, add, and edit recurring and one off tasks
+    i.  Task Name
+    ii. Cycle (how frequestly would like to be offered quest)
+  b. Ability to mark as 'Done'
+  c. See 'Last Done' Date/Time
+  d. Ability to re-sequence tasks
+
+
+## Phase 0.5 - "Table Stakes"
+
+Getting in line with what's already out there (Dominate Life), so I use this instead
+
+ 1. **Character View**: Text to start
+    a. See Level and XP
+    b. Attributes (Default: Health, Pluck, Knowledge, Connection, Responsibility)
+    d. CRUD SKills (Defaults: Nature, Buerecracy, Language, Animal Handling, Cooking, Community, Cleaning, Sociality, Logistics, Healing, Crafting, Acrobatics)
+ 
+2. Incorporate Difficulty Level to Task (Trivial, Easy, Moderate, Challenging, Epic)
+
+ 3. Link tasks to skills/attributes/values, so that on task completion
+    a. General XP / Level goes up based on cycle and difficulty of completed task
+    b. Attribute XP/level progresses based on cycle and difficulty, if associated to completed task
+    c. Skill XP/level progresses based on cycle and difficulty, if associated to completed task
+    d. Values are adjusted toward one end of the spectrum or the other
+
+
+## (Phase 1): "The Quest Giver"
+
+The smallest new thing that's already useful:
 
 1. **Menu bar app** (lives in your Mac's top bar, always accessible)
-2. **One screen**: shows your next quest + a "Done" button
-3. **Quest pool**: you seed ~10-20 simple tasks (recurring dailies + a few one-offs)
-4. **Quest selection**: app picks one for you based on simple rules (time of day, not-recently-done)
-5. **XP + Level**: completing quests gives XP. You have a level. It goes up. Dopamine.
-6. **Break timer**: "Step away for 15 min" prompt on a configurable interval. XP for honoring it.
-7. **Daily reset**: recurring quests refresh each day (no streak tracking — just fresh quests)
+2. **Interruption** Notification you have a quest
+2. **Next Quest View**: shows your next quest + a "Quest Now", "Done", and "Something Else" buttons
+      -- can also 'quest now' on an item directly from list
+4. **Quest selection**: app picks one for you based on simplest rule (not-recently-done)
+6. **Break timer**: Keeps track of how long you are AFK after selecting "Quest Now"
+7. **Quest reset**: recurring quests are suggested according to their cycle
 
-**What MVP deliberately leaves out:**
-- Character avatar/visuals (just a level number + XP bar for now)
-- Quest chains / big goals (just flat tasks)
-- Energy modes (just one mode)
-- Templates
-- Audio integration
-- Novelty engine
-
-This gets you a working quest giver in days, not months. You start using it
-immediately, and the feedback from real use shapes what Phase 2 looks like.
 
 ## Phase 2: "Level Up"
 
-- Character with visual progression
-- Attributes, Skills, Badges
-- Two modes (Daily Maintenance / Boss Fight)
-- Quest chains for bigger goals
+- Graphics
+- More quest attributes and logic
+- Smarter quest giving
+- Sagas for bigger goals
+- Multiple Quest Givers
+- Receive coin and items from questing
+- Badges, Rewards
+- Buy stuff with gold
+- Editable Attributes and SKills
+- Elemental Alignment Matrix: Fire (Fight, Shout, Hot and Bright) <-> Water (Follow, Attune, Adapt, Flow, Listen, Reflect), Earth (Grounded, Solidity, Present,) <-> Sky (Abstract, Future/Past, Thinking, Planning, Remembering) Centered: Green, Growth
+
 
 ## Phase 3: "The Full Party"
 
-- Focus/AFK timer with XP
-- Template quest chains
+- Character image with visual progression
 - Novelty engine
+- Template Sagas
+- Training / Patrolling / Battling Modes
 - Bounded reward system (computer time earning)
 
----
 
-## Tech Decision (TBD)
 
-Options for a Mac desktop app:
-- **SwiftUI** (native macOS, best for menu bar apps, notifications, system integration)
-- **Tauri** (Rust + web frontend, cross-platform potential, lighter than Electron)
-- **Electron** (web tech, heaviest, but most flexible UI)
-
-Recommendation: **SwiftUI** if we're committed to Mac-only. Gives us native menu bar,
-notifications, screen dimming, and feels right at home. But we should decide based on
-your comfort level and whether you might want this on other devices later.

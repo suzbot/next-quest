@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "Next Quest",
+  "version": "0.1.0",
+  "identifier": "com.nextquest.desktop",
+  "build": {
+    "frontendDist": "../ui",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Next Quest",
+        "width": 400,
+        "height": 600
+      }
+    ]
+  }
+}
