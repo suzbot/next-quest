@@ -69,60 +69,121 @@ fn main() {
             commands::get_settings,
             commands::set_cta_interval,
             commands::toggle_call_to_adventure,
+            commands::dismiss_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");
 }
 
+fn format_countdown(remaining_ms: u64) -> String {
+    let total_secs = (remaining_ms / 1000) as u64;
+    let m = total_secs / 60;
+    let s = total_secs % 60;
+    format!("{:02}:{:02}", m, s)
+}
+
+fn update_tray_title(app: &tauri::AppHandle, title: &str) {
+    if let Some(tray) = app.tray_by_id("nq_tray") {
+        let _ = tray.set_title(Some(title));
+    }
+}
+
 fn cta_poll_loop(app: tauri::AppHandle) {
     loop {
-        // Read the current interval
-        let interval_secs = {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
+
+        // Read tray state (release lock before acquiring others)
+        let (cta_on, next_fire) = {
             let tray_state = app.state::<AppTrayState>();
             let tray = tray_state.0.lock().unwrap();
-            tray.cta_interval_secs
+            (tray.call_to_adventure, tray.cta_next_fire)
         };
 
-        // Sleep for the interval
-        std::thread::sleep(std::time::Duration::from_secs(interval_secs));
-
-        // Check conditions
-        let should_fire = {
-            let tray_state = app.state::<AppTrayState>();
-            let tray = tray_state.0.lock().unwrap();
-            if !tray.call_to_adventure {
-                false
-            } else {
-                let timer_state = app.state::<AppTimerState>();
-                let timer = timer_state.0.lock().unwrap();
-                if timer.quest_id.is_some() {
-                    // Timer running — don't interrupt
-                    false
-                } else {
-                    // Check if main window is focused
-                    let window_focused = app
-                        .get_webview_window("main")
-                        .map(|w| w.is_focused().unwrap_or(false))
-                        .unwrap_or(false);
-                    !window_focused
-                }
-            }
-        };
-
-        if should_fire {
-            // Check if there's actually a quest to suggest
-            let has_quest = {
-                let db_state = app.state::<DbState>();
-                let conn = db_state.0.lock().unwrap();
-                db::get_next_quest(&conn, 0)
-                    .map(|q| q.is_some())
-                    .unwrap_or(false)
-            };
-
-            if has_quest {
-                // For now, emit an event. Step 5b will show the overlay window.
-                let _ = tauri::Emitter::emit(&app, "call-to-adventure", ());
-            }
+        if !cta_on {
+            update_tray_title(&app, "");
+            continue;
         }
+
+        if now < next_fire {
+            update_tray_title(&app, &format_countdown(next_fire - now));
+            continue;
+        }
+
+        // Check timer (separate lock)
+        let timer_running = {
+            let timer_state = app.state::<AppTimerState>();
+            let timer = timer_state.0.lock().unwrap();
+            timer.quest_id.is_some()
+        };
+
+        if timer_running {
+            update_tray_title(&app, "");
+            continue;
+        }
+
+        // Check window focus
+        let window_focused = app
+            .get_webview_window("main")
+            .map(|w| w.is_focused().unwrap_or(false))
+            .unwrap_or(false);
+
+        if window_focused {
+            continue;
+        }
+
+        // Check overlay not already showing
+        if app.get_webview_window("overlay").is_some() {
+            continue;
+        }
+
+        // Check there's a quest to suggest
+        let has_quest = {
+            let db_state = app.state::<DbState>();
+            let conn = db_state.0.lock().unwrap();
+            db::get_next_quest(&conn, 0)
+                .map(|q| q.is_some())
+                .unwrap_or(false)
+        };
+
+        if has_quest {
+            update_tray_title(&app, "");
+            show_overlay(&app);
+
+            let tray_state = app.state::<AppTrayState>();
+            let mut tray = tray_state.0.lock().unwrap();
+            tray.reset_fire_time();
+        }
+    }
+}
+
+fn show_overlay(app: &tauri::AppHandle) {
+    use tauri::WebviewWindowBuilder;
+
+    if app.get_webview_window("overlay").is_some() {
+        return;
+    }
+
+    match WebviewWindowBuilder::new(
+        app,
+        "overlay",
+        tauri::WebviewUrl::App("overlay.html".into()),
+    )
+    .title("")
+    .inner_size(300.0, 130.0)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(false)
+    .minimizable(false)
+    .center()
+    .focused(true)
+    .build()
+    {
+        Ok(_) => {}
+        Err(e) => eprintln!("[CTA] Failed to create overlay: {}", e),
     }
 }

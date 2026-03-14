@@ -20,6 +20,7 @@ pub struct AppTimerState(pub Mutex<TimerStateInner>);
 pub struct TrayStateInner {
     pub call_to_adventure: bool,
     pub cta_interval_secs: u64,
+    pub cta_next_fire: u64, // Unix millis — when to next show the overlay
 }
 
 impl TrayStateInner {
@@ -27,7 +28,16 @@ impl TrayStateInner {
         TrayStateInner {
             call_to_adventure: false,
             cta_interval_secs: 1200, // 20 minutes
+            cta_next_fire: 0,
         }
+    }
+
+    pub fn reset_fire_time(&mut self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
+        self.cta_next_fire = now + (self.cta_interval_secs * 1000);
     }
 }
 
@@ -227,11 +237,15 @@ pub fn start_timer(
 #[tauri::command]
 pub fn cancel_timer(
     timer_state: State<AppTimerState>,
+    tray_state: State<AppTrayState>,
 ) -> Result<(), String> {
     let mut timer = timer_state.0.lock().map_err(|e| e.to_string())?;
     timer.quest_id = None;
     timer.quest_title = None;
     timer.started_at = None;
+    // Reset CTA fire time so polling restarts
+    let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+    tray.reset_fire_time();
     Ok(())
 }
 
@@ -239,6 +253,7 @@ pub fn cancel_timer(
 pub fn complete_timer(
     db_state: State<DbState>,
     timer_state: State<AppTimerState>,
+    tray_state: State<AppTrayState>,
 ) -> Result<db::Completion, String> {
     let quest_id = {
         let timer = timer_state.0.lock().map_err(|e| e.to_string())?;
@@ -254,6 +269,10 @@ pub fn complete_timer(
     timer.quest_id = None;
     timer.quest_title = None;
     timer.started_at = None;
+
+    // Reset CTA fire time so polling restarts
+    let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+    tray.reset_fire_time();
 
     Ok(completion)
 }
@@ -299,6 +318,9 @@ pub fn toggle_call_to_adventure(
     let new_val = {
         let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
         tray.call_to_adventure = !tray.call_to_adventure;
+        if tray.call_to_adventure {
+            tray.reset_fire_time();
+        }
         tray.call_to_adventure
     };
     crate::tray::rebuild_tray_menu(&app);
@@ -313,6 +335,41 @@ pub fn set_cta_interval(
     let minutes = if minutes < 1 { 1 } else { minutes };
     let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
     tray.cta_interval_secs = minutes * 60;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn dismiss_overlay(
+    app: tauri::AppHandle,
+    tray_state: State<AppTrayState>,
+    action: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    // Close the overlay window
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let _ = overlay.close();
+    }
+
+    match action.as_str() {
+        "open" => {
+            // Show and focus the main window
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            // Reset fire time so it doesn't immediately fire again
+            let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+            tray.reset_fire_time();
+        }
+        "later" => {
+            // Restart the interval
+            let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+            tray.reset_fire_time();
+        }
+        _ => {}
+    }
+
     Ok(())
 }
 

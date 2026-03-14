@@ -71,6 +71,9 @@ fn handle_menu_event(app: &AppHandle, event_id: &str) {
             let tray_state = app.state::<AppTrayState>();
             let mut tray = tray_state.0.lock().unwrap();
             tray.call_to_adventure = !tray.call_to_adventure;
+            if tray.call_to_adventure {
+                tray.reset_fire_time();
+            }
             drop(tray);
             rebuild_tray_menu(app);
             if let Some(window) = app.get_webview_window("main") {
