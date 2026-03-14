@@ -19,6 +19,16 @@ pub struct AppTimerState(pub Mutex<TimerStateInner>);
 #[derive(Default)]
 pub struct TrayStateInner {
     pub call_to_adventure: bool,
+    pub cta_interval_secs: u64,
+}
+
+impl TrayStateInner {
+    pub fn new() -> Self {
+        TrayStateInner {
+            call_to_adventure: false,
+            cta_interval_secs: 1200, // 20 minutes
+        }
+    }
 }
 
 pub struct AppTrayState(pub Mutex<TrayStateInner>);
@@ -259,5 +269,50 @@ pub fn get_timer_state(
         quest_title: timer.quest_title.clone(),
         started_at: timer.started_at,
     })
+}
+
+// --- Settings ---
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsInfo {
+    pub call_to_adventure: bool,
+    pub cta_interval_minutes: u64,
+}
+
+#[tauri::command]
+pub fn get_settings(
+    tray_state: State<AppTrayState>,
+) -> Result<SettingsInfo, String> {
+    let tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+    Ok(SettingsInfo {
+        call_to_adventure: tray.call_to_adventure,
+        cta_interval_minutes: tray.cta_interval_secs / 60,
+    })
+}
+
+#[tauri::command]
+pub fn toggle_call_to_adventure(
+    app: tauri::AppHandle,
+    tray_state: State<AppTrayState>,
+) -> Result<bool, String> {
+    let new_val = {
+        let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+        tray.call_to_adventure = !tray.call_to_adventure;
+        tray.call_to_adventure
+    };
+    crate::tray::rebuild_tray_menu(&app);
+    Ok(new_val)
+}
+
+#[tauri::command]
+pub fn set_cta_interval(
+    tray_state: State<AppTrayState>,
+    minutes: u64,
+) -> Result<(), String> {
+    let minutes = if minutes < 1 { 1 } else { minutes };
+    let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+    tray.cta_interval_secs = minutes * 60;
+    Ok(())
 }
 

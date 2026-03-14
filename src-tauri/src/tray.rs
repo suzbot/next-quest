@@ -1,7 +1,7 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager,
+    AppHandle, Emitter, Manager,
 };
 
 use crate::commands::AppTrayState;
@@ -73,6 +73,9 @@ fn handle_menu_event(app: &AppHandle, event_id: &str) {
             tray.call_to_adventure = !tray.call_to_adventure;
             drop(tray);
             rebuild_tray_menu(app);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.emit("settings-changed", ());
+            }
         }
 
         "open_app" => {

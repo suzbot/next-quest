@@ -1,163 +1,149 @@
-# Step Spec: Phase 1, Step 4 — "System Tray & Close-to-Tray"
+# Step Spec: Phase 1, Step 5 — "Call to Adventure"
 
 ## Goal
 
-The app lives in the Mac menu bar. A native tray menu lets you see your
-current quest and act on it without opening the full window. Closing the
-window hides it instead of quitting — the app stays running in the tray.
+The app reaches out and interrupts you. When Call to Adventure is on and a
+quest is due, an overlay pops up over your work after a configurable interval.
+Click it to go to the quest, or hit Maybe Later to snooze. A new Settings
+tab holds the interval config and the reset buttons (moved from Character).
 
-## Scope
+Split into two sub-steps with a testing checkpoint after each.
 
-### Cargo Feature
+---
 
-Add `tray-icon` to the tauri dependency:
+## Step 5a: Settings Tab + Polling Infrastructure
 
-```toml
-tauri = { version = "2", features = ["tray-icon"] }
-```
+### Settings Tab
 
-### Tray Icon
+New nav tab: `[Quest Giver] [Quests] [Character] [Settings]`
 
-Created in `main.rs` via `TrayIconBuilder` inside `.setup()`. Uses the
-app's default window icon. On macOS, set `icon_as_template(true)` so it
-adapts to dark/light menu bar.
+**Settings view contains:**
+- **Call to Adventure interval**: number input, in minutes, default 20.
+  Saved via a new backend command. Label: "Call to Adventure interval (minutes)"
+- **Reset buttons** (moved from Character view):
+  - [Reset Char] — zeroes all XP
+  - [Reset Quests] — deletes all quests
+  - [Reset History] — deletes all completions
+  - Same two-click "Sure?" confirmation behavior
 
-### Native Tray Menu — Selection Mode
+### Backend Changes
 
-```
-Take a shower                    ← quest name (disabled label)
-─────────────
-Done
-Quest Now
-Something Else
-─────────────
-✓ Call to Adventure              ← checkbox, toggles on/off
-─────────────
-Open Next Quest                  ← show/focus main window
-Quit                             ← exit the app
-```
-
-If no quests are due: the quest name item shows "All caught up" (disabled).
-If no quests exist: shows "No quests yet" (disabled).
-
-### Native Tray Menu — Timer Mode
-
-```
-Questing: Take a shower          ← quest name with prefix (disabled label)
-─────────────
-Done
-Cancel
-─────────────
-✓ Call to Adventure
-─────────────
-Open Next Quest
-Quit
-```
-
-Timer elapsed time is NOT shown in the native menu (native menus don't
-update dynamically while open). The timer is visible in the main window.
-
-### Menu Event Handling
-
-All menu events handled in `.on_menu_event()`:
-
-| Menu Item | Action |
-|---|---|
-| Done (selection) | Call `complete_quest`, rebuild menu, emit event |
-| Quest Now | Call `start_timer`, rebuild menu, emit event |
-| Something Else | Increment skip count, rebuild menu |
-| Done (timer) | Call `complete_timer`, rebuild menu, emit event |
-| Cancel | Call `cancel_timer`, rebuild menu, emit event |
-| Call to Adventure | Toggle checkbox state (stored in app state) |
-| Open Next Quest | Show + focus main window |
-| Quit | `app.exit(0)` |
-
-### Menu Rebuild
-
-A helper function `rebuild_tray_menu` reads current state (next quest,
-timer, Call to Adventure toggle) and replaces the tray menu. Called after
-every state-changing action.
-
-The tray handler needs access to `DbState` and `AppTimerState` — these
-are already managed by Tauri and accessible via `app.state()`.
-
-### Skip Count State
-
-The tray menu's Something Else needs its own skip count (separate from
-the frontend's `nextQuestIndex`). Add to the managed app state:
-
+**TrayStateInner gains interval:**
 ```rust
-pub struct TrayState {
-    pub skip_count: i32,
+pub struct TrayStateInner {
     pub call_to_adventure: bool,
+    pub cta_interval_secs: u64,     // default 1200 (20 min)
 }
 ```
 
-Reset `skip_count` to 0 on Done or when quests change.
+**New commands:**
+| Command | What it does |
+|---|---|
+| `get_settings()` | Returns Call to Adventure state and interval |
+| `set_cta_interval(minutes)` | Updates the polling interval |
 
-### Close-to-Tray
+### Polling Thread
 
-Intercept window close via `.on_window_event()`:
+A background thread spawned in `.setup()` that runs the Call to Adventure
+check loop.
 
-```rust
-.on_window_event(|window, event| {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        window.hide().unwrap();
-        api.prevent_close();
-    }
-})
+**Rules:**
+- Sleeps for the configured interval, then checks conditions
+- Only proceeds when Call to Adventure is ON
+- Does NOT proceed when a break timer is running
+- Does NOT proceed when the main window is focused
+- Resets the interval when:
+  - Maybe Later is pressed (Step 5b)
+  - A break timer stops (Done or Cancel)
+  - Call to Adventure is toggled ON
+- When toggled OFF, the thread skips on its next wake
+
+**For Step 5a:** When conditions are met, the thread emits a
+`"call-to-adventure"` Tauri event (logged in the console). The overlay
+window is wired up in Step 5b.
+
+### 5a Testing Checkpoint
+
+- Settings tab appears with interval input (default 20)
+- Changing the interval saves the value
+- Reset buttons appear on Settings tab, removed from Character tab
+- Reset buttons still work with "Sure?" confirmation
+- Call to Adventure toggle in tray menu still works
+- With Call to Adventure ON and a quest due: after the interval, a
+  console event fires (visible in dev tools if running `cargo tauri dev`,
+  otherwise just verify the thread runs without crashing)
+- Event does NOT fire when timer is running or window is focused
+- All existing tests pass, app builds and runs
+
+---
+
+## Step 5b: Overlay Window
+
+### Overlay Window
+
+A small Tauri window — borderless, always-on-top, centered on the main
+screen. Appears over whatever the user is doing.
+
+**Content:**
+```
+   A quest awaits...
+
+      [Maybe Later]
 ```
 
-The app continues running in the tray. "Open Next Quest" shows the window
-again. "Quit" exits the app.
+- Clicking anywhere on the overlay (except Maybe Later) shows and focuses
+  the main window on the Quest Giver tab, then closes the overlay.
+- **Maybe Later** closes the overlay and restarts the polling interval.
 
-### Tray → Window Sync
+**Window properties:**
+- Borderless (no title bar)
+- Always on top
+- Dark background matching the app aesthetic
+- Small and centered — roughly 300x120
+- Not resizable, not minimizable
 
-After the tray performs a state-changing action (Done, Quest Now, Cancel,
-Something Else), emit a Tauri event so the frontend reloads:
+### overlay.html
 
-```rust
-app.emit("quest-state-changed", ()).ok();
-```
+A separate small HTML file for the overlay window content:
 
-Frontend listens on startup:
-```javascript
-window.__TAURI__.event.listen("quest-state-changed", () => loadAll());
-```
+- `openApp()` — invokes `dismiss_overlay` with action `"open"`
+- `maybeLater()` — invokes `dismiss_overlay` with action `"later"`,
+  stops event propagation so it doesn't also trigger openApp
 
-### Window → Tray Sync
+The backend handles the response: "open" shows the main window and
+closes the overlay, "later" restarts the polling interval and closes
+the overlay.
 
-When the frontend changes state (Done, Quest Now, etc.), the tray menu
-needs rebuilding. Emit an event from the frontend, or rebuild the menu
-in the relevant Tauri commands.
+### Backend Changes
 
-Simplest approach: the tray menu is rebuilt at the start of every menu
-open (Tauri doesn't have a "menu will open" hook, so instead rebuild
-after every command that changes quest/timer state). Since `complete_quest`,
-`start_timer`, `cancel_timer`, `complete_timer`, and `add_quest` are the
-state-changing commands, we rebuild after each.
+**New commands:**
+| Command | What it does |
+|---|---|
+| `dismiss_overlay(action)` | Closes overlay. "open" shows main window, "later" restarts interval |
 
-Alternative: rebuild on a short interval (every few seconds). Simpler
-to implement but slightly wasteful.
+**Polling thread change:** Instead of emitting an event, the thread
+creates/shows the overlay window when conditions are met. Does not
+show a second overlay if one is already visible.
 
-Recommend: rebuild in the commands themselves, since we already have the
-state access there.
+### 5b Testing Checkpoint
+
+- With Call to Adventure ON and a quest due: after the interval, overlay
+  appears over current work
+- Clicking the overlay opens the main window on Quest Giver tab
+- Clicking Maybe Later dismisses the overlay, interval restarts
+- Overlay does NOT appear when timer is running
+- Overlay does NOT appear when main window is focused
+- Completing or cancelling a timer resets the interval
+- Toggling Call to Adventure ON resets the interval
+- All existing tests pass, app builds and runs
+
+---
 
 ## NOT in this step
 
-- Call to Adventure overlay (Group C)
-- Call to Adventure polling/interval logic (Group C)
-- Custom tray icon (future)
-- Dynamic timer display in tray menu (not possible with native menus)
-
-## Done When
-
-- App shows an icon in the Mac menu bar
-- Clicking the icon shows a native menu with the current quest
-- Done/Quest Now/Something Else/Cancel work from the tray menu
-- Call to Adventure toggle appears (no overlay behavior yet — just the toggle)
-- "Open Next Quest" shows/focuses the main window
-- "Quit" exits the app
-- Closing the main window hides it; app stays in tray
-- Tray and window stay in sync (actions in one reflect in the other)
-- All existing tests pass, app builds and runs
+| Deferred Item | Planned For |
+|---|---|
+| Persistent settings (survive app restart) | Phase 1 Step 6 — small follow-up to store settings in SQLite |
+| Overlay on all screens | Later if needed |
+| Sound/audio on overlay | Separate from peon-ping |
+| Quest details on the overlay | Later if needed |

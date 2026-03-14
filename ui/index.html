@@ -452,6 +452,7 @@
     <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')">[Quest Giver]</button>
     <button id="nav-quests" onclick="showView('quests')">[Quests]</button>
     <button id="nav-character" onclick="showView('character')">[Character]</button>
+    <button id="nav-settings" onclick="showView('settings')">[Settings]</button>
   </div>
 
   <div id="quest-giver-view">
@@ -493,7 +494,24 @@
 
   <div id="character-view" class="hidden">
     <div id="char-content"></div>
-    <div class="reset-section">
+  </div>
+
+  <div id="settings-view" class="hidden">
+    <h1>Settings</h1>
+
+    <h2>Call to Adventure</h2>
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+      <button id="cta-toggle-btn" onclick="toggleCTA()">[OFF]</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+      <label>Interval (minutes)
+        <input type="number" id="cta-interval" value="20" min="1" style="width: 60px; background: #16213e; border: 1px solid #444; color: #e0e0e0; font-family: inherit; font-size: 14px; padding: 4px 6px; text-align: center;">
+      </label>
+      <button onclick="saveCTAInterval()">[Save]</button>
+    </div>
+
+    <h2>Reset</h2>
+    <div class="reset-section" style="margin-top: 8px; border-top: none; padding-top: 0;">
       <button onclick="resetWithConfirm(this, 'reset_character', loadCharacterView)">[Reset Char]</button>
       <button onclick="resetWithConfirm(this, 'reset_quests', loadAll)">[Reset Quests]</button>
       <button onclick="resetWithConfirm(this, 'reset_completions', loadAll)">[Reset History]</button>
@@ -1004,6 +1022,8 @@
     const charContent = document.getElementById("char-content");
     let renamingChar = false;
 
+    const settingsView = document.getElementById("settings-view");
+
     function showView(view) {
       // Navigating away from Quest Giver cancels any running timer
       if (view !== "quest-giver" && timerInterval) {
@@ -1012,11 +1032,14 @@
       document.getElementById("nav-quest-giver").classList.toggle("active", view === "quest-giver");
       document.getElementById("nav-quests").classList.toggle("active", view === "quests");
       document.getElementById("nav-character").classList.toggle("active", view === "character");
+      document.getElementById("nav-settings").classList.toggle("active", view === "settings");
       questGiverView.classList.toggle("hidden", view !== "quest-giver");
       questsView.classList.toggle("hidden", view !== "quests");
       characterView.classList.toggle("hidden", view !== "character");
+      settingsView.classList.toggle("hidden", view !== "settings");
       if (view === "character") loadCharacterView();
       if (view === "quest-giver") renderQuestGiver();
+      if (view === "settings") loadSettings();
     }
 
     // --- Quest Giver ---
@@ -1231,6 +1254,28 @@
       await loadCharacterView();
     }
 
+    // --- Settings ---
+
+    async function loadSettings() {
+      const settings = await invoke("get_settings");
+      document.getElementById("cta-interval").value = settings.ctaIntervalMinutes;
+      const btn = document.getElementById("cta-toggle-btn");
+      btn.textContent = settings.callToAdventure ? "[ON]" : "[OFF]";
+    }
+
+    async function toggleCTA() {
+      const newVal = await invoke("toggle_call_to_adventure");
+      const btn = document.getElementById("cta-toggle-btn");
+      btn.textContent = newVal ? "[ON]" : "[OFF]";
+    }
+
+    async function saveCTAInterval() {
+      const input = document.getElementById("cta-interval");
+      const minutes = parseInt(input.value, 10);
+      if (!minutes || minutes < 1) return;
+      await invoke("set_cta_interval", { minutes });
+    }
+
     function resetWithConfirm(btn, command, callback) {
       if (btn.dataset.confirming) {
         btn.dataset.confirming = "";
@@ -1251,6 +1296,11 @@
         }
       }, 2000);
     }
+
+    // Refresh settings when window regains focus (catches tray changes)
+    window.addEventListener("focus", () => {
+      if (!settingsView.classList.contains("hidden")) loadSettings();
+    });
 
     loadAll();
   </script>
