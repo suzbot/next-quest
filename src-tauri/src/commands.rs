@@ -16,6 +16,13 @@ pub struct TimerStateInner {
 
 pub struct AppTimerState(pub Mutex<TimerStateInner>);
 
+#[derive(Default)]
+pub struct TrayStateInner {
+    pub call_to_adventure: bool,
+}
+
+pub struct AppTrayState(pub Mutex<TrayStateInner>);
+
 #[derive(Serialize)]
 pub struct TimerInfo {
     pub active: bool,
@@ -253,3 +260,4 @@ pub fn get_timer_state(
         started_at: timer.started_at,
     })
 }
+

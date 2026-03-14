@@ -113,17 +113,16 @@ Getting in line with what's already out there (Dominate Life), so I use this ins
 
 ## (Phase 1): "The Quest Giver"
 
-The smallest new thing that's already useful:
+The app stops being a list and starts being a quest giver:
 
-1. **Menu bar app** (lives in your Mac's top bar, always accessible)
-2. **Interruption** Notification you have a quest
-2. **Next Quest View**: shows your next quest + a "Quest Now", "Done", and "Something Else" buttons
-      -- can also 'quest now' on an item directly from list
-4. **Quest selection**: app picks one for you based on simplest rule (not-recently-done)
-6. **Break timer**: Keeps track of how long you are AFK after selecting "Quest Now"
-7. **Quest reset**: recurring quests are suggested according to their cycle
-8. **Local time for quest due dates**: Quest cycles currently use UTC — switch to local time so daily quests reset at the user's midnight, not UTC midnight
-9. **Consolidate duplicate link-loading code**: `load_quest_link_ids` and `get_quest_links` do the same queries — unify them to keep db.rs maintainable as it grows
+1. **Next Quest View**: Quest Giver tab shows one quest at a time with Done, Quest Now, and Something Else
+2. **Quest selection**: app picks the next due quest in list order, falls back to longest-ago-completed
+3. **Break timer**: Quest Now starts a timer while you go do the thing. Done completes, Cancel abandons
+4. **Quest Now from list**: any quest can be manually triggered into Quest Now flow
+5. **Menu bar app**: lives in Mac's top bar with Call to Adventure toggle, Open Next Quest, and Quit. Close-to-tray keeps the app running
+6. **Call to Adventure**: overlay interruption that pops up over your work when a quest is available (peon-ping style). Click to go to the quest, Maybe Later to snooze
+7. **Local time for quest due dates**: cycles reset at local midnight, not UTC
+8. **Code consolidation**: duplicate link-loading code unified
 
 
 ## Phase 2: "Level Up"

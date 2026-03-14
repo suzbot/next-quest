@@ -78,20 +78,22 @@ break timer and Done/Cancel flow applies.
 
 ## Menu Bar
 
-The app lives in the Mac menu bar (system tray). Clicking the icon opens a
-dropdown panel.
+The app lives in the Mac menu bar (system tray). The tray menu is minimal —
+quest actions stay in the main window where they have proper UI.
 
-**Dropdown shows:**
-- Current/next quest name
-- Done / Quest Now / Something Else actions
-- Break timer status (when active)
+**Tray menu shows:**
 - Call to Adventure on/off toggle
-- Link to open the full window
+- Open Next Quest (shows/focuses the main window)
+- Quit
 
-**Full window** (opens from dropdown or overlay click):
-- Quest list view (existing)
-- Character view (existing)
-- Next Quest view
+**Close-to-tray:** Closing the main window hides it instead of quitting.
+The app continues running in the tray so the Call to Adventure overlay
+can still reach the user.
+
+**Full window** (opens from tray or overlay click):
+- Quest Giver view (default)
+- Quest list view
+- Character view
 - App settings (Call to Adventure interval)
 
 ---
@@ -162,14 +164,11 @@ before any menu bar or Call to Adventure work.
 Moving the app's presence to the Mac menu bar. Depends on Group A being
 functional.
 
-- **HTML mockup first** — build a clickable prototype of the menu bar dropdown
-  and its interaction with the full window before implementing. Use this to
-  validate the layout and UX split before writing Tauri system tray code.
-- System tray icon and dropdown panel
-- Mirror Next Quest actions in the dropdown
-- Break timer status in dropdown
-- Call to Adventure toggle in dropdown
-- Open full window from dropdown
+- System tray icon with native menu
+- Call to Adventure toggle in tray menu
+- Open Next Quest from tray menu
+- Close-to-tray lifecycle (close hides, Quit exits)
+- Timer state and quest selection moved to backend (shared architecture)
 
 ### Group C: Overlay Call to Adventure
 The interrupt system that reaches out to the user. Depends on Group B for

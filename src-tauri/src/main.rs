@@ -2,9 +2,11 @@
 
 mod commands;
 mod db;
+mod tray;
 
-use commands::{AppTimerState, DbState, TimerStateInner};
+use commands::{AppTimerState, AppTrayState, DbState, TimerStateInner, TrayStateInner};
 use std::sync::Mutex;
+use tauri::WindowEvent;
 
 fn main() {
     // Store the database in the app's data directory
@@ -23,6 +25,17 @@ fn main() {
     tauri::Builder::default()
         .manage(DbState(Mutex::new(conn)))
         .manage(AppTimerState(Mutex::new(TimerStateInner::default())))
+        .manage(AppTrayState(Mutex::new(TrayStateInner::default())))
+        .setup(|app| {
+            tray::setup_tray(app).expect("Failed to set up system tray");
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_quests,
             commands::get_completions,
