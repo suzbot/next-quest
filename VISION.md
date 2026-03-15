@@ -111,7 +111,7 @@ Getting in line with what's already out there (Dominate Life), so I use this ins
     c. Skill XP/level progresses based on cycle and difficulty, if associated to completed task
 
 
-## (Phase 1): "The Quest Giver"
+## (Phase 1): "The Quest Giver" ✓
 
 The app stops being a list and starts being a quest giver:
 
