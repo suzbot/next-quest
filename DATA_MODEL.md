@@ -149,6 +149,15 @@ Fibonacci-style progression with different seeds per scale:
 
 Each subsequent level costs the sum of the two prior levels (e.g., Character: 300, 500, 800, 1300, 2100...).
 
+### Settings
+App configuration. Single row, seeded on first launch.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| id | Integer | 1 | Always 1 (single row) |
+| cta_enabled | Integer | 0 | Call to Adventure on/off (0/1) |
+| cta_interval_minutes | Integer | 20 | Polling interval in minutes |
+
 ## Planned Entities (Phase 2+)
 
 | Entity | Phase | Purpose |

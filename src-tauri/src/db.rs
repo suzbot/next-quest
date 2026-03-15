@@ -209,6 +209,12 @@ fn create_tables(conn: &Connection) {
             quest_id      TEXT NOT NULL REFERENCES quest(id),
             attribute_id  TEXT NOT NULL REFERENCES attribute(id),
             PRIMARY KEY (quest_id, attribute_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            id                    INTEGER PRIMARY KEY,
+            cta_enabled           INTEGER NOT NULL DEFAULT 0,
+            cta_interval_minutes  INTEGER NOT NULL DEFAULT 20
         );",
     )
     .expect("Failed to create tables");
@@ -296,6 +302,13 @@ fn migrate(conn: &Connection) {
 }
 
 fn seed_data(conn: &Connection) {
+    // Settings seed runs every launch (idempotent via INSERT OR IGNORE)
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (id, cta_enabled, cta_interval_minutes) VALUES (1, 0, 20)",
+        [],
+    )
+    .expect("Failed to seed settings");
+
     let count: i32 = conn
         .query_row("SELECT COUNT(*) FROM character", [], |row| row.get(0))
         .expect("Failed to check character table");
@@ -354,6 +367,28 @@ fn seed_data(conn: &Connection) {
         )
         .expect("Failed to seed skill");
     }
+}
+
+pub fn get_settings_db(conn: &Connection) -> Result<(bool, u64), String> {
+    conn.query_row(
+        "SELECT cta_enabled, cta_interval_minutes FROM settings WHERE id = 1",
+        [],
+        |row| {
+            let enabled = row.get::<_, i32>(0)? != 0;
+            let interval: u64 = row.get(1)?;
+            Ok((enabled, interval))
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn set_settings_db(conn: &Connection, enabled: bool, interval_minutes: u64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE settings SET cta_enabled = ?1, cta_interval_minutes = ?2 WHERE id = 1",
+        rusqlite::params![enabled as i32, interval_minutes],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {

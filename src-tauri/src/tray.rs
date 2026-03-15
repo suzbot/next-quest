@@ -4,7 +4,8 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
-use crate::commands::AppTrayState;
+use crate::commands::{AppTrayState, DbState};
+use crate::db;
 
 const TRAY_ID: &str = "nq_tray";
 
@@ -74,7 +75,15 @@ fn handle_menu_event(app: &AppHandle, event_id: &str) {
             if tray.call_to_adventure {
                 tray.reset_fire_time();
             }
+            let (enabled, interval_mins) = (tray.call_to_adventure, tray.cta_interval_secs / 60);
             drop(tray);
+
+            // Persist to DB
+            let db_state = app.state::<DbState>();
+            if let Ok(conn) = db_state.0.lock() {
+                let _ = db::set_settings_db(&conn, enabled, interval_mins);
+            }
+
             rebuild_tray_menu(app);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.emit("settings-changed", ());

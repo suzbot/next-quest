@@ -22,10 +22,19 @@ fn main() {
 
     let conn = db::init_db(&db_path);
 
+    // Load persisted settings
+    let (cta_enabled, cta_interval_minutes) = db::get_settings_db(&conn).unwrap_or((false, 20));
+    let mut tray_state = TrayStateInner::new();
+    tray_state.call_to_adventure = cta_enabled;
+    tray_state.cta_interval_secs = cta_interval_minutes * 60;
+    if cta_enabled {
+        tray_state.reset_fire_time();
+    }
+
     tauri::Builder::default()
         .manage(DbState(Mutex::new(conn)))
         .manage(AppTimerState(Mutex::new(TimerStateInner::default())))
-        .manage(AppTrayState(Mutex::new(TrayStateInner::new())))
+        .manage(AppTrayState(Mutex::new(tray_state)))
         .setup(|app| {
             tray::setup_tray(app).expect("Failed to set up system tray");
 

@@ -313,28 +313,39 @@ pub fn get_settings(
 #[tauri::command]
 pub fn toggle_call_to_adventure(
     app: tauri::AppHandle,
+    db_state: State<DbState>,
     tray_state: State<AppTrayState>,
 ) -> Result<bool, String> {
-    let new_val = {
+    let (new_val, interval_mins) = {
         let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
         tray.call_to_adventure = !tray.call_to_adventure;
         if tray.call_to_adventure {
             tray.reset_fire_time();
         }
-        tray.call_to_adventure
+        (tray.call_to_adventure, tray.cta_interval_secs / 60)
     };
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    db::set_settings_db(&conn, new_val, interval_mins)?;
     crate::tray::rebuild_tray_menu(&app);
     Ok(new_val)
 }
 
 #[tauri::command]
 pub fn set_cta_interval(
+    db_state: State<DbState>,
     tray_state: State<AppTrayState>,
     minutes: u64,
 ) -> Result<(), String> {
     let minutes = if minutes < 1 { 1 } else { minutes };
+    let (enabled, _) = {
+        let tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+        (tray.call_to_adventure, ())
+    };
     let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
     tray.cta_interval_secs = minutes * 60;
+    drop(tray);
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    db::set_settings_db(&conn, enabled, minutes)?;
     Ok(())
 }
 
