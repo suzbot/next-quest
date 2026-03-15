@@ -1297,9 +1297,24 @@
       }, 2000);
     }
 
-    // Refresh settings when window regains focus (catches tray changes)
-    window.addEventListener("focus", () => {
+    // On window focus: refresh settings, check if a timer was started externally
+    window.addEventListener("focus", async () => {
       if (!settingsView.classList.contains("hidden")) loadSettings();
+
+      // If a timer is running in the backend but not locally, sync up
+      if (!timerInterval) {
+        const timerState = await invoke("get_timer_state");
+        if (timerState.active) {
+          timerStartLocal = timerState.startedAt;
+          timerTitleLocal = timerState.questTitle;
+          timerInterval = setInterval(() => {
+            if (!questGiverView.classList.contains("hidden")) {
+              renderTimerMode();
+            }
+          }, 1000);
+          showView("quest-giver");
+        }
+      }
     });
 
     loadAll();

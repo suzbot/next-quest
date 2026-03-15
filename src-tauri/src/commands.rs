@@ -44,6 +44,7 @@ impl TrayStateInner {
 pub struct AppTrayState(pub Mutex<TrayStateInner>);
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimerInfo {
     pub active: bool,
     pub quest_id: Option<String>,
@@ -357,24 +358,23 @@ pub fn dismiss_overlay(
 ) -> Result<(), String> {
     use tauri::Manager;
 
-    // Close the overlay window
+    // Move overlay off-screen (avoids macOS focusing the main window)
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.close();
+        let _ = overlay.set_position(tauri::LogicalPosition::new(-9999.0, -9999.0));
     }
 
     match action.as_str() {
-        "open" => {
-            // Show and focus the main window
+        "quest_now" => {
+            // Timer is started by the overlay frontend via start_timer.
+            // Just show the main window — it detects the running timer on focus.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-            // Reset fire time so it doesn't immediately fire again
             let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
             tray.reset_fire_time();
         }
         "later" => {
-            // Restart the interval
             let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
             tray.reset_fire_time();
         }

@@ -125,6 +125,16 @@ The app stops being a list and starts being a quest giver:
 8. **Code consolidation**: duplicate link-loading code unified
 
 
+## Phase 1.5: "Enhanced Overlay" ✓
+
+The Call to Adventure overlay becomes a mini quest giver:
+
+1. **Quest name in overlay**: shows "A quest awaits..." with the actual quest name
+2. **Done from overlay**: complete quests without opening the full app, XP flash, advances to next quest
+3. **Quest Now from overlay**: starts timer and opens main window in timer mode
+4. **Something Else in overlay**: cycle through quests within the overlay
+5. **Maybe Later**: dismisses overlay, restarts interval
+
 ## Phase 2: "Level Up"
 
 - Graphics

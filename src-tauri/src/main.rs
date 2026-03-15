@@ -48,8 +48,10 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                if window.label() == "main" {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -145,11 +147,6 @@ fn cta_poll_loop(app: tauri::AppHandle) {
             continue;
         }
 
-        // Check overlay not already showing
-        if app.get_webview_window("overlay").is_some() {
-            continue;
-        }
-
         // Check there's a quest to suggest
         let has_quest = {
             let db_state = app.state::<DbState>();
@@ -173,21 +170,28 @@ fn cta_poll_loop(app: tauri::AppHandle) {
 fn show_overlay(app: &tauri::AppHandle) {
     use tauri::WebviewWindowBuilder;
 
-    if app.get_webview_window("overlay").is_some() {
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        // Already exists (off-screen) — move back and force to front
+        let _ = overlay.center();
+        let _ = overlay.set_always_on_top(false);
+        let _ = overlay.set_always_on_top(true);
+        let _ = overlay.set_focus();
         return;
     }
 
+    // First time — create the window (hidden initially, then show)
     match WebviewWindowBuilder::new(
         app,
         "overlay",
         tauri::WebviewUrl::App("overlay.html".into()),
     )
     .title("")
-    .inner_size(300.0, 130.0)
+    .inner_size(350.0, 200.0)
     .decorations(false)
     .always_on_top(true)
     .resizable(false)
     .minimizable(false)
+    .accept_first_mouse(true)
     .center()
     .focused(true)
     .build()
