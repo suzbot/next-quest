@@ -75,10 +75,15 @@
 
     .xp-flash {
       font-size: 11px;
-      color: #1a6e1a;
       font-weight: 700;
       margin-top: 4px;
       min-height: 14px;
+    }
+
+    .level-up-text {
+      font-size: 9px;
+      font-weight: 700;
+      margin-top: 3px;
     }
 
     .empty {
@@ -87,6 +92,28 @@
       font-size: 12px;
       margin-bottom: 14px;
     }
+
+    @keyframes text-pulse {
+      0% { transform: scale(1); opacity: 0.7; }
+      15% { transform: scale(1.15); opacity: 1; }
+      70% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    @keyframes fade-in-up {
+      0% { opacity: 0; transform: translateY(4px); }
+      30% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fade-out {
+      0% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .pulsing { animation: text-pulse 2s ease-in-out; }
+    .fading-in { animation: fade-in-up 1.5s ease-out; }
+    #content.fading-out { animation: fade-out 0.4s ease-out forwards; }
   </style>
 </head>
 <body>
@@ -95,6 +122,37 @@
   <script>
     const { invoke } = window.__TAURI__.core;
     const content = document.getElementById("content");
+
+    const diffTextColors = {
+      "trivial": "#2244aa",
+      "easy": "#1a6e1a",
+      "moderate": "#7a5500",
+      "challenging": "#992200",
+      "epic": "#5c2d80",
+    };
+
+    const attrTextColors = {
+      "Health": "#992200", "Pluck": "#7a5500", "Knowledge": "#2244aa",
+      "Connection": "#1a6e1a", "Responsibility": "#5c2d80", "Character": "#333",
+    };
+
+    const skillAttrMap = {
+      "Cooking": "Health", "Healing": "Health", "Acrobatics": "Health",
+      "Cleaning": "Pluck", "Crafting": "Pluck", "Language": "Knowledge",
+      "Nature": "Connection", "Community": "Connection", "Sociality": "Connection",
+      "Bureaucracy": "Responsibility", "Animal Handling": "Responsibility", "Logistics": "Responsibility",
+    };
+
+    function levelUpColor(name) {
+      return attrTextColors[name] || attrTextColors[skillAttrMap[name]] || "#333";
+    }
+
+    function levelUpHtml(levelUps) {
+      if (!levelUps || levelUps.length === 0) return "";
+      return levelUps.map(lu =>
+        `<div class="level-up-text fading-in" style="color: ${levelUpColor(lu.name)}">${lu.name} reached Level ${lu.new_level}!</div>`
+      ).join("");
+    }
 
     let skipCount = 0;
     let currentQuest = null;
@@ -122,21 +180,32 @@
           <button onclick="somethingElse()">Something Else</button>
         </div>
         <button class="later-btn" onclick="maybeLater()">Maybe Later</button>
-        <div class="xp-flash" id="xp-flash"></div>
       `;
     }
 
     async function questDone() {
       if (!currentQuest) return;
+      const difficulty = currentQuest.difficulty;
       const completion = await invoke("complete_quest", { questId: currentQuest.id });
+      const color = diffTextColors[difficulty] || "#1a6e1a";
 
+      // Show completion feedback
+      let feedbackHtml = `<div class="quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        const flash = document.getElementById("xp-flash");
-        if (flash) flash.textContent = `+${completion.xp_earned} XP`;
+        feedbackHtml += `<div class="xp-flash fading-in" style="color: ${color}">+${completion.xp_earned} XP</div>`;
       }
+      feedbackHtml += levelUpHtml(completion.level_ups);
+      content.innerHTML = feedbackHtml;
 
+      // Hold, fade out, show next quest
       skipCount = 0;
-      setTimeout(() => loadQuest(), 800);
+      setTimeout(() => {
+        content.classList.add("fading-out");
+        setTimeout(() => {
+          content.classList.remove("fading-out");
+          loadQuest();
+        }, 400);
+      }, 2500);
     }
 
     async function questNow() {
@@ -160,7 +229,6 @@
       return div.innerHTML;
     }
 
-    // Refresh when overlay is re-shown
     window.__TAURI__.event.listen("overlay-refresh", () => {
       skipCount = 0;
       loadQuest();

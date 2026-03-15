@@ -147,6 +147,8 @@
     /* Quest states */
     .quest-due .quest-title { color: #111; }
     .quest-cooldown .quest-title { color: #777; }
+    .quest-cooldown .quest-meta { color: #777; }
+    .quest-cooldown .quest-links { color: #777; }
 
     .quest-inactive { opacity: 0.4; }
     .quest-inactive .quest-title { color: #777; cursor: default; }
@@ -304,10 +306,69 @@
     }
 
     .qg-timer {
-      font-size: 28px;
+      font-size: 72px;
       color: #333;
       margin-bottom: 20px;
       letter-spacing: 2px;
+    }
+
+    @keyframes timer-flash {
+      0% { color: #fff; }
+      30% { color: #fff; }
+      100% { color: #333; }
+    }
+
+    .qg-timer.flashing {
+      animation: timer-flash 1s ease-out;
+    }
+
+    /* Completion flash — row highlight for quest list */
+    @keyframes row-flash {
+      0% { background: var(--flash-color); }
+      70% { background: var(--flash-color); }
+      100% { background: transparent; }
+    }
+
+    .quest-item.flashing {
+      animation: row-flash 3s ease-out;
+    }
+
+    /* Completion pulse — smooth scale for Quest Giver */
+    @keyframes text-pulse {
+      0% { transform: scale(1); opacity: 0.7; }
+      15% { transform: scale(1.2); opacity: 1; }
+      70% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    @keyframes fade-in-up {
+      0% { opacity: 0; transform: translateY(6px); }
+      30% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fade-out {
+      0% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .qg-quest-name.pulsing {
+      animation: text-pulse 2s ease-in-out;
+    }
+
+    .qg-xp-flash.pulsing {
+      animation: fade-in-up 2s ease-out;
+    }
+
+    .qg-content-fading {
+      animation: fade-out 0.4s ease-out forwards;
+    }
+
+    .level-up-text {
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 4px;
+      animation: fade-in-up 1.5s ease-out;
     }
 
     /* Progress meters */
@@ -425,6 +486,45 @@
     const cycleLabel = document.getElementById("cycle-label");
     const difficultySelect = document.getElementById("quest-difficulty");
     const addLinksRow = document.getElementById("add-links-row");
+
+    // Difficulty color maps (text variants for WCAG AA on #b4b4b4)
+    const diffTextColors = {
+      "trivial": "#2244aa",
+      "easy": "#1a6e1a",
+      "moderate": "#7a5500",
+      "challenging": "#992200",
+      "epic": "#5c2d80",
+    };
+
+    // Attribute text colors (dark variants for WCAG AA)
+    const attrTextColors = {
+      "Health": "#992200",
+      "Pluck": "#7a5500",
+      "Knowledge": "#2244aa",
+      "Connection": "#1a6e1a",
+      "Responsibility": "#5c2d80",
+      "Character": "#333",
+    };
+
+    // Map skill names to their attribute for color lookup
+    const skillAttrMap = {
+      "Cooking": "Health", "Healing": "Health", "Acrobatics": "Health",
+      "Cleaning": "Pluck", "Crafting": "Pluck",
+      "Language": "Knowledge",
+      "Nature": "Connection", "Community": "Connection", "Sociality": "Connection",
+      "Bureaucracy": "Responsibility", "Animal Handling": "Responsibility", "Logistics": "Responsibility",
+    };
+
+    function levelUpColor(name) {
+      return attrTextColors[name] || attrTextColors[skillAttrMap[name]] || "#333";
+    }
+
+    function levelUpHtml(levelUps) {
+      if (!levelUps || levelUps.length === 0) return "";
+      return levelUps.map(lu =>
+        `<div class="level-up-text" style="color: ${levelUpColor(lu.name)}">${lu.name} reached Level ${lu.new_level}!</div>`
+      ).join("");
+    }
 
     let editingId = null;
     let cachedQuests = [];
@@ -576,7 +676,7 @@
         <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
         <span class="quest-meta">
           ${linksHtml}
-          <span>${difficultyLabel(q.difficulty)}</span>
+          <span style="color: ${q.is_due ? (diffTextColors[q.difficulty] || '#555') : '#777'}">${difficultyLabel(q.difficulty)}</span>
           <span>${cycleText}</span>
           ${lastDone ? `<span>${lastDone}</span>` : ""}
         </span>
@@ -710,19 +810,30 @@
     }
 
     async function completeQuest(id) {
+      const quest = cachedQuests.find(q => q.id === id);
       const completion = await invoke("complete_quest", { questId: id });
 
-      if (completion.xp_earned > 0) {
-        const row = questList.querySelector(`[data-id="${id}"]`);
-        if (row) {
-          const flash = document.createElement("span");
-          flash.className = "xp-flash";
-          flash.textContent = `+${completion.xp_earned} XP`;
-          row.querySelector(".quest-title")?.after(flash);
+      const row = questList.querySelector(`[data-id="${id}"]`);
+      if (row) {
+        const color = diffTextColors[quest?.difficulty] || "#1a6e1a";
+        row.style.setProperty("--flash-color", color + "33");
+        row.classList.add("flashing");
+
+        // Show XP and level-ups together below the quest title
+        const feedbackDiv = document.createElement("div");
+        feedbackDiv.style.marginLeft = "4px";
+        let feedbackHtml = "";
+        if (completion.xp_earned > 0) {
+          feedbackHtml += `<span class="xp-flash" style="color: ${color}">+${completion.xp_earned} XP</span>`;
         }
+        if (completion.level_ups?.length > 0) {
+          feedbackHtml += levelUpHtml(completion.level_ups);
+        }
+        feedbackDiv.innerHTML = feedbackHtml;
+        row.querySelector(".quest-title")?.after(feedbackDiv);
       }
 
-      setTimeout(() => loadAll(), 800);
+      setTimeout(() => loadAll(), 3000);
     }
 
     async function deleteQuest(id, title) {
@@ -961,7 +1072,7 @@
       qgContent.innerHTML = `
         <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
         <div class="qg-actions">
-          <button onclick="qgDone('${quest.id}')">Done</button>
+          <button onclick="qgDone('${quest.id}', '${quest.difficulty}')">Done</button>
           <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
           <button onclick="qgSomethingElse()">Something Else</button>
         </div>
@@ -972,7 +1083,7 @@
     function renderTimerMode() {
       const elapsed = Date.now() - timerStartLocal;
       qgContent.innerHTML = `
-        <div class="qg-quest-name">${escapeHtml(timerTitleLocal)}</div>
+        <div class="qg-quest-name" style="font-size: 22px;">${escapeHtml(timerTitleLocal)}</div>
         <div class="qg-timer">${formatTimer(elapsed)}</div>
         <div class="qg-actions">
           <button onclick="timerDone()">Done</button>
@@ -1018,34 +1129,52 @@
 
     async function timerDone() {
       if (timerInterval) clearInterval(timerInterval);
+      const finalElapsed = timerStartLocal ? formatTimer(Date.now() - timerStartLocal) : "";
       timerStartLocal = null;
       timerTitleLocal = null;
       timerInterval = null;
       const completion = await invoke("complete_timer");
 
-      // Show the quest name briefly with XP flash before refreshing
       nextQuestIndex = 0;
+      let feedbackHtml = `<div class="qg-quest-name pulsing" style="font-size: 22px;">${escapeHtml(completion.quest_title)}</div>`;
+      if (finalElapsed) {
+        feedbackHtml += `<div class="qg-timer flashing" style="margin-bottom: 8px;">${finalElapsed}</div>`;
+      }
       if (completion.xp_earned > 0) {
-        qgContent.innerHTML = `
-          <div class="qg-quest-name">${escapeHtml(completion.quest_title)}</div>
-          <div class="qg-xp-flash">+${completion.xp_earned} XP</div>
-        `;
-        setTimeout(() => loadAll(), 800);
-      } else {
-        await loadAll();
-              }
+        feedbackHtml += `<div class="qg-xp-flash pulsing">+${completion.xp_earned} XP</div>`;
+      }
+      feedbackHtml += levelUpHtml(completion.level_ups);
+      qgContent.innerHTML = feedbackHtml;
+      setTimeout(() => {
+        qgContent.classList.add("qg-content-fading");
+        setTimeout(() => {
+          qgContent.classList.remove("qg-content-fading");
+          loadAll();
+        }, 400);
+      }, 2500);
     }
 
-    async function qgDone(questId) {
+    async function qgDone(questId, difficulty) {
       const completion = await invoke("complete_quest", { questId });
+      const color = diffTextColors[difficulty] || "#1a6e1a";
 
+      // Show completion feedback with pulse
+      let feedbackHtml = `<div class="qg-quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        const flash = document.getElementById("qg-xp-flash");
-        if (flash) flash.textContent = `+${completion.xp_earned} XP`;
+        feedbackHtml += `<div class="qg-xp-flash pulsing" style="color: ${color}">+${completion.xp_earned} XP</div>`;
       }
+      feedbackHtml += levelUpHtml(completion.level_ups);
+      qgContent.innerHTML = feedbackHtml;
 
+      // Hold for 2.5s, then fade out and show next quest
       nextQuestIndex = 0;
-      setTimeout(() => loadAll(), 800);
+      setTimeout(() => {
+        qgContent.classList.add("qg-content-fading");
+        setTimeout(() => {
+          qgContent.classList.remove("qg-content-fading");
+          loadAll();
+        }, 400);
+      }, 2500);
     }
 
     function qgSomethingElse() {

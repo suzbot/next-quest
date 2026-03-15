@@ -93,6 +93,12 @@ pub struct QuestOrder {
     pub sort_order: i32,
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct LevelUp {
+    pub name: String,
+    pub new_level: i32,
+}
+
 #[derive(Serialize, Debug)]
 pub struct Completion {
     pub id: String,
@@ -100,6 +106,7 @@ pub struct Completion {
     pub quest_title: String,
     pub completed_at: String,
     pub xp_earned: i64,
+    pub level_ups: Vec<LevelUp>,
 }
 
 #[derive(Serialize, Debug)]
@@ -490,6 +497,7 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
                 quest_id: row.get(1)?,
                 quest_title: row.get(2)?,
                 completed_at: row.get(3)?,
+                level_ups: Vec::new(),
                 xp_earned: row.get(4)?,
             })
         })
@@ -653,6 +661,33 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let quest_type = QuestType::from_str(&quest_type_str);
     let xp_earned = calculate_xp(&difficulty, &quest_type, cycle_days);
 
+    // Snapshot levels before XP award
+    let char_level_before = {
+        let xp: i64 = conn.query_row("SELECT xp FROM character LIMIT 1", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        level_from_xp(xp, &LevelScale::Character).level
+    };
+
+    let mut attr_stmt = conn.prepare("SELECT id, name, xp FROM attribute")
+        .map_err(|e| e.to_string())?;
+    let attr_levels_before: Vec<(String, String, i32)> = attr_stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        let xp: i64 = row.get(2)?;
+        Ok((id, name, level_from_xp(xp, &LevelScale::Attribute).level))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let mut skill_stmt = conn.prepare("SELECT id, name, xp FROM skill")
+        .map_err(|e| e.to_string())?;
+    let skill_levels_before: Vec<(String, String, i32)> = skill_stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        let xp: i64 = row.get(2)?;
+        Ok((id, name, level_from_xp(xp, &LevelScale::Skill).level))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     // Distribute XP
@@ -676,12 +711,45 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
 
     tx.commit().map_err(|e| e.to_string())?;
 
+    // Detect level-ups by comparing before/after
+    let mut level_ups = Vec::new();
+
+    let char_level_after = {
+        let xp: i64 = conn.query_row("SELECT xp FROM character LIMIT 1", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        level_from_xp(xp, &LevelScale::Character).level
+    };
+    if char_level_after > char_level_before {
+        level_ups.push(LevelUp { name: "Character".into(), new_level: char_level_after });
+    }
+
+    for (id, name, level_before) in &attr_levels_before {
+        let xp: i64 = conn.query_row(
+            "SELECT xp FROM attribute WHERE id = ?1", rusqlite::params![id], |r| r.get(0)
+        ).map_err(|e| e.to_string())?;
+        let level_after = level_from_xp(xp, &LevelScale::Attribute).level;
+        if level_after > *level_before {
+            level_ups.push(LevelUp { name: name.clone(), new_level: level_after });
+        }
+    }
+
+    for (id, name, level_before) in &skill_levels_before {
+        let xp: i64 = conn.query_row(
+            "SELECT xp FROM skill WHERE id = ?1", rusqlite::params![id], |r| r.get(0)
+        ).map_err(|e| e.to_string())?;
+        let level_after = level_from_xp(xp, &LevelScale::Skill).level;
+        if level_after > *level_before {
+            level_ups.push(LevelUp { name: name.clone(), new_level: level_after });
+        }
+    }
+
     Ok(Completion {
         id: completion_id,
         quest_id: Some(quest_id),
         quest_title,
         completed_at,
         xp_earned,
+        level_ups,
     })
 }
 
