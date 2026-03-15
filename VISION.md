@@ -135,10 +135,15 @@ The Call to Adventure overlay becomes a mini quest giver:
 4. **Something Else in overlay**: cycle through quests within the overlay
 5. **Maybe Later**: dismisses overlay, restarts interval
 
-## Phase 2: "Level Up"
+## Phase 2A: "Look and Feel"
 
-- Graphics
-- Quest completion feedback — visual/animated reaction when marking a quest done (flash, sound, XP popup, etc.)
+Initial visual identity for the app:
+
+1. **Art direction**: 1985 Apple IIGS Bard's Tale aesthetic — pixel fonts, muted palette, bordered panels, RPG UI framing
+2. **Progress meters**: character level, attribute, and skill XP displayed as horizontal meter bars
+3. **Quest completion feedback** — visual/animated reaction when marking a quest done (flash, sound, XP popup, etc.)
+
+## Phase 2: "Level Up"
 - More quest attributes and logic
 - XP time-elapsed modifier: diminishing returns for repeating a quest quickly (same-day laundry), increasing reward as time passes to encourage doing it, but log-curve so procrastination isn't linearly rewarded
 - Smarter quest giving
