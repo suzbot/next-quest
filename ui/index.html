@@ -123,6 +123,11 @@
       gap: 8px;
       font-size: 10px;
       color: #555;
+      flex-shrink: 0;
+    }
+
+    .quest-meta > span {
+      flex-shrink: 0;
     }
 
     /* Quest edit */
@@ -196,7 +201,7 @@
 
     #add-links-row { margin-bottom: 12px; }
 
-    .quest-links { font-size: 10px; color: #666; }
+    .quest-links { font-size: 10px; color: #666; width: 180px; text-align: right; overflow-wrap: break-word; flex-shrink: 0; }
     .quest-edit-links { padding: 2px 8px 6px 8px; border-bottom: 1px solid #999; }
 
     /* XP display */
@@ -303,6 +308,33 @@
       color: #333;
       margin-bottom: 20px;
       letter-spacing: 2px;
+    }
+
+    /* Progress meters */
+    .meter-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 8px;
+    }
+
+    .meter-label { width: 130px; font-size: 11px; }
+
+    .meter-bar-bg {
+      width: 200px;
+      flex-shrink: 0;
+      height: 10px;
+      background: #fff;
+      border: 1px solid #444;
+    }
+
+    .meter-bar-fill { height: 100%; }
+
+    .meter-text {
+      width: 130px;
+      font-size: 10px;
+      color: #555;
+      text-align: right;
     }
   </style>
 </head>
@@ -529,11 +561,11 @@
       const linksHtml = links ? `<span class="quest-links">${escapeHtml(links)}</span>` : "";
 
       const doneBtn = q.active
-        ? `<button class="done-btn" onclick="completeQuest('${q.id}')">[Done]</button>`
+        ? `<button class="done-btn" onclick="completeQuest('${q.id}')">Done</button>`
         : "";
 
       const questNowBtn = q.active
-        ? `<button onclick="listQuestNow('${q.id}')">[Quest Now]</button>`
+        ? `<button onclick="listQuestNow('${q.id}')">Quest Now</button>`
         : "";
 
       return `<li class="quest-item ${stateClass}" data-id="${q.id}" tabindex="0"
@@ -548,7 +580,7 @@
           <span>${cycleText}</span>
           ${lastDone ? `<span>${lastDone}</span>` : ""}
         </span>
-        <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">[Del]</button>
+        <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">Del</button>
       </li>`;
     }
 
@@ -602,7 +634,7 @@
             <span class="completion-title">${escapeHtml(c.quest_title)}</span>
             ${xpText}
             <span class="completion-time">${formatTimestamp(c.completed_at)}</span>
-            <button onclick="deleteCompletion('${c.id}')">[Del]</button>
+            <button onclick="deleteCompletion('${c.id}')">Del</button>
           </li>`;
         })
         .join("");
@@ -929,9 +961,9 @@
       qgContent.innerHTML = `
         <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
         <div class="qg-actions">
-          <button onclick="qgDone('${quest.id}')">[Done]</button>
-          <button onclick="qgQuestNow('${quest.id}')">[Quest Now]</button>
-          <button onclick="qgSomethingElse()">[Something Else]</button>
+          <button onclick="qgDone('${quest.id}')">Done</button>
+          <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
+          <button onclick="qgSomethingElse()">Something Else</button>
         </div>
         <div class="qg-xp-flash" id="qg-xp-flash"></div>
       `;
@@ -1036,6 +1068,20 @@
       renderCharacterView(character, attributes, skills);
     }
 
+    // Attribute fill colors (bright variants for meter bars)
+    const attrFillColors = {
+      "Health": "#ff6633",
+      "Pluck": "#eea800",
+      "Knowledge": "#4466cc",
+      "Connection": "#55cc55",
+      "Responsibility": "#8844aa",
+    };
+
+    function meterPercent(into, total) {
+      if (total <= 0) return 0;
+      return Math.min(100, Math.round((into / total) * 100));
+    }
+
     function renderCharacterView(character, attributes, skills) {
       const nameHtml = renamingChar
         ? `<input type="text" class="char-rename-input" id="char-name-input"
@@ -1046,32 +1092,52 @@
         : `<span class="char-name">${escapeHtml(character.name)}</span>
            <button onclick="startRename()">Rename</button>`;
 
-      const attrRows = attributes.map(a =>
-        `<div class="char-row">
-          <span class="char-row-name">${escapeHtml(a.name)}</span>
-          <span class="char-row-level">Lv ${a.level}</span>
-          <span class="char-row-xp">(${a.xp_into_current_level}/${a.xp_for_current_level} XP)</span>
-        </div>`
-      ).join("");
+      // Character XP meter uses the color of the highest attribute
+      let highestAttr = attributes[0];
+      attributes.forEach(a => { if (a.xp > highestAttr.xp) highestAttr = a; });
+      const charColor = attrFillColors[highestAttr?.name] || "#888";
 
-      // Build attr ID → name map from the attributes array
+      const charMeter = `
+        <div class="meter-row">
+          <span class="meter-label">Character XP</span>
+          <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${meterPercent(character.xp_into_current_level, character.xp_for_current_level)}%; background: ${charColor};"></div></div>
+          <span class="meter-text">Lv ${character.level} (${character.xp_into_current_level}/${character.xp_for_current_level} XP)</span>
+        </div>`;
+
+      const attrRows = attributes.map(a => {
+        const color = attrFillColors[a.name] || "#888";
+        const pct = meterPercent(a.xp_into_current_level, a.xp_for_current_level);
+        return `<div class="meter-row">
+          <span class="meter-label">${escapeHtml(a.name)}</span>
+          <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
+          <span class="meter-text">Lv ${a.level} (${a.xp_into_current_level}/${a.xp_for_current_level} XP)</span>
+        </div>`;
+      }).join("");
+
+      // Build attr ID → name map and color map
       const attrMap = {};
-      attributes.forEach(a => attrMap[a.id] = a.name);
+      const attrColorById = {};
+      attributes.forEach(a => {
+        attrMap[a.id] = a.name;
+        attrColorById[a.id] = attrFillColors[a.name] || "#888";
+      });
 
-      const skillRows = skills.map(s =>
-        `<div class="char-row">
-          <span class="char-row-name">${escapeHtml(s.name)}</span>
-          <span class="char-row-level">Lv ${s.level}</span>
-          <span class="char-row-xp">(${s.xp_into_current_level}/${s.xp_for_current_level} XP)</span>
+      const skillRows = skills.map(s => {
+        const color = attrColorById[s.attribute_id] || "#888";
+        const pct = meterPercent(s.xp_into_current_level, s.xp_for_current_level);
+        return `<div class="meter-row">
+          <span class="meter-label">${escapeHtml(s.name)}</span>
+          <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
+          <span class="meter-text">Lv ${s.level} (${s.xp_into_current_level}/${s.xp_for_current_level} XP)</span>
           <span class="char-row-attr">${escapeHtml(attrMap[s.attribute_id] || "")}</span>
-        </div>`
-      ).join("");
+        </div>`;
+      }).join("");
 
       charContent.innerHTML = `
         <div class="char-header">
           ${nameHtml}
-          <span class="char-level">Level ${character.level} (${character.xp_into_current_level}/${character.xp_for_current_level} XP)</span>
         </div>
+        ${charMeter}
         <div class="char-section">
           <h2>Attributes</h2>
           ${attrRows}
