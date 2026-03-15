@@ -5,29 +5,53 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Next Quest</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
+    @font-face {
+      font-family: 'Silkscreen';
+      font-weight: 400;
+      src: url('fonts/Silkscreen-Regular.ttf') format('truetype');
+    }
+    @font-face {
+      font-family: 'Silkscreen';
+      font-weight: 700;
+      src: url('fonts/Silkscreen-Bold.ttf') format('truetype');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #b4b4b4;
+      color: #111;
+      font-family: 'Silkscreen', monospace;
+      font-size: 13px;
       padding: 0;
     }
 
-    body {
-      background: #1a1a2e;
-      color: #c8c8c8;
-      font-family: "Courier New", Courier, monospace;
-      font-size: 14px;
-      padding: 16px;
+    .app-border {
+      background:
+        repeating-linear-gradient(45deg, transparent, transparent 4px, #9a9a9a 4px, #9a9a9a 5px),
+        repeating-linear-gradient(-45deg, transparent, transparent 4px, #9a9a9a 4px, #9a9a9a 5px);
+      background-color: #b4b4b4;
+      padding: 10px;
+      border: 2px solid #444;
+      min-height: 100vh;
+    }
+
+    .app-inner {
+      background: #b4b4b4;
+      border: 2px solid #444;
+      padding: 12px;
     }
 
     h1, h2 {
       text-transform: uppercase;
-      letter-spacing: 3px;
-      color: #e0e0e0;
+      letter-spacing: 2px;
+      color: #111;
     }
 
-    h1 { font-size: 18px; margin-bottom: 16px; }
-    h2 { font-size: 13px; margin: 20px 0 8px 0; color: #888; }
+    h1 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+    h2 { font-size: 11px; font-weight: 700; margin: 16px 0 8px 0; color: #333; border-bottom: 1px solid #888; padding-bottom: 4px; }
 
+    /* Forms */
     #add-form {
       display: flex;
       gap: 8px;
@@ -35,184 +59,117 @@
       align-items: center;
     }
 
-    #add-form input[type="text"] {
-      flex: 1;
-      background: #16213e;
-      border: 1px solid #444;
-      color: #e0e0e0;
+    input[type="text"], input[type="number"] {
+      background: #ccc;
+      border: 1px inset #888;
+      color: #111;
       font-family: inherit;
-      font-size: 14px;
-      padding: 6px 8px;
+      font-size: 13px;
+      padding: 4px 6px;
     }
 
-    #add-form input[type="number"] {
-      width: 60px;
-      background: #16213e;
-      border: 1px solid #444;
-      color: #e0e0e0;
+    input[type="number"] { text-align: center; }
+
+    #add-form input[type="text"] { flex: 1; }
+    #add-form input[type="number"] { width: 55px; }
+
+    select {
+      background: #ccc;
+      border: 1px inset #888;
+      color: #111;
       font-family: inherit;
-      font-size: 14px;
-      padding: 6px 8px;
-      text-align: center;
+      font-size: 13px;
+      padding: 4px 6px;
     }
 
-    #add-form select {
-      background: #16213e;
-      border: 1px solid #444;
-      color: #e0e0e0;
-      font-family: inherit;
-      font-size: 14px;
-      padding: 6px 8px;
-    }
+    label { font-size: 11px; color: #555; }
 
-    #add-form label {
-      font-size: 12px;
-      color: #888;
-    }
-
+    /* Buttons */
     button {
-      background: #16213e;
-      border: 1px solid #444;
-      color: #c8c8c8;
+      background: #b4b4b4;
+      border: 2px outset #ccc;
+      color: #111;
       font-family: inherit;
-      font-size: 14px;
-      padding: 6px 12px;
+      font-size: 11px;
+      padding: 4px 12px;
       cursor: pointer;
     }
 
-    button:hover,
-    button:focus {
-      border-color: #888;
-      color: #fff;
-      outline: none;
-    }
+    button:hover { background: #ccc; }
+    button:active { border-style: inset; }
+    button:focus { outline: 1px solid #444; outline-offset: 1px; }
 
-    select:focus,
-    input:focus {
-      border-color: #888;
-      outline: none;
-    }
+    select:focus, input:focus { outline: 1px solid #444; }
 
     ul { list-style: none; }
 
+    /* Quest rows */
     .quest-item {
-      padding: 6px 8px;
-      border-bottom: 1px solid #222;
+      padding: 5px 8px;
+      border-bottom: 1px solid #999;
       display: flex;
       align-items: center;
       gap: 8px;
     }
 
-    .quest-item:focus {
-      outline: 1px solid #666;
-      outline-offset: -1px;
-    }
+    .quest-item:focus { outline: 1px solid #444; outline-offset: -1px; }
 
-    .quest-title {
-      flex: 1;
-      cursor: pointer;
-    }
-
-    .quest-title:hover { color: #fff; }
+    .quest-title { flex: 1; cursor: pointer; }
+    .quest-title:hover { color: #333; }
 
     .quest-meta {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 12px;
-      color: #666;
+      font-size: 10px;
+      color: #555;
     }
 
+    /* Quest edit */
     .quest-edit {
-      padding: 6px 8px;
-      border-bottom: 1px solid #222;
+      padding: 5px 8px;
+      border-bottom: 1px solid #999;
       display: flex;
       align-items: center;
       gap: 8px;
     }
 
-    .quest-edit input[type="text"] {
-      flex: 1;
-      background: #16213e;
-      border: 1px solid #666;
-      color: #e0e0e0;
-      font-family: inherit;
-      font-size: 14px;
-      padding: 4px 6px;
-    }
+    .quest-edit input[type="text"] { flex: 1; }
+    .quest-edit input[type="number"] { width: 55px; }
 
-    .quest-edit input[type="number"] {
-      width: 60px;
-      background: #16213e;
-      border: 1px solid #666;
-      color: #e0e0e0;
-      font-family: inherit;
-      font-size: 14px;
-      padding: 4px 6px;
-      text-align: center;
-    }
+    .edit-hint { font-size: 9px; color: #777; }
 
-    .quest-edit select {
-      background: #16213e;
-      border: 1px solid #666;
-      color: #e0e0e0;
-      font-family: inherit;
-      font-size: 14px;
-      padding: 4px 6px;
-    }
-
-    .quest-edit label {
-      font-size: 12px;
-      color: #888;
-    }
-
-    .edit-hint {
-      font-size: 11px;
-      color: #555;
-    }
-
-    .quest-due .quest-title { color: #e0e0e0; }
-    .quest-cooldown .quest-title { color: #555; }
+    /* Quest states */
+    .quest-due .quest-title { color: #111; }
+    .quest-cooldown .quest-title { color: #777; }
 
     .quest-inactive { opacity: 0.4; }
-    .quest-inactive .quest-title {
-      color: #555;
-      cursor: default;
-    }
+    .quest-inactive .quest-title { color: #777; cursor: default; }
 
+    /* Completions */
     .completion-item {
       padding: 4px 8px;
-      border-bottom: 1px solid #1a1a2e;
+      border-bottom: 1px solid #aaa;
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 13px;
+      font-size: 11px;
     }
 
-    .completion-title {
-      flex: 1;
-      text-decoration: line-through;
-      color: #555;
-    }
+    .completion-title { flex: 1; text-decoration: line-through; color: #777; }
+    .completion-time { color: #555; font-size: 10px; }
 
-    .completion-time {
-      color: #444;
-      font-size: 12px;
-    }
-
-    .empty-state {
-      color: #555;
-      font-style: italic;
-      padding: 16px 0;
-    }
+    .empty-state { color: #777; font-style: italic; padding: 16px 0; }
 
     .hidden { display: none !important; }
 
+    /* Drag and drop */
     .quest-item.dragging { opacity: 0.3; }
     body.is-dragging { -webkit-user-select: none; user-select: none; }
-    .quest-item.drop-above { border-top: 2px solid #888; }
-    .quest-item.drop-below { border-bottom: 2px solid #888; }
+    .quest-item.drop-above { border-top: 2px solid #444; }
+    .quest-item.drop-below { border-bottom: 2px solid #444; }
 
+    /* Link tags */
     .link-tags-row {
       display: flex;
       flex-wrap: wrap;
@@ -221,167 +178,82 @@
       align-items: center;
     }
 
-    .link-tags-row .link-group-label {
-      font-size: 11px;
-      color: #666;
-      margin-right: 2px;
-    }
-
-    .link-tags-row .link-separator {
-      width: 8px;
-    }
+    .link-tags-row .link-group-label { font-size: 10px; color: #555; margin-right: 2px; }
+    .link-tags-row .link-separator { width: 8px; }
 
     .link-tag {
       font-family: inherit;
-      font-size: 11px;
+      font-size: 10px;
       padding: 2px 6px;
-      background: #16213e;
-      border: 1px solid #333;
+      background: #ccc;
+      border: 1px solid #888;
       color: #555;
       cursor: pointer;
     }
 
-    .link-tag.selected {
-      border-color: #888;
-      color: #e0e0e0;
-      background: #1a3a5c;
-    }
+    .link-tag.selected { border-color: #444; color: #111; background: #ddd; }
+    .link-tag:hover { border-color: #666; color: #333; }
 
-    .link-tag:hover {
-      border-color: #666;
-      color: #aaa;
-    }
+    #add-links-row { margin-bottom: 12px; }
 
-    #add-links-row {
-      margin-bottom: 12px;
-      padding: 0 0 0 0;
-    }
+    .quest-links { font-size: 10px; color: #666; }
+    .quest-edit-links { padding: 2px 8px 6px 8px; border-bottom: 1px solid #999; }
 
-    .quest-links {
-      font-size: 11px;
-      color: #557;
-    }
+    /* XP display */
+    .completion-xp { font-size: 10px; color: #1a6e1a; }
+    .xp-flash { font-size: 11px; color: #1a6e1a; font-weight: 700; margin-left: 4px; }
 
-    .quest-edit-links {
-      padding: 2px 8px 6px 8px;
-      border-bottom: 1px solid #222;
-    }
+    /* Nav */
+    .nav { display: flex; gap: 8px; margin-bottom: 16px; }
+    .nav button { padding: 4px 12px; font-size: 11px; }
+    .nav button.active { border-style: inset; background: #ccc; }
 
-    .completion-xp {
-      font-size: 11px;
-      color: #5a8a5a;
-    }
+    /* Character view */
+    #character-view { font-size: 13px; }
 
-    .xp-flash {
-      font-size: 12px;
-      color: #5a8a5a;
-      margin-left: 4px;
-    }
-
-    .nav {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-    }
-
-    .nav button {
-      padding: 4px 12px;
-      font-size: 13px;
-    }
-
-    .nav button.active {
-      border-color: #888;
-      color: #fff;
-    }
-
-    #character-view {
-      font-size: 14px;
-    }
-
-    .char-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
+    .char-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 
     .char-name {
-      font-size: 18px;
+      font-size: 16px;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 3px;
-      color: #e0e0e0;
+      letter-spacing: 2px;
+      color: #111;
     }
 
-    .char-level {
-      color: #888;
-      font-size: 13px;
-    }
+    .char-level { color: #555; font-size: 11px; }
 
     .char-rename-input {
-      background: #16213e;
-      border: 1px solid #666;
-      color: #e0e0e0;
+      background: #ccc;
+      border: 1px inset #888;
+      color: #111;
       font-family: inherit;
-      font-size: 16px;
+      font-size: 14px;
       padding: 4px 8px;
       text-transform: uppercase;
-      letter-spacing: 3px;
+      letter-spacing: 2px;
     }
 
-    .char-section {
-      margin-bottom: 16px;
-    }
+    .char-section { margin-bottom: 16px; }
 
-    .char-row {
-      display: flex;
-      padding: 3px 8px;
-      gap: 8px;
-      font-size: 13px;
-    }
+    .char-row { display: flex; padding: 3px 8px; gap: 8px; font-size: 11px; }
+    .char-row-name { width: 140px; color: #111; }
+    .char-row-level { width: 50px; color: #555; }
+    .char-row-xp { width: 110px; color: #666; font-size: 10px; }
+    .char-row-attr { color: #666; font-size: 10px; }
 
-    .char-row-name {
-      width: 160px;
-      color: #c8c8c8;
-    }
-
-    .char-row-level {
-      width: 50px;
-      color: #888;
-    }
-
-    .char-row-xp {
-      width: 120px;
-      color: #666;
-    }
-
-    .char-row-attr {
-      color: #557;
-      font-size: 12px;
-    }
-
+    /* Reset / Settings sections */
     .reset-section {
-      margin-top: 32px;
-      padding-top: 16px;
-      border-top: 1px solid #222;
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #888;
       display: flex;
       gap: 8px;
     }
 
-    .reset-section button {
-      font-size: 12px;
-      color: #666;
-      border-color: #333;
-    }
-
-    .reset-section button:hover {
-      color: #c88;
-      border-color: #844;
-    }
-
-    .reset-section button.confirm {
-      color: #c44;
-      border-color: #a33;
-    }
+    .reset-section button { font-size: 10px; color: #555; }
+    .reset-section button:hover { color: #992200; }
+    .reset-section button.confirm { color: #992200; border-color: #992200; }
 
     /* Quest Giver view */
     #quest-giver-view {
@@ -389,70 +261,59 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 300px;
+      min-height: 280px;
       text-align: center;
     }
 
     .qg-label {
-      font-size: 13px;
+      font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 3px;
-      color: #888;
-      margin-bottom: 24px;
+      letter-spacing: 2px;
+      color: #555;
+      margin-bottom: 20px;
     }
 
-    #qg-content {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
+    #qg-content { display: flex; flex-direction: column; align-items: center; }
 
     .qg-quest-name {
-      font-size: 22px;
-      color: #e0e0e0;
-      margin-bottom: 32px;
-      max-width: 400px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #111;
+      margin-bottom: 24px;
+      max-width: 380px;
       line-height: 1.4;
       text-align: center;
     }
 
-    .qg-actions {
-      display: flex;
-      gap: 12px;
-    }
+    .qg-actions { display: flex; gap: 10px; }
+    .qg-actions button { padding: 6px 16px; font-size: 12px; }
 
-    .qg-actions button {
-      padding: 8px 20px;
-      font-size: 15px;
-    }
-
-    .qg-empty {
-      color: #555;
-      font-style: italic;
-      font-size: 15px;
-    }
+    .qg-empty { color: #777; font-style: italic; font-size: 13px; }
 
     .qg-xp-flash {
-      font-size: 14px;
-      color: #5a8a5a;
+      font-size: 12px;
+      color: #1a6e1a;
+      font-weight: 700;
       margin-top: 8px;
-      min-height: 20px;
+      min-height: 18px;
     }
 
     .qg-timer {
-      font-size: 32px;
-      color: #888;
-      margin-bottom: 24px;
+      font-size: 28px;
+      color: #333;
+      margin-bottom: 20px;
       letter-spacing: 2px;
     }
   </style>
 </head>
 <body>
+<div class="app-border">
+<div class="app-inner">
   <div class="nav">
-    <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')">[Quest Giver]</button>
-    <button id="nav-quests" onclick="showView('quests')">[Quests]</button>
-    <button id="nav-character" onclick="showView('character')">[Character]</button>
-    <button id="nav-settings" onclick="showView('settings')">[Settings]</button>
+    <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')"> Quest Giver </button>
+    <button id="nav-quests" onclick="showView('quests')">Quest List</button>
+    <button id="nav-character" onclick="showView('character')">Character</button>
+    <button id="nav-settings" onclick="showView('settings')">Settings</button>
   </div>
 
   <div id="quest-giver-view">
@@ -480,7 +341,7 @@
       <option value="challenging">Challenging</option>
       <option value="epic">Epic</option>
     </select>
-    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">[Links]</button>
+    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Links</button>
     <button type="submit">Add</button>
   </form>
 
@@ -501,22 +362,24 @@
 
     <h2>Call to Adventure</h2>
     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-      <button id="cta-toggle-btn" onclick="toggleCTA()">[OFF]</button>
+      <button id="cta-toggle-btn" onclick="toggleCTA()">OFF</button>
     </div>
     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
       <label>Interval (minutes)
-        <input type="number" id="cta-interval" value="20" min="1" style="width: 60px; background: #16213e; border: 1px solid #444; color: #e0e0e0; font-family: inherit; font-size: 14px; padding: 4px 6px; text-align: center;">
+        <input type="number" id="cta-interval" value="20" min="1" style="width: 55px;">
       </label>
-      <button onclick="saveCTAInterval()">[Save]</button>
+      <button onclick="saveCTAInterval()">Save</button>
     </div>
 
     <h2>Reset</h2>
     <div class="reset-section" style="margin-top: 8px; border-top: none; padding-top: 0;">
-      <button onclick="resetWithConfirm(this, 'reset_character', loadCharacterView)">[Reset Char]</button>
-      <button onclick="resetWithConfirm(this, 'reset_quests', loadAll)">[Reset Quests]</button>
-      <button onclick="resetWithConfirm(this, 'reset_completions', loadAll)">[Reset History]</button>
+      <button onclick="resetWithConfirm(this, 'reset_character', loadCharacterView)">Reset Char</button>
+      <button onclick="resetWithConfirm(this, 'reset_quests', loadAll)">Reset Quests</button>
+      <button onclick="resetWithConfirm(this, 'reset_completions', loadAll)">Reset History</button>
     </div>
   </div>
+</div><!-- app-inner -->
+</div><!-- app-border -->
 
   <script>
     const { invoke } = window.__TAURI__.core;
@@ -712,9 +575,8 @@
           <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Challenging</option>
           <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
         </select>
-        <button onclick="saveEdit('${q.id}')">[Save]</button>
-        <button onclick="cancelEdit()">[Esc]</button>
-        <span class="edit-hint">Enter=save Esc=cancel</span>
+        <button onclick="saveEdit('${q.id}')">Save</button>
+        <button onclick="cancelEdit()"> Esc </button>
       </li>
       <li class="quest-edit-links" id="edit-links-container">
         ${renderLinkTagsHtml("edit", q.skill_ids || [], q.attribute_ids || [])}
@@ -1081,8 +943,8 @@
         <div class="qg-quest-name">${escapeHtml(timerTitleLocal)}</div>
         <div class="qg-timer">${formatTimer(elapsed)}</div>
         <div class="qg-actions">
-          <button onclick="timerDone()">[Done]</button>
-          <button onclick="cancelTimer()">[Cancel]</button>
+          <button onclick="timerDone()">Done</button>
+          <button onclick="cancelTimer()">Cancel</button>
         </div>
         <div class="qg-xp-flash" id="qg-xp-flash"></div>
       `;
@@ -1100,7 +962,7 @@
     async function startTimer(questId) {
       const info = await invoke("start_timer", { questId });
       timerStartLocal = Date.now();
-      timerTitleLocal = info.quest_title;
+      timerTitleLocal = info.questTitle;
       timerInterval = setInterval(() => {
         if (!questGiverView.classList.contains("hidden")) {
           renderTimerMode();
@@ -1114,7 +976,8 @@
       timerTitleLocal = null;
       timerInterval = null;
       await invoke("cancel_timer");
-          }
+      renderQuestGiver();
+    }
 
     async function qgQuestNow(questId) {
       await startTimer(questId);
@@ -1178,10 +1041,10 @@
         ? `<input type="text" class="char-rename-input" id="char-name-input"
                   value="${escapeAttr(character.name)}"
                   onkeydown="handleRenameKey(event)">
-           <button onclick="saveCharName()">[Save]</button>
-           <button onclick="cancelRename()">[Esc]</button>`
+           <button onclick="saveCharName()">Save</button>
+           <button onclick="cancelRename()"> Esc </button>`
         : `<span class="char-name">${escapeHtml(character.name)}</span>
-           <button onclick="startRename()">[Rename]</button>`;
+           <button onclick="startRename()">Rename</button>`;
 
       const attrRows = attributes.map(a =>
         `<div class="char-row">
@@ -1260,13 +1123,13 @@
       const settings = await invoke("get_settings");
       document.getElementById("cta-interval").value = settings.ctaIntervalMinutes;
       const btn = document.getElementById("cta-toggle-btn");
-      btn.textContent = settings.callToAdventure ? "[ON]" : "[OFF]";
+      btn.textContent = settings.callToAdventure ? "ON" : "OFF";
     }
 
     async function toggleCTA() {
       const newVal = await invoke("toggle_call_to_adventure");
       const btn = document.getElementById("cta-toggle-btn");
-      btn.textContent = newVal ? "[ON]" : "[OFF]";
+      btn.textContent = newVal ? "ON" : "OFF";
     }
 
     async function saveCTAInterval() {
@@ -1286,7 +1149,7 @@
       }
       btn.dataset.confirming = "true";
       btn.dataset.original = btn.textContent;
-      btn.textContent = "[Sure?]";
+      btn.textContent = "Sure?";
       btn.classList.add("confirm");
       setTimeout(() => {
         if (btn.dataset.confirming) {
