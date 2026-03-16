@@ -464,21 +464,24 @@ pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<Quest
         return Ok(Some(due[idx].clone()));
     }
 
-    // Fallback: active quest completed longest ago
-    let mut active_with_completion: Vec<&Quest> = quests
+    // Fallback: all active quests sorted by longest-ago-completed, with rotation
+    let mut active: Vec<&Quest> = quests
         .iter()
-        .filter(|q| q.active && q.last_completed.is_some())
+        .filter(|q| q.active)
         .collect();
 
-    if active_with_completion.is_empty() {
+    if active.is_empty() {
         return Ok(None);
     }
 
-    active_with_completion.sort_by(|a, b| {
-        a.last_completed.as_deref().unwrap_or("").cmp(&b.last_completed.as_deref().unwrap_or(""))
+    active.sort_by(|a, b| {
+        let a_time = a.last_completed.as_deref().unwrap_or("");
+        let b_time = b.last_completed.as_deref().unwrap_or("");
+        a_time.cmp(b_time)
     });
 
-    Ok(Some(active_with_completion[0].clone()))
+    let idx = (skip_count as usize) % active.len();
+    Ok(Some(active[idx].clone()))
 }
 
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {

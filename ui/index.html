@@ -38,8 +38,7 @@
 
     .app-inner {
       background: #b4b4b4;
-      border: 2px solid #444;
-      padding: 12px;
+      padding: 0;
     }
 
     h1, h2 {
@@ -211,9 +210,23 @@
     .xp-flash { font-size: 11px; color: #1a6e1a; font-weight: 700; margin-left: 4px; }
 
     /* Nav */
-    .nav { display: flex; gap: 8px; margin-bottom: 16px; }
+    .nav {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid #888;
+      outline: 1px solid #444;
+      margin-bottom: 0;
+    }
     .nav button { padding: 4px 12px; font-size: 11px; }
     .nav button.active { border-style: inset; background: #ccc; }
+
+    .content-box {
+      border: 1px solid #888;
+      outline: 1px solid #444;
+      padding: 12px;
+      margin-top: -1px;
+    }
 
     /* Character view */
     #character-view { font-size: 13px; }
@@ -264,52 +277,90 @@
 
     /* Quest Giver view */
     #quest-giver-view {
+    }
+
+    #qg-content { }
+
+    /* Split layout */
+    .qg-split {
+      display: flex;
+      min-height: 160px;
+      padding-top: 16px;
+    }
+
+    .qg-split-image {
+      padding: 0;
+      min-width: 180px;
+    }
+
+    .qg-split-image img {
+      image-rendering: pixelated;
+      width: 170px;
+      height: auto;
+      display: block;
+      border: 1px solid #888;
+      outline: 1px solid #444;
+    }
+
+    .qg-split-text {
+      flex: 1;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      align-items: center;
       justify-content: center;
-      min-height: 280px;
-      text-align: center;
     }
 
-    .qg-label {
+    .qg-flavor {
       font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 2px;
       color: #555;
-      margin-bottom: 20px;
+      margin-bottom: 10px;
+      line-height: 1.4;
+      font-style: italic;
     }
 
-    #qg-content { display: flex; flex-direction: column; align-items: center; }
+    .qg-prompt {
+      font-size: 10px;
+      color: #555;
+      margin-bottom: 8px;
+    }
 
     .qg-quest-name {
       font-size: 18px;
       font-weight: 700;
       color: #111;
-      margin-bottom: 24px;
-      max-width: 380px;
+      margin-bottom: 16px;
       line-height: 1.4;
-      text-align: center;
     }
 
     .qg-actions { display: flex; gap: 10px; }
     .qg-actions button { padding: 6px 16px; font-size: 12px; }
 
-    .qg-empty { color: #777; font-style: italic; font-size: 13px; }
+    .qg-empty {
+      color: #777;
+      font-style: italic;
+      font-size: 13px;
+      text-align: center;
+      padding: 60px 0;
+    }
 
     .qg-xp-flash {
       font-size: 12px;
       color: #1a6e1a;
       font-weight: 700;
-      margin-top: 8px;
-      min-height: 18px;
+      margin-top: 4px;
     }
 
+    .qg-xp-flash:empty { display: none; }
+
     .qg-timer {
-      font-size: 72px;
+      font-size: 64px;
       color: #333;
-      margin-bottom: 20px;
       letter-spacing: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 16px;
+      border-left: 1px solid #999;
     }
 
     @keyframes timer-flash {
@@ -333,12 +384,11 @@
       animation: row-flash 3s ease-out;
     }
 
-    /* Completion pulse — smooth scale for Quest Giver */
-    @keyframes text-pulse {
-      0% { transform: scale(1); opacity: 0.7; }
-      15% { transform: scale(1.2); opacity: 1; }
-      70% { transform: scale(1.2); opacity: 1; }
-      100% { transform: scale(1); opacity: 1; }
+    /* Completion animations for Quest Giver */
+    @keyframes text-highlight {
+      0% { color: #fff; }
+      30% { color: #fff; }
+      100% { color: #111; }
     }
 
     @keyframes fade-in-up {
@@ -353,11 +403,11 @@
     }
 
     .qg-quest-name.pulsing {
-      animation: text-pulse 2s ease-in-out;
+      animation: text-highlight 1.5s ease-out;
     }
 
     .qg-xp-flash.pulsing {
-      animation: fade-in-up 2s ease-out;
+      animation: fade-in-up 1.5s ease-out;
     }
 
     .qg-content-fading {
@@ -409,8 +459,8 @@
     <button id="nav-settings" onclick="showView('settings')">Settings</button>
   </div>
 
+  <div class="content-box">
   <div id="quest-giver-view">
-    <div class="qg-label">Quest Giver</div>
     <div id="qg-content"></div>
   </div>
 
@@ -471,6 +521,7 @@
       <button onclick="resetWithConfirm(this, 'reset_completions', loadAll)">Reset History</button>
     </div>
   </div>
+  </div><!-- content-box -->
 </div><!-- app-inner -->
 </div><!-- app-border -->
 
@@ -525,6 +576,64 @@
         `<div class="level-up-text" style="color: ${levelUpColor(lu.name)}">${lu.name} reached Level ${lu.new_level}!</div>`
       ).join("");
     }
+
+    // Image and flavor text pools
+    const questGiverImages = [
+      "images/quest-givers/Bard 1 01 Atari.gif",
+      "images/quest-givers/Bard 1 02 Atari.gif",
+      "images/quest-givers/Bard 1 04 Atari.gif",
+      "images/quest-givers/Bard 1 05 Atari.gif",
+      "images/quest-givers/Bard 1 06 Atari.gif",
+      "images/quest-givers/Bard 1 07 Atari.gif",
+      "images/quest-givers/Bard 1 10 Atari.gif",
+      "images/quest-givers/Bard 1 13 Atari.gif",
+      "images/quest-givers/Bard 1 54 Atari.gif",
+      "images/quest-givers/Bard 1 56 Atari.gif",
+      "images/quest-givers/Bard 1 57 Atari.gif",
+      "images/quest-givers/Bard 1 60 Amiga.gif",
+      "images/quest-givers/Bard 1 63 Atari.gif",
+    ];
+
+    const monsterImages = [
+      "images/monsters/Bard 1 14 Atari.gif",
+      "images/monsters/Bard 1 15 Atari.gif",
+      "images/monsters/Bard 1 16 Atari.gif",
+      "images/monsters/Bard 1 19 Atari.gif",
+      "images/monsters/Bard 1 20 Atari.gif",
+      "images/monsters/Bard 1 21 Atari.gif",
+      "images/monsters/Bard 1 23 Atari.gif",
+      "images/monsters/Bard 1 25 Atari.gif",
+      "images/monsters/Bard 1 27 Atari.gif",
+      "images/monsters/Bard 1 29 Atari.gif",
+      "images/monsters/Bard 1 33 Amiga.gif",
+      "images/monsters/Bard 1 34 Atari.gif",
+      "images/monsters/Bard 1 35 Atari.gif",
+      "images/monsters/Bard 1 40 Atari.gif",
+      "images/monsters/Bard 1 41 Atari.gif",
+      "images/monsters/Bard 1 42 Atari.gif",
+      "images/monsters/Bard 1 48 Atari.gif",
+      "images/monsters/Bard 1 51 Atari.gif",
+    ];
+
+    const questGiverLines = [
+      "Word has reached the guild of a task requiring attention...",
+      "An old friend calls upon your skills once more...",
+      "The townsfolk speak of a deed that needs doing...",
+    ];
+
+    const encounterLines = [
+      "A trial lays before you...",
+      "The obligations of this mystic place fall upon you without warning!",
+      "You face death itself in the form of",
+      "A shadow stirs in the darkness before you...",
+      "Something is approaching...",
+    ];
+
+    function randomFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    let currentQGImage = randomFrom(questGiverImages);
+    let currentMonsterImage = randomFrom(monsterImages);
+    let currentEncounterLine = randomFrom(encounterLines);
 
     let editingId = null;
     let cachedQuests = [];
@@ -1060,7 +1169,7 @@
       const quest = await invoke("get_next_quest", { skipCount: nextQuestIndex });
 
       if (cachedQuests.filter(q => q.active).length === 0) {
-        qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quests tab.</div>';
+        qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quest List tab.</div>';
         return;
       }
 
@@ -1070,26 +1179,42 @@
       }
 
       qgContent.innerHTML = `
-        <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
-        <div class="qg-actions">
-          <button onclick="qgDone('${quest.id}', '${quest.difficulty}')">Done</button>
-          <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
-          <button onclick="qgSomethingElse()">Something Else</button>
+        <div class="qg-split">
+          <div class="qg-split-image">
+            <img src="${currentQGImage}" alt="Quest Giver">
+          </div>
+          <div class="qg-split-text">
+            <div class="qg-flavor">${randomFrom(questGiverLines)}</div>
+            <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
+            <div class="qg-prompt">Does our stalwart hero accept this quest?</div>
+            <div class="qg-actions">
+              <button onclick="qgDone('${quest.id}', '${quest.difficulty}')">Done</button>
+              <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
+              <button onclick="qgSomethingElse()">Something Else</button>
+            </div>
+          </div>
         </div>
-        <div class="qg-xp-flash" id="qg-xp-flash"></div>
       `;
     }
 
     function renderTimerMode() {
       const elapsed = Date.now() - timerStartLocal;
       qgContent.innerHTML = `
-        <div class="qg-quest-name" style="font-size: 22px;">${escapeHtml(timerTitleLocal)}</div>
-        <div class="qg-timer">${formatTimer(elapsed)}</div>
-        <div class="qg-actions">
-          <button onclick="timerDone()">Done</button>
-          <button onclick="cancelTimer()">Cancel</button>
+        <div class="qg-split">
+          <div class="qg-split-image">
+            <img src="${currentMonsterImage}" alt="Monster">
+          </div>
+          <div class="qg-split-text">
+            <div class="qg-flavor">${currentEncounterLine}</div>
+            <div class="qg-quest-name" style="font-size: 18px;">${escapeHtml(timerTitleLocal)}</div>
+            <div class="qg-actions">
+              <button onclick="timerDone()">Done</button>
+              <button onclick="cancelTimer()">Cancel</button>
+            </div>
+            <div class="qg-xp-flash" id="qg-xp-flash"></div>
+          </div>
+          <div class="qg-timer">${formatTimer(elapsed)}</div>
         </div>
-        <div class="qg-xp-flash" id="qg-xp-flash"></div>
       `;
     }
 
@@ -1123,6 +1248,8 @@
     }
 
     async function qgQuestNow(questId) {
+      currentMonsterImage = randomFrom(monsterImages);
+      currentEncounterLine = randomFrom(encounterLines);
       await startTimer(questId);
       renderQuestGiver();
     }
@@ -1136,15 +1263,20 @@
       const completion = await invoke("complete_timer");
 
       nextQuestIndex = 0;
-      let feedbackHtml = `<div class="qg-quest-name pulsing" style="font-size: 22px;">${escapeHtml(completion.quest_title)}</div>`;
-      if (finalElapsed) {
-        feedbackHtml += `<div class="qg-timer flashing" style="margin-bottom: 8px;">${finalElapsed}</div>`;
-      }
+      let textHtml = `<div class="qg-quest-name pulsing" style="font-size: 18px;">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        feedbackHtml += `<div class="qg-xp-flash pulsing">+${completion.xp_earned} XP</div>`;
+        textHtml += `<div class="qg-xp-flash pulsing">+${completion.xp_earned} XP</div>`;
       }
-      feedbackHtml += levelUpHtml(completion.level_ups);
-      qgContent.innerHTML = feedbackHtml;
+      textHtml += levelUpHtml(completion.level_ups);
+      qgContent.innerHTML = `
+        <div class="qg-split">
+          <div class="qg-split-image">
+            <img src="${currentMonsterImage}" alt="Monster">
+          </div>
+          <div class="qg-split-text">${textHtml}</div>
+          ${finalElapsed ? `<div class="qg-timer flashing">${finalElapsed}</div>` : ""}
+        </div>
+      `;
       setTimeout(() => {
         qgContent.classList.add("qg-content-fading");
         setTimeout(() => {
@@ -1158,13 +1290,20 @@
       const completion = await invoke("complete_quest", { questId });
       const color = diffTextColors[difficulty] || "#1a6e1a";
 
-      // Show completion feedback with pulse
-      let feedbackHtml = `<div class="qg-quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
+      // Show completion feedback with pulse in split layout
+      let textHtml = `<div class="qg-quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        feedbackHtml += `<div class="qg-xp-flash pulsing" style="color: ${color}">+${completion.xp_earned} XP</div>`;
+        textHtml += `<div class="qg-xp-flash pulsing" style="color: ${color}">+${completion.xp_earned} XP</div>`;
       }
-      feedbackHtml += levelUpHtml(completion.level_ups);
-      qgContent.innerHTML = feedbackHtml;
+      textHtml += levelUpHtml(completion.level_ups);
+      qgContent.innerHTML = `
+        <div class="qg-split">
+          <div class="qg-split-image">
+            <img src="${currentQGImage}" alt="Quest Giver">
+          </div>
+          <div class="qg-split-text">${textHtml}</div>
+        </div>
+      `;
 
       // Hold for 2.5s, then fade out and show next quest
       nextQuestIndex = 0;
@@ -1172,18 +1311,22 @@
         qgContent.classList.add("qg-content-fading");
         setTimeout(() => {
           qgContent.classList.remove("qg-content-fading");
+          currentQGImage = randomFrom(questGiverImages);
           loadAll();
         }, 400);
       }, 2500);
     }
 
-    function qgSomethingElse() {
+    async function qgSomethingElse() {
       nextQuestIndex++;
-      renderQuestGiver();
+      currentQGImage = randomFrom(questGiverImages);
+      await renderQuestGiver();
     }
 
     // Quest Now from list view
     async function listQuestNow(questId) {
+      currentMonsterImage = randomFrom(monsterImages);
+      currentEncounterLine = randomFrom(encounterLines);
       await startTimer(questId);
       showView("quest-giver");
     }

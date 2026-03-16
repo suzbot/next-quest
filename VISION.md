@@ -144,12 +144,20 @@ Initial visual identity for the app:
 3. **Accent colors**: difficulty color-coded (Flame Red, Compass Blue, Carpet Green, Treasure Gold, Shield Purple)
 4. **Quest completion feedback**: row flash + XP in difficulty color, quest giver pulse + fade, level-up notifications in attribute color, timer completion with elapsed time flash
 
+## Phase 2B: "Flavor Text and Images"
+
+Bring the quest giver to life with personality and visuals:
+
+1. **Randomized flavor text** on the overlay and quest giver
+2. **Quest giver images** — side-by-side layout inspired by Bard's Tale guild screen
+3. **Multiple quest givers** — different NPCs with different personalities
+
 ## Phase 2: "Level Up"
 - More quest attributes and logic
 - XP time-elapsed modifier: diminishing returns for repeating a quest quickly (same-day laundry), increasing reward as time passes to encourage doing it, but log-curve so procrastination isn't linearly rewarded
 - Smarter quest giving
 - Sagas for bigger goals
-- Multiple Quest Givers
+
 - Receive coin and items from questing
 - Badges, Rewards
 - Buy stuff with gold
