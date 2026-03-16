@@ -12,6 +12,8 @@ pub struct TimerStateInner {
     pub quest_id: Option<String>,
     pub quest_title: Option<String>,
     pub started_at: Option<u64>,
+    pub monster_image: Option<String>,
+    pub encounter_line: Option<String>,
 }
 
 pub struct AppTimerState(pub Mutex<TimerStateInner>);
@@ -50,6 +52,8 @@ pub struct TimerInfo {
     pub quest_id: Option<String>,
     pub quest_title: Option<String>,
     pub started_at: Option<u64>,
+    pub monster_image: Option<String>,
+    pub encounter_line: Option<String>,
 }
 
 #[tauri::command]
@@ -208,6 +212,8 @@ pub fn start_timer(
     db_state: State<DbState>,
     timer_state: State<AppTimerState>,
     quest_id: String,
+    monster_image: Option<String>,
+    encounter_line: Option<String>,
 ) -> Result<TimerInfo, String> {
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
 
@@ -226,12 +232,16 @@ pub fn start_timer(
     timer.quest_id = Some(quest_id.clone());
     timer.quest_title = Some(title.clone());
     timer.started_at = Some(now_millis);
+    timer.monster_image = monster_image.clone();
+    timer.encounter_line = encounter_line.clone();
 
     Ok(TimerInfo {
         active: true,
         quest_id: Some(quest_id),
         quest_title: Some(title),
         started_at: Some(now_millis),
+        monster_image,
+        encounter_line,
     })
 }
 
@@ -288,7 +298,55 @@ pub fn get_timer_state(
         quest_id: timer.quest_id.clone(),
         quest_title: timer.quest_title.clone(),
         started_at: timer.started_at,
+        monster_image: timer.monster_image.clone(),
+        encounter_line: timer.encounter_line.clone(),
     })
+}
+
+// --- Image Lists ---
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageLists {
+    pub quest_givers: Vec<String>,
+    pub monsters: Vec<String>,
+}
+
+#[tauri::command]
+pub fn get_image_lists(app: tauri::AppHandle) -> Result<ImageLists, String> {
+    use tauri::Manager;
+
+    let resolver = app.path();
+    let resource_dir = resolver.resource_dir().map_err(|e| e.to_string())?;
+    let images_dir = resource_dir.join("images");
+
+    fn list_gifs(dir: &std::path::Path) -> Vec<String> {
+        let mut files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "gif").unwrap_or(false) {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        files.push(name.to_string());
+                    }
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    let quest_givers = list_gifs(&images_dir.join("quest-givers"))
+        .iter()
+        .map(|f| format!("images/quest-givers/{}", f))
+        .collect();
+
+    let monsters = list_gifs(&images_dir.join("monsters"))
+        .iter()
+        .map(|f| format!("images/monsters/{}", f))
+        .collect();
+
+    Ok(ImageLists { quest_givers, monsters })
 }
 
 // --- Settings ---

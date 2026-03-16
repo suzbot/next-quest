@@ -361,6 +361,7 @@
       justify-content: center;
       padding: 0 16px;
       border-left: 1px solid #999;
+      min-width: 280px;
     }
 
     @keyframes timer-flash {
@@ -584,9 +585,9 @@
       "images/quest-givers/Bard 1 04 Atari.gif",
       "images/quest-givers/Bard 1 05 Atari.gif",
       "images/quest-givers/Bard 1 06 Atari.gif",
-      "images/quest-givers/Bard 1 07 Atari.gif",
       "images/quest-givers/Bard 1 10 Atari.gif",
       "images/quest-givers/Bard 1 13 Atari.gif",
+      "images/quest-givers/Bard 1 48 Atari.gif",
       "images/quest-givers/Bard 1 54 Atari.gif",
       "images/quest-givers/Bard 1 56 Atari.gif",
       "images/quest-givers/Bard 1 57 Atari.gif",
@@ -597,7 +598,6 @@
     const monsterImages = [
       "images/monsters/Bard 1 14 Atari.gif",
       "images/monsters/Bard 1 15 Atari.gif",
-      "images/monsters/Bard 1 16 Atari.gif",
       "images/monsters/Bard 1 19 Atari.gif",
       "images/monsters/Bard 1 20 Atari.gif",
       "images/monsters/Bard 1 21 Atari.gif",
@@ -611,7 +611,6 @@
       "images/monsters/Bard 1 40 Atari.gif",
       "images/monsters/Bard 1 41 Atari.gif",
       "images/monsters/Bard 1 42 Atari.gif",
-      "images/monsters/Bard 1 48 Atari.gif",
       "images/monsters/Bard 1 51 Atari.gif",
     ];
 
@@ -1228,7 +1227,9 @@
     }
 
     async function startTimer(questId) {
-      const info = await invoke("start_timer", { questId });
+      currentMonsterImage = randomFrom(monsterImages);
+      currentEncounterLine = randomFrom(encounterLines);
+      const info = await invoke("start_timer", { questId, monsterImage: currentMonsterImage, encounterLine: currentEncounterLine });
       timerStartLocal = Date.now();
       timerTitleLocal = info.questTitle;
       timerInterval = setInterval(() => {
@@ -1236,7 +1237,7 @@
           renderTimerMode();
         }
       }, 1000);
-          }
+    }
 
     async function cancelTimer() {
       if (timerInterval) clearInterval(timerInterval);
@@ -1250,7 +1251,15 @@
     async function qgQuestNow(questId) {
       currentMonsterImage = randomFrom(monsterImages);
       currentEncounterLine = randomFrom(encounterLines);
-      await startTimer(questId);
+      await invoke("start_timer", { questId, monsterImage: currentMonsterImage, encounterLine: currentEncounterLine });
+      timerStartLocal = Date.now();
+      const timerState = await invoke("get_timer_state");
+      timerTitleLocal = timerState.questTitle;
+      timerInterval = setInterval(() => {
+        if (!questGiverView.classList.contains("hidden")) {
+          renderTimerMode();
+        }
+      }, 1000);
       renderQuestGiver();
     }
 
@@ -1508,6 +1517,8 @@
         if (timerState.active) {
           timerStartLocal = timerState.startedAt;
           timerTitleLocal = timerState.questTitle;
+          if (timerState.monsterImage) currentMonsterImage = timerState.monsterImage;
+          if (timerState.encounterLine) currentEncounterLine = timerState.encounterLine;
           timerInterval = setInterval(() => {
             if (!questGiverView.classList.contains("hidden")) {
               renderTimerMode();
