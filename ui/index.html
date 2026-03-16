@@ -614,19 +614,28 @@
       "images/monsters/Bard 1 51 Atari.gif",
     ];
 
-    const questGiverLines = [
+    let questGiverLines = [
       "Word has reached the guild of a task requiring attention...",
-      "An old friend calls upon your skills once more...",
-      "The townsfolk speak of a deed that needs doing...",
     ];
 
-    const encounterLines = [
+    let encounterLines = [
       "A trial lays before you...",
-      "The obligations of this mystic place fall upon you without warning!",
-      "You face death itself in the form of",
-      "A shadow stirs in the darkness before you...",
-      "Something is approaching...",
     ];
+
+    async function loadTextPools() {
+      try {
+        const [qgText, encText] = await Promise.all([
+          fetch("text/quest-giver-lines.txt").then(r => r.text()),
+          fetch("text/encounter-lines.txt").then(r => r.text()),
+        ]);
+        const qgLines = qgText.split("\n").map(l => l.trim()).filter(l => l);
+        const encLines = encText.split("\n").map(l => l.trim()).filter(l => l);
+        if (qgLines.length > 0) questGiverLines = qgLines;
+        if (encLines.length > 0) encounterLines = encLines;
+      } catch (e) {
+        console.error("Failed to load text pools:", e);
+      }
+    }
 
     function randomFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -1529,7 +1538,7 @@
       }
     });
 
-    loadAll();
+    loadTextPools().then(() => loadAll());
   </script>
 </body>
 </html>

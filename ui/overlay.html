@@ -209,13 +209,19 @@
       "images/monsters/Bard 1 51 Atari.gif",
     ];
 
-    const encounterLines = [
+    let encounterLines = [
       "A trial lays before you...",
-      "The obligations of this mystic place fall upon you without warning!",
-      "You face death itself in the form of",
-      "A shadow stirs in the darkness before you...",
-      "Something is approaching...",
     ];
+
+    async function loadTextPool() {
+      try {
+        const text = await fetch("text/encounter-lines.txt").then(r => r.text());
+        const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+        if (lines.length > 0) encounterLines = lines;
+      } catch (e) {
+        console.error("Failed to load encounter lines:", e);
+      }
+    }
 
     function randomFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -324,7 +330,7 @@
       loadQuest();
     });
 
-    loadQuest();
+    loadTextPool().then(() => loadQuest());
   </script>
 </body>
 </html>

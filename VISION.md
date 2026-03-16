@@ -144,13 +144,25 @@ Initial visual identity for the app:
 3. **Accent colors**: difficulty color-coded (Flame Red, Compass Blue, Carpet Green, Treasure Gold, Shield Purple)
 4. **Quest completion feedback**: row flash + XP in difficulty color, quest giver pulse + fade, level-up notifications in attribute color, timer completion with elapsed time flash
 
-## Phase 2B: "Flavor Text and Images"
+## Phase 2B: "Flavor Text and Images" ✓
 
 Bring the quest giver to life with personality and visuals:
 
 1. **Randomized flavor text** on the overlay and quest giver
 2. **Quest giver images** — side-by-side layout inspired by Bard's Tale guild screen
-3. **Multiple quest givers** — different NPCs with different personalities
+3. **Battle-themed overlay** — monster encounters with Fight/Run/Cast Completion/Hide in the Shadows
+4. **Keyboard shortcuts** on the overlay (F/R/C/H)
+5. **Monster image + encounter text carry through** to timer view
+
+### Future Enhancements
+- Victory and defeat images (different images for completing vs cancelling a quest)
+- Victory and defeat button names (thematic labels for Done/Cancel in timer view)
+- Rename "Call to Adventure" to "Wandering Monsters" throughout (settings, tray menu)
+- Replace ON/OFF toggle with a clear toggle UI (avoid ambiguity about current state)
+- Lock other tabs when Quest Now timer is running (must explicitly "declare defeat" to access quest list/character/settings)
+- Load flavor text from external text files (editable pool without code changes)
+- Load image lists dynamically from folders (add/remove images without code changes)
+- Multiple quest givers — different NPCs with different personalities
 
 ## Phase 2: "Level Up"
 - More quest attributes and logic
