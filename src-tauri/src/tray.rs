@@ -49,9 +49,9 @@ fn build_menu_from_state<M: Manager<tauri::Wry>>(
     let menu = Menu::new(manager)?;
 
     let cta_label = if tray.call_to_adventure {
-        "Call to Adventure: ON"
+        "Encounters: ON"
     } else {
-        "Call to Adventure: OFF"
+        "Encounters: OFF"
     };
     let cta_toggle = MenuItem::with_id(manager, "call_to_adventure", cta_label, true, None::<&str>)?;
     menu.append(&cta_toggle)?;

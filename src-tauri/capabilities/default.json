@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Next Quest",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-size",
+    "core:event:allow-listen",
+    "core:event:allow-emit"
+  ]
+}

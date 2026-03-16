@@ -1,0 +1,60 @@
+{
+  "defeat": [
+    "images/defeat/Bard 1 12 Atari.gif",
+    "images/defeat/Bard 3 58 Amiga.gif",
+    "images/defeat/Bard 4 10 PC.gif"
+  ],
+  "monsters": [
+    "images/monsters/Bard 1 14 Atari.gif",
+    "images/monsters/Bard 1 15 Atari.gif",
+    "images/monsters/Bard 1 19 Atari.gif",
+    "images/monsters/Bard 1 20 Atari.gif",
+    "images/monsters/Bard 1 21 Atari.gif",
+    "images/monsters/Bard 1 23 Atari.gif",
+    "images/monsters/Bard 1 25 Atari.gif",
+    "images/monsters/Bard 1 27 Atari.gif",
+    "images/monsters/Bard 1 29 Atari.gif",
+    "images/monsters/Bard 1 33 Amiga.gif",
+    "images/monsters/Bard 1 34 Atari.gif",
+    "images/monsters/Bard 1 35 Atari.gif",
+    "images/monsters/Bard 1 40 Atari.gif",
+    "images/monsters/Bard 1 41 Atari.gif",
+    "images/monsters/Bard 1 42 Atari.gif",
+    "images/monsters/Bard 1 51 Atari.gif",
+    "images/monsters/Bard 3 20 Amiga.gif",
+    "images/monsters/Bard 4 03 PC.gif",
+    "images/monsters/Bard 4 04 PC.gif",
+    "images/monsters/Bard 4 05 PC.gif",
+    "images/monsters/Bard 4 09 PC.gif",
+    "images/monsters/Bard 4 17 PC.gif",
+    "images/monsters/Bard 4 25 PC.gif",
+    "images/monsters/Bard 4 26 PC.gif"
+  ],
+  "quest-givers": [
+    "images/quest-givers/Bard 1 01 Atari.gif",
+    "images/quest-givers/Bard 1 02 Atari.gif",
+    "images/quest-givers/Bard 1 04 Atari.gif",
+    "images/quest-givers/Bard 1 05 Atari.gif",
+    "images/quest-givers/Bard 1 06 Atari.gif",
+    "images/quest-givers/Bard 1 10 Atari.gif",
+    "images/quest-givers/Bard 1 13 Atari.gif",
+    "images/quest-givers/Bard 1 26 Atari.gif",
+    "images/quest-givers/Bard 1 48 Atari.gif",
+    "images/quest-givers/Bard 1 54 Atari.gif",
+    "images/quest-givers/Bard 1 56 Atari.gif",
+    "images/quest-givers/Bard 1 57 Atari.gif",
+    "images/quest-givers/Bard 1 60 Amiga.gif",
+    "images/quest-givers/Bard 1 61 Atari.gif",
+    "images/quest-givers/Bard 1 63 Atari.gif",
+    "images/quest-givers/Bard 2 04 Amiga.gif",
+    "images/quest-givers/Bard 2 20 Amiga.gif",
+    "images/quest-givers/Bard 2 50 Amiga.gif"
+  ],
+  "victory": [
+    "images/victory/Bard 1 03 Atari.gif",
+    "images/victory/Bard 1 11 Atari.gif",
+    "images/victory/Bard 2 12 Amiga.gif",
+    "images/victory/Bard 3 53 Amiga.gif",
+    "images/victory/Bard 4 29 PC.gif"
+  ]
+}

@@ -77,7 +77,6 @@ fn main() {
             commands::cancel_timer,
             commands::complete_timer,
             commands::get_timer_state,
-            commands::get_image_lists,
             commands::get_settings,
             commands::set_cta_interval,
             commands::toggle_call_to_adventure,
@@ -187,7 +186,7 @@ fn show_overlay(app: &tauri::AppHandle) {
         tauri::WebviewUrl::App("overlay.html".into()),
     )
     .title("")
-    .inner_size(500.0, 220.0)
+    .inner_size(460.0, 400.0)
     .decorations(false)
     .always_on_top(true)
     .resizable(false)

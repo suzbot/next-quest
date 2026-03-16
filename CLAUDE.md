@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** Phase 2B complete. Next: Phase 2 — "Level Up"
+**Current phase:** Phase 2C complete. Next: Phase 2D — "Levelling"
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 
@@ -36,9 +36,12 @@ Tauri app: Rust backend + web frontend.
 - `src-tauri/src/db.rs` — all data logic, migrations, and tests
 - `src-tauri/src/commands.rs` — Tauri command wrappers, timer state, tray state, settings
 - `src-tauri/src/tray.rs` — system tray icon, menu, and event handling
-- `src-tauri/src/main.rs` — app setup, Call to Adventure polling thread
+- `src-tauri/src/main.rs` — app setup, Encounters polling thread
+- `src-tauri/build.rs` — build-time image manifest generation
 - `ui/index.html` — main app frontend (HTML/CSS/JS)
-- `ui/overlay.html` — Call to Adventure overlay window
+- `ui/overlay.html` — Encounters overlay window
+- `ui/images/manifest.json` — auto-generated image list (do not edit by hand)
+- `ui/text/` — external flavor text pools (editable without code changes)
 - `docs/` — requirements, design docs, step specs
 
 ### Data Model
@@ -87,6 +90,7 @@ Do NOT skip steps or combine them without discussing it first. Do NOT draft docs
 | uuid 1 | Rust | Generate unique IDs (v4) | Quest and completion IDs |
 | dirs 6 | Rust | Platform data directory paths | Locate app data folder |
 | libc 0.2 | Rust | C standard library bindings | Local timezone conversion for quest due dates |
+| serde_json 1 | Rust (build only) | JSON serialization | Build-time image manifest generation |
 
 ## Pacing & Breaks
 

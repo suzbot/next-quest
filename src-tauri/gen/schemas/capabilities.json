@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default capabilities for Next Quest","local":true,"windows":["*"],"permissions":["core:default","core:window:allow-set-size","core:event:allow-listen","core:event:allow-emit"]}}

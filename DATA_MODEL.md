@@ -86,9 +86,9 @@ A directional goal, mapped to one attribute. Seeded on first launch with 12 skil
 **Default skills and their attributes:**
 - Health: Cooking, Healing, Acrobatics
 - Pluck: Cleaning, Crafting
-- Knowledge: Language
-- Connection: Nature, Community, Sociality
-- Responsibility: Bureaucracy, Animal Handling, Logistics
+- Knowledge: Language, Technology
+- Connection: Nature, Community, Sociality, Animal Handling
+- Responsibility: Bureaucracy, Logistics
 
 ### Quest-Skill Link (quest_skill)
 Many-to-many join table between quests and skills.

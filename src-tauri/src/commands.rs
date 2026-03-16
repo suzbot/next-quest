@@ -303,52 +303,6 @@ pub fn get_timer_state(
     })
 }
 
-// --- Image Lists ---
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageLists {
-    pub quest_givers: Vec<String>,
-    pub monsters: Vec<String>,
-}
-
-#[tauri::command]
-pub fn get_image_lists(app: tauri::AppHandle) -> Result<ImageLists, String> {
-    use tauri::Manager;
-
-    let resolver = app.path();
-    let resource_dir = resolver.resource_dir().map_err(|e| e.to_string())?;
-    let images_dir = resource_dir.join("images");
-
-    fn list_gifs(dir: &std::path::Path) -> Vec<String> {
-        let mut files = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "gif").unwrap_or(false) {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        files.push(name.to_string());
-                    }
-                }
-            }
-        }
-        files.sort();
-        files
-    }
-
-    let quest_givers = list_gifs(&images_dir.join("quest-givers"))
-        .iter()
-        .map(|f| format!("images/quest-givers/{}", f))
-        .collect();
-
-    let monsters = list_gifs(&images_dir.join("monsters"))
-        .iter()
-        .map(|f| format!("images/monsters/{}", f))
-        .collect();
-
-    Ok(ImageLists { quest_givers, monsters })
-}
-
 // --- Settings ---
 
 #[derive(Serialize)]
