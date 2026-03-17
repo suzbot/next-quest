@@ -656,20 +656,34 @@
     };
 
     // Attribute text colors (dark variants for WCAG AA)
-    const attrTextColors = {
-      "Health": "#992200",
-      "Pluck": "#7a5500",
-      "Knowledge": "#2244aa",
-      "Connection": "#1a6e1a",
-      "Responsibility": "#5c2d80",
-      "Character": "#333",
-    };
+    // Cycling color palette: fill colors first, then text variants
+    const fillPalette = ["#ff6633", "#eea800", "#4466cc", "#55cc55", "#8844aa"];
+    const textPalette = ["#992200", "#7a5500", "#2244aa", "#1a6e1a", "#5c2d80"];
+    const fullPalette = [...fillPalette, ...textPalette];
 
-    // Map skill names to their attribute for color lookup (built from backend data)
-    let skillAttrMap = {};
+    function attrFillColor(index) {
+      if (index < 0) return "#888";
+      return fullPalette[index % fullPalette.length];
+    }
+
+    function attrTextColor(index) {
+      if (index < 0) return "#333";
+      return index < textPalette.length ? textPalette[index] : fullPalette[index % fullPalette.length];
+    }
+
+    // Maps rebuilt on each loadAll — keyed by attribute ID
+    let attrIndexById = {};
 
     function levelUpColor(name) {
-      return attrTextColors[name] || attrTextColors[skillAttrMap[name]] || "#333";
+      // Find index by name from cached attributes, fall back to skill→attribute lookup
+      const attr = cachedAttributes.find(a => a.name === name);
+      if (attr) return attrTextColor(cachedAttributes.indexOf(attr));
+      const skill = cachedSkills.find(s => s.name === name);
+      if (skill && skill.attribute_id) {
+        const attrIdx = cachedAttributes.findIndex(a => a.id === skill.attribute_id);
+        if (attrIdx >= 0) return attrTextColor(attrIdx);
+      }
+      return "#333";
     }
 
     function levelUpHtml(levelUps) {
@@ -811,8 +825,8 @@
         attrNameMap = {};
         cachedSkills.forEach(s => skillNameMap[s.id] = s.name);
         cachedAttributes.forEach(a => attrNameMap[a.id] = a.name);
-        skillAttrMap = {};
-        cachedSkills.forEach(s => { skillAttrMap[s.name] = attrNameMap[s.attribute_id] || ""; });
+        attrIndexById = {};
+        cachedAttributes.forEach((a, i) => { attrIndexById[a.id] = i; });
         renderAddLinkTags();
       }
       renderQuests(results[0]);
@@ -1510,14 +1524,6 @@
     }
 
     // Attribute fill colors (bright variants for meter bars)
-    const attrFillColors = {
-      "Health": "#ff6633",
-      "Pluck": "#eea800",
-      "Knowledge": "#4466cc",
-      "Connection": "#55cc55",
-      "Responsibility": "#8844aa",
-    };
-
     function meterPercent(into, total) {
       if (total <= 0) return 0;
       return Math.min(100, Math.round((into / total) * 100));
@@ -1534,9 +1540,9 @@
            <button onclick="startRename()">Rename</button>`;
 
       // Character XP meter uses the color of the highest attribute
-      let highestAttr = attributes[0];
-      attributes.forEach(a => { if (a.xp > highestAttr.xp) highestAttr = a; });
-      const charColor = attrFillColors[highestAttr?.name] || "#888";
+      let highestIdx = 0;
+      attributes.forEach((a, i) => { if (a.xp > (attributes[highestIdx]?.xp || 0)) highestIdx = i; });
+      const charColor = attrFillColor(highestIdx);
 
       const charMeter = `
         <div class="meter-row">
@@ -1545,8 +1551,8 @@
           <span class="meter-text">Lv ${character.level} (${character.xp_into_current_level}/${character.xp_for_current_level} XP)</span>
         </div>`;
 
-      const attrRows = attributes.map(a => {
-        const color = attrFillColors[a.name] || "#888";
+      const attrRows = attributes.map((a, i) => {
+        const color = attrFillColor(i);
         const pct = meterPercent(a.xp_into_current_level, a.xp_for_current_level);
         return `<div class="meter-row">
           <span class="meter-label">${escapeHtml(a.name)}</span>
@@ -1555,16 +1561,12 @@
         </div>`;
       }).join("");
 
-      // Build attr ID → name map and color map
       const attrMap = {};
-      const attrColorById = {};
-      attributes.forEach(a => {
-        attrMap[a.id] = a.name;
-        attrColorById[a.id] = attrFillColors[a.name] || "#888";
-      });
+      attributes.forEach(a => { attrMap[a.id] = a.name; });
 
       const skillRows = skills.map(s => {
-        const color = attrColorById[s.attribute_id] || "#888";
+        const attrIdx = s.attribute_id ? (attrIndexById[s.attribute_id] ?? -1) : -1;
+        const color = attrFillColor(attrIdx);
         const pct = meterPercent(s.xp_into_current_level, s.xp_for_current_level);
         return `<div class="meter-row">
           <span class="meter-label">${escapeHtml(s.name)}</span>
