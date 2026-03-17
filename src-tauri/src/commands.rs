@@ -396,3 +396,44 @@ pub fn dismiss_overlay(
     Ok(())
 }
 
+#[tauri::command]
+pub fn add_attribute(state: State<DbState>, name: String) -> Result<db::Attribute, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::add_attribute(&conn, name)
+}
+
+#[tauri::command]
+pub fn add_skill(state: State<DbState>, name: String, attribute_id: Option<String>) -> Result<db::Skill, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::add_skill(&conn, name, attribute_id)
+}
+
+#[tauri::command]
+pub fn rename_attribute(state: State<DbState>, id: String, name: String) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::rename_attribute(&conn, id, name)
+}
+
+#[tauri::command]
+pub fn rename_skill(state: State<DbState>, id: String, name: String) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::rename_skill(&conn, id, name)
+}
+
+#[tauri::command]
+pub fn update_skill_attribute(state: State<DbState>, skill_id: String, attribute_id: Option<String>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::update_skill_attribute(&conn, skill_id, attribute_id)
+}
+
+#[tauri::command]
+pub fn delete_attribute(state: State<DbState>, id: String) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::delete_attribute(&conn, id)
+}
+
+#[tauri::command]
+pub fn delete_skill(state: State<DbState>, id: String) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::delete_skill(&conn, id)
+}

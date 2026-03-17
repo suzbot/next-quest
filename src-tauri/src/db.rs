@@ -141,7 +141,7 @@ pub struct Attribute {
 pub struct Skill {
     pub id: String,
     pub name: String,
-    pub attribute_id: String,
+    pub attribute_id: Option<String>,
     pub sort_order: i32,
     pub xp: i64,
     pub level: i32,
@@ -202,7 +202,7 @@ fn create_tables(conn: &Connection) {
         CREATE TABLE IF NOT EXISTS skill (
             id            TEXT PRIMARY KEY,
             name          TEXT NOT NULL,
-            attribute_id  TEXT NOT NULL REFERENCES attribute(id),
+            attribute_id  TEXT REFERENCES attribute(id),
             sort_order    INTEGER NOT NULL,
             xp            INTEGER NOT NULL DEFAULT 0
         );
@@ -306,6 +306,31 @@ fn migrate(conn: &Connection) {
         conn.execute_batch(
             "ALTER TABLE quest_completion ADD COLUMN xp_earned INTEGER NOT NULL DEFAULT 0;"
         ).expect("Failed to add xp_earned column");
+    }
+
+    // Migration: make skill.attribute_id nullable
+    let skill_attr_not_null: bool = conn
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='skill'")
+        .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, String>(0)))
+        .map(|sql| sql.contains("attribute_id  TEXT NOT NULL"))
+        .unwrap_or(false);
+
+    if skill_attr_not_null {
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").expect("Failed to disable foreign keys");
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS skill_new;
+            CREATE TABLE skill_new (
+                id            TEXT PRIMARY KEY,
+                name          TEXT NOT NULL,
+                attribute_id  TEXT REFERENCES attribute(id),
+                sort_order    INTEGER NOT NULL,
+                xp            INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO skill_new SELECT id, name, attribute_id, sort_order, xp FROM skill;
+            DROP TABLE skill;
+            ALTER TABLE skill_new RENAME TO skill;"
+        ).expect("Failed to migrate skill to nullable attribute_id");
+        conn.execute_batch("PRAGMA foreign_keys = ON;").expect("Failed to re-enable foreign keys");
     }
 }
 
@@ -636,7 +661,7 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
 
     for sid in &skill_ids {
         // Read current XP to check level before
-        let (old_xp, attribute_id): (i64, String) = conn
+        let (old_xp, attribute_id): (i64, Option<String>) = conn
             .query_row(
                 "SELECT xp, attribute_id FROM skill WHERE id = ?1",
                 rusqlite::params![sid],
@@ -657,12 +682,14 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
 
         // Skill leveled up — award attribute bump equivalent to a Moderate one-off
         if level_after > level_before {
-            let attr_bump = calculate_xp(&Difficulty::Moderate, &QuestType::OneOff, None);
-            conn.execute(
-                "UPDATE attribute SET xp = xp + ?1 WHERE id = ?2",
-                rusqlite::params![attr_bump, attribute_id],
-            )
-            .map_err(|e| e.to_string())?;
+            if let Some(ref aid) = attribute_id {
+                let attr_bump = calculate_xp(&Difficulty::Moderate, &QuestType::OneOff, None);
+                conn.execute(
+                    "UPDATE attribute SET xp = xp + ?1 WHERE id = ?2",
+                    rusqlite::params![attr_bump, aid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -1266,6 +1293,115 @@ pub fn get_skills(conn: &Connection) -> Result<Vec<Skill>, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(skills)
+}
+
+pub fn add_attribute(conn: &Connection, name: String) -> Result<Attribute, String> {
+    let id = Uuid::new_v4().to_string();
+    let max_order: i32 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM attribute", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO attribute (id, name, sort_order, xp) VALUES (?1, ?2, ?3, 0)",
+        rusqlite::params![id, name, max_order + 1],
+    ).map_err(|e| e.to_string())?;
+
+    let info = level_from_xp(0, &LevelScale::Attribute);
+    Ok(Attribute {
+        id, name, sort_order: max_order + 1, xp: 0,
+        level: info.level, xp_for_current_level: info.xp_for_current_level,
+        xp_into_current_level: info.xp_into_current_level,
+    })
+}
+
+pub fn add_skill(conn: &Connection, name: String, attribute_id: Option<String>) -> Result<Skill, String> {
+    // Validate attribute_id if provided
+    if let Some(ref aid) = attribute_id {
+        let exists: bool = conn
+            .query_row("SELECT COUNT(*) FROM attribute WHERE id = ?1", rusqlite::params![aid], |r| r.get::<_, i64>(0))
+            .map(|c| c > 0)
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err(format!("Attribute not found: {}", aid));
+        }
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let max_order: i32 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM skill", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO skill (id, name, attribute_id, sort_order, xp) VALUES (?1, ?2, ?3, ?4, 0)",
+        rusqlite::params![id, name, attribute_id, max_order + 1],
+    ).map_err(|e| e.to_string())?;
+
+    let info = level_from_xp(0, &LevelScale::Skill);
+    Ok(Skill {
+        id, name, attribute_id, sort_order: max_order + 1, xp: 0,
+        level: info.level, xp_for_current_level: info.xp_for_current_level,
+        xp_into_current_level: info.xp_into_current_level,
+    })
+}
+
+pub fn rename_attribute(conn: &Connection, id: String, name: String) -> Result<(), String> {
+    let rows = conn.execute(
+        "UPDATE attribute SET name = ?1 WHERE id = ?2",
+        rusqlite::params![name, id],
+    ).map_err(|e| e.to_string())?;
+    if rows == 0 { return Err(format!("Attribute not found: {}", id)); }
+    Ok(())
+}
+
+pub fn rename_skill(conn: &Connection, id: String, name: String) -> Result<(), String> {
+    let rows = conn.execute(
+        "UPDATE skill SET name = ?1 WHERE id = ?2",
+        rusqlite::params![name, id],
+    ).map_err(|e| e.to_string())?;
+    if rows == 0 { return Err(format!("Skill not found: {}", id)); }
+    Ok(())
+}
+
+pub fn update_skill_attribute(conn: &Connection, skill_id: String, attribute_id: Option<String>) -> Result<(), String> {
+    // Validate attribute_id if provided
+    if let Some(ref aid) = attribute_id {
+        let exists: bool = conn
+            .query_row("SELECT COUNT(*) FROM attribute WHERE id = ?1", rusqlite::params![aid], |r| r.get::<_, i64>(0))
+            .map(|c| c > 0)
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err(format!("Attribute not found: {}", aid));
+        }
+    }
+    let rows = conn.execute(
+        "UPDATE skill SET attribute_id = ?1 WHERE id = ?2",
+        rusqlite::params![attribute_id, skill_id],
+    ).map_err(|e| e.to_string())?;
+    if rows == 0 { return Err(format!("Skill not found: {}", skill_id)); }
+    Ok(())
+}
+
+pub fn delete_attribute(conn: &Connection, id: String) -> Result<(), String> {
+    // Remove quest links
+    conn.execute("DELETE FROM quest_attribute WHERE attribute_id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    // Unset skills mapped to this attribute
+    conn.execute("UPDATE skill SET attribute_id = NULL WHERE attribute_id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    // Delete the attribute
+    let rows = conn.execute("DELETE FROM attribute WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    if rows == 0 { return Err(format!("Attribute not found: {}", id)); }
+    Ok(())
+}
+
+pub fn delete_skill(conn: &Connection, id: String) -> Result<(), String> {
+    // Remove quest links
+    conn.execute("DELETE FROM quest_skill WHERE skill_id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    // Delete the skill
+    let rows = conn.execute("DELETE FROM skill WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    if rows == 0 { return Err(format!("Skill not found: {}", id)); }
+    Ok(())
 }
 
 fn compute_is_due(quest_type: &QuestType, active: bool, last_completed_days: Option<i64>, cycle_days: Option<i32>, today_local_days: i64) -> bool {
@@ -2108,6 +2244,165 @@ mod tests {
 
         let char_after = get_character(&conn).unwrap();
         assert_eq!(char_after.xp, char_before.xp); // unchanged
+    }
+
+    // --- Attribute/Skill CRUD ---
+
+    #[test]
+    fn add_attribute_returns_new_with_zero_xp() {
+        let conn = test_db();
+        let attr = add_attribute(&conn, "Grit".into()).unwrap();
+        assert_eq!(attr.name, "Grit");
+        assert_eq!(attr.xp, 0);
+        assert_eq!(attr.level, 1);
+        // Should appear in get_attributes
+        let all = get_attributes(&conn).unwrap();
+        assert!(all.iter().any(|a| a.name == "Grit"));
+    }
+
+    #[test]
+    fn add_skill_with_attribute() {
+        let conn = test_db();
+        let attrs = get_attributes(&conn).unwrap();
+        let skill = add_skill(&conn, "Painting".into(), Some(attrs[0].id.clone())).unwrap();
+        assert_eq!(skill.name, "Painting");
+        assert_eq!(skill.attribute_id, Some(attrs[0].id.clone()));
+        assert_eq!(skill.xp, 0);
+    }
+
+    #[test]
+    fn add_skill_without_attribute() {
+        let conn = test_db();
+        let skill = add_skill(&conn, "Freestyle".into(), None).unwrap();
+        assert_eq!(skill.attribute_id, None);
+    }
+
+    #[test]
+    fn add_skill_invalid_attribute_errors() {
+        let conn = test_db();
+        let result = add_skill(&conn, "Bad".into(), Some("fake-id".into()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rename_attribute_updates_name() {
+        let conn = test_db();
+        let attrs = get_attributes(&conn).unwrap();
+        rename_attribute(&conn, attrs[0].id.clone(), "Vigor".into()).unwrap();
+        let updated = get_attributes(&conn).unwrap();
+        assert_eq!(updated[0].name, "Vigor");
+    }
+
+    #[test]
+    fn rename_skill_updates_name() {
+        let conn = test_db();
+        let skills = get_skills(&conn).unwrap();
+        rename_skill(&conn, skills[0].id.clone(), "Botany".into()).unwrap();
+        let updated = get_skills(&conn).unwrap();
+        assert!(updated.iter().any(|s| s.name == "Botany"));
+    }
+
+    #[test]
+    fn rename_nonexistent_attribute_errors() {
+        let conn = test_db();
+        assert!(rename_attribute(&conn, "nope".into(), "X".into()).is_err());
+    }
+
+    #[test]
+    fn rename_nonexistent_skill_errors() {
+        let conn = test_db();
+        assert!(rename_skill(&conn, "nope".into(), "X".into()).is_err());
+    }
+
+    #[test]
+    fn update_skill_attribute_mapping() {
+        let conn = test_db();
+        let attrs = get_attributes(&conn).unwrap();
+        let skills = get_skills(&conn).unwrap();
+        let original_attr = skills[0].attribute_id.clone();
+
+        // Change to a different attribute
+        let new_attr = attrs.iter().find(|a| Some(&a.id) != original_attr.as_ref()).unwrap();
+        update_skill_attribute(&conn, skills[0].id.clone(), Some(new_attr.id.clone())).unwrap();
+        let updated = get_skills(&conn).unwrap();
+        assert_eq!(updated[0].attribute_id, Some(new_attr.id.clone()));
+
+        // Set to None
+        update_skill_attribute(&conn, skills[0].id.clone(), None).unwrap();
+        let updated = get_skills(&conn).unwrap();
+        assert_eq!(updated[0].attribute_id, None);
+    }
+
+    #[test]
+    fn update_skill_attribute_invalid_errors() {
+        let conn = test_db();
+        let skills = get_skills(&conn).unwrap();
+        assert!(update_skill_attribute(&conn, skills[0].id.clone(), Some("fake".into())).is_err());
+    }
+
+    #[test]
+    fn delete_attribute_cleans_up_quest_links_and_skills() {
+        let conn = test_db();
+        let attrs = get_attributes(&conn).unwrap();
+        let target_attr = &attrs[0];
+
+        // Create a quest linked to this attribute
+        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        set_quest_links(&conn, q.id.clone(), vec![], vec![target_attr.id.clone()]).unwrap();
+
+        // Find a skill mapped to this attribute
+        let skills_before = get_skills(&conn).unwrap();
+        let mapped_skill = skills_before.iter().find(|s| s.attribute_id.as_ref() == Some(&target_attr.id));
+
+        delete_attribute(&conn, target_attr.id.clone()).unwrap();
+
+        // Attribute is gone
+        let attrs_after = get_attributes(&conn).unwrap();
+        assert!(!attrs_after.iter().any(|a| a.id == target_attr.id));
+
+        // Quest link is gone
+        let links = get_quest_links(&conn, q.id).unwrap();
+        assert!(links.attribute_ids.is_empty());
+
+        // Mapped skill has attribute_id set to None
+        if let Some(ms) = mapped_skill {
+            let skills_after = get_skills(&conn).unwrap();
+            let updated_skill = skills_after.iter().find(|s| s.id == ms.id).unwrap();
+            assert_eq!(updated_skill.attribute_id, None);
+        }
+    }
+
+    #[test]
+    fn delete_skill_cleans_up_quest_links() {
+        let conn = test_db();
+        let skills = get_skills(&conn).unwrap();
+        let target_skill = &skills[0];
+
+        // Create a quest linked to this skill
+        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        set_quest_links(&conn, q.id.clone(), vec![target_skill.id.clone()], vec![]).unwrap();
+
+        delete_skill(&conn, target_skill.id.clone()).unwrap();
+
+        // Skill is gone
+        let skills_after = get_skills(&conn).unwrap();
+        assert!(!skills_after.iter().any(|s| s.id == target_skill.id));
+
+        // Quest link is gone
+        let links = get_quest_links(&conn, q.id).unwrap();
+        assert!(links.skill_ids.is_empty());
+    }
+
+    #[test]
+    fn delete_nonexistent_attribute_errors() {
+        let conn = test_db();
+        assert!(delete_attribute(&conn, "nope".into()).is_err());
+    }
+
+    #[test]
+    fn delete_nonexistent_skill_errors() {
+        let conn = test_db();
+        assert!(delete_skill(&conn, "nope".into()).is_err());
     }
 
     // --- Reset functions ---

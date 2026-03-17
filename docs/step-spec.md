@@ -1,68 +1,91 @@
-# Step Spec: Phase 2D, Step 1 — Quest List Reorganization
+# Step Spec: Phase 2E — Editable Attributes and Skills
 
 ## Goal
 
-Reorganize the quest list into a cleaner, more scannable layout with expandable detail rows, icon action buttons, and fixed-width meta columns.
+Add, rename, and delete skills and attributes from the Character tab without code changes.
 
-## Scope
+---
 
-### Quest Row Layout (collapsed, single line)
+## Substep 1: Backend CRUD
 
-Left to right: **▸ | Last Done | Title | Difficulty | Cycle | ⚔ | ✓**
+All new db.rs functions, commands.rs wrappers, and tests. No UI changes.
 
-- **▸** expand toggle — clicks to reveal/hide detail row
-- **Last Done** — fixed-width, right-aligned (e.g. "Today 9am", "Mar 14", blank if never)
-- **Title** — flex, click to enter edit mode (same as today)
-- **Difficulty** — fixed-width, right-aligned, color-coded when due
-- **Cycle** — fixed-width, right-aligned (e.g. "Every 3 days", "One-off")
-- **⚔** — Quest Now button (replaces text "Quest Now")
-- **✓** — Done button (replaces text "Done")
+**db.rs — new functions:**
+- `add_attribute(conn, name) -> Attribute`
+- `add_skill(conn, name, attribute_id: Option<String>) -> Skill`
+- `rename_attribute(conn, id, name)`
+- `rename_skill(conn, id, name)`
+- `update_skill_attribute(conn, skill_id, attribute_id: Option<String>)`
+- `delete_attribute(conn, id)` — deletes row + quest_attribute links + unsets skills mapped to it
+- `delete_skill(conn, id)` — deletes row + quest_skill links
 
-### Quest Row Detail (expanded)
+**commands.rs — new Tauri commands** wrapping each db function.
 
-Toggled by ▸. Shows below the collapsed row:
+**Tests:**
+- Add attribute, verify returned with 0 XP
+- Add skill with and without attribute mapping
+- Rename attribute, verify name changed
+- Rename skill, verify name changed
+- Update skill attribute mapping
+- Delete attribute cleans up quest links and unsets mapped skills
+- Delete skill cleans up quest links
+- Delete nonexistent attribute/skill errors gracefully
 
-- Skills and attributes linked to the quest
-- Indented to align with title column
+**Testing checkpoint:** `cargo test` — all existing + new tests pass.
 
-### Delete Button
+---
 
-- Remove from display row
-- Add to edit mode row (alongside Save and Esc)
+## Substep 2: Color Palette
 
-### Styling
+Replace hardcoded name-to-color maps with index-based cycling palette.
 
-- Last Done, Difficulty, Cycle: fixed widths, right-aligned so they form clean columns across rows
-- Cooldown rows: greyed out (same as today)
-- Inactive rows: dimmed (same as today)
-- Difficulty colors: same color scheme as today, only when due
+**Changes:**
+- Define ordered palette arrays (5 fill colors, then 5 text colors, cycling)
+- Attribute color determined by index in the attributes list, not by name
+- Skill color determined by its mapped attribute's color, or gray if unmapped
+- Remove `attrFillColors` and `attrTextColors` name-keyed objects
+- Level-up notification colors also driven by palette
 
-### What Changes
+**Testing checkpoint:** Build app, verify Character tab looks the same as before (colors in same order for default attributes). Level-up notifications still show correct colors.
 
-**ui/index.html:**
-- `renderQuestRow()` — new layout with expand toggle, fixed-width meta, icon buttons
-- `renderEditMode()` — add Del button
-- CSS: new classes for fixed-width columns, expand toggle, detail row
+---
 
-### What Doesn't Change
+## Substep 3: Attribute UI
 
-- Drag-to-reorder behavior (pointer-down on row)
-- Edit mode flow (click title → inline edit)
-- Quest state logic (due/cooldown/inactive)
-- Backend — no Rust changes
+Add/rename/delete for attributes on the Character tab.
 
-## NOT in this step
+**Changes:**
+- Click attribute name → inline rename input with Save and ✕
+- Delete button on each attribute row with confirm pattern ("Sure?" → 2s timeout)
+- "Add Attribute" button below attribute list → inline input for name
+- Refresh character view after each operation
 
-- Changing what meta is displayed (same fields as today, just reorganized)
-- Adding new meta fields (that's 2F)
-- Tooltips on buttons
+**Testing checkpoint:** Build app. Add a new attribute — appears with meter at 0 XP and a color from the palette. Rename it. Delete it with confirmation. Verify quest links to deleted attribute are gone.
+
+---
+
+## Substep 4: Skill UI
+
+Add/rename/delete for skills, plus attribute mapping dropdown.
+
+**Changes:**
+- Click skill name → inline rename input with Save and ✕
+- Attribute mapping shown as dropdown (current attribute selected, "None" for unmapped)
+- Changing dropdown calls update_skill_attribute
+- Delete button with confirm pattern
+- "Add Skill" button below skill list → inline input for name + attribute dropdown
+- Unmapped skills show gray meters
+
+**Testing checkpoint:** Build app. Add a new skill mapped to an attribute — appears with correct color. Change its mapping — color updates. Set to None — turns gray. Delete it with confirmation. Verify quest links cleaned up.
+
+---
+
+## NOT in this phase
+
+- User-selectable color picker for attributes
+- Reset behavior changes
+- Seed data guard rework
 
 ## Done When
 
-- Quest list rows show: ▸ | Last Done | Title | Difficulty | Cycle | ⚔ | ✓
-- Difficulty and Cycle columns are visually aligned across rows
-- ▸ expands to show skills/attributes below the row
-- ⚔ starts Quest Now, ✓ completes quest (same behavior as today)
-- Del button only appears in edit mode
-- Drag reorder still works
-- All existing tests pass
+All four substeps complete and tested.

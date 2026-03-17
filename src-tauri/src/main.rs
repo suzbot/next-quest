@@ -81,6 +81,13 @@ fn main() {
             commands::set_cta_interval,
             commands::toggle_call_to_adventure,
             commands::dismiss_overlay,
+            commands::add_attribute,
+            commands::add_skill,
+            commands::rename_attribute,
+            commands::rename_skill,
+            commands::update_skill_attribute,
+            commands::delete_attribute,
+            commands::delete_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");
