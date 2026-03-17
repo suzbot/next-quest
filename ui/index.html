@@ -154,7 +154,7 @@
 
     .meta-cycle {
       display: inline-block;
-      width: 85px;
+      width: 105px;
       text-align: right;
     }
 
@@ -889,8 +889,8 @@
           <span class="expand-toggle" onclick="toggleDetail(this)">${hasDetail ? '▸' : ''}</span>
           <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
           <span class="quest-meta">
-            <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
             <span class="meta-cycle">${cycleText}</span>
+            <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
           </span>
           <span class="quest-last-done">${lastDone}</span>
           ${questNowBtn}

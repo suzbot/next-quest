@@ -154,6 +154,11 @@
     const OVERLAY_WIDTH = 460;
 
     async function resizeToFit() {
+      // Wait for all images to load so their height is included
+      const images = content.querySelectorAll("img");
+      await Promise.all(Array.from(images).map(img =>
+        img.complete ? Promise.resolve() : new Promise(r => { img.onload = r; img.onerror = r; })
+      ));
       await new Promise(r => requestAnimationFrame(r));
       const height = content.offsetHeight + 4; // +4 for body border
       await overlayWindow.setSize(new window.__TAURI__.window.LogicalSize(OVERLAY_WIDTH, height));
