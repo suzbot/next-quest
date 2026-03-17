@@ -193,6 +193,13 @@
     }
     .close-x:hover { color: #992200; }
 
+    .add-x {
+      color: #777;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+    .add-x:hover { color: #1a6e1a; }
+
     /* Quest states */
     .quest-due .quest-title { color: #111; }
     .quest-cooldown .quest-title { color: #777; }
@@ -378,6 +385,7 @@
     .reset-section button { font-size: 10px; color: #555; }
     .reset-section button:hover { color: #992200; }
     .reset-section button.confirm { color: #992200; border-color: #992200; }
+    button.confirm { color: #992200; border-color: #992200; }
 
     /* Quest Giver view */
     #quest-giver-view {
@@ -551,6 +559,24 @@
       font-size: 10px;
       color: #555;
       text-align: right;
+    }
+
+    .meter-label-clickable { cursor: pointer; }
+    .meter-label-clickable:hover { color: #333; }
+
+    .meter-edit {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 8px;
+    }
+
+    .meter-edit input[type="text"] { width: 130px; }
+
+    .meter-actions { display: flex; gap: 4px; margin-left: auto; }
+
+    .add-row {
+      padding: 3px 8px;
     }
   </style>
 </head>
@@ -1257,6 +1283,8 @@
     const characterView = document.getElementById("character-view");
     const charContent = document.getElementById("char-content");
     let renamingChar = false;
+    let editingAttrId = null;
+    let addingAttr = false;
 
     const settingsView = document.getElementById("settings-view");
 
@@ -1554,12 +1582,31 @@
       const attrRows = attributes.map((a, i) => {
         const color = attrFillColor(i);
         const pct = meterPercent(a.xp_into_current_level, a.xp_for_current_level);
+        if (editingAttrId === a.id) {
+          return `<div class="meter-edit">
+            <input type="text" id="edit-attr-name" value="${escapeAttr(a.name)}"
+                   onkeydown="handleAttrEditKey(event, '${a.id}')">
+            <button onclick="saveAttrRename('${a.id}')">Save</button>
+            <button onclick="deleteWithConfirm(this, 'attr', '${a.id}')">Del</button>
+            <span style="flex:1"></span>
+            <span class="close-x" onclick="cancelAttrEdit()">✕</span>
+          </div>`;
+        }
         return `<div class="meter-row">
-          <span class="meter-label">${escapeHtml(a.name)}</span>
+          <span class="meter-label meter-label-clickable" onclick="startAttrEdit('${a.id}')">${escapeHtml(a.name)}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
           <span class="meter-text">Lv ${a.level} (${a.xp_into_current_level}/${a.xp_for_current_level} XP)</span>
         </div>`;
       }).join("");
+
+      const addAttrRow = addingAttr
+        ? `<div class="meter-edit">
+            <input type="text" id="add-attr-name" placeholder="Attribute name..."
+                   onkeydown="handleAddAttrKey(event)">
+            <button onclick="saveNewAttr()">Add</button>
+            <span class="close-x" onclick="cancelAttrAdd()">✕</span>
+          </div>`
+        : '';
 
       const attrMap = {};
       attributes.forEach(a => { attrMap[a.id] = a.name; });
@@ -1582,8 +1629,9 @@
         </div>
         ${charMeter}
         <div class="char-section">
-          <h2>Attributes</h2>
+          <h2>Attributes <span class="add-x" onclick="startAttrAdd()" style="font-size:11px">+</span></h2>
           ${attrRows}
+          ${addAttrRow}
         </div>
         <div class="char-section">
           <h2>Skills</h2>
@@ -1594,6 +1642,14 @@
       if (renamingChar) {
         const input = document.getElementById("char-name-input");
         if (input) { input.focus(); input.select(); }
+      }
+      if (editingAttrId) {
+        const input = document.getElementById("edit-attr-name");
+        if (input) { input.focus(); input.select(); }
+      }
+      if (addingAttr) {
+        const input = document.getElementById("add-attr-name");
+        if (input) input.focus();
       }
     }
 
@@ -1624,6 +1680,82 @@
       await invoke("update_character", { name });
       renamingChar = false;
       await loadCharacterView();
+    }
+
+    // --- Attribute CRUD ---
+
+    function startAttrEdit(id) {
+      editingAttrId = id;
+      addingAttr = false;
+      loadCharacterView();
+    }
+
+    function cancelAttrEdit() {
+      editingAttrId = null;
+      loadCharacterView();
+    }
+
+    function handleAttrEditKey(e, id) {
+      if (e.key === "Enter") { e.preventDefault(); saveAttrRename(id); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelAttrEdit(); }
+    }
+
+    async function saveAttrRename(id) {
+      const input = document.getElementById("edit-attr-name");
+      const name = input?.value.trim();
+      if (!name) return;
+      await invoke("rename_attribute", { id, name });
+      editingAttrId = null;
+      await loadCharacterView();
+    }
+
+    function startAttrAdd() {
+      addingAttr = true;
+      editingAttrId = null;
+      loadCharacterView();
+    }
+
+    function cancelAttrAdd() {
+      addingAttr = false;
+      loadCharacterView();
+    }
+
+    function handleAddAttrKey(e) {
+      if (e.key === "Enter") { e.preventDefault(); saveNewAttr(); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelAttrAdd(); }
+    }
+
+    async function saveNewAttr() {
+      const input = document.getElementById("add-attr-name");
+      const name = input?.value.trim();
+      if (!name) return;
+      await invoke("add_attribute", { name });
+      addingAttr = false;
+      await loadCharacterView();
+    }
+
+    function deleteWithConfirm(btn, type, id) {
+      if (btn.dataset.confirming) {
+        btn.dataset.confirming = "";
+        const command = type === "attr" ? "delete_attribute" : "delete_skill";
+        invoke(command, { id }).then(() => {
+          editingAttrId = null;
+          loadCharacterView();
+          loadAll(); // refresh quest links
+        });
+        return;
+      }
+      btn.dataset.confirming = "true";
+      btn.dataset.original = btn.textContent;
+      btn.textContent = "Sure?";
+      btn.classList.add("confirm");
+      setTimeout(() => {
+        if (btn.dataset.confirming) {
+          btn.dataset.confirming = "";
+          btn.textContent = btn.dataset.original;
+          btn.classList.remove("confirm");
+        }
+      }, 2000);
     }
 
     // --- Settings ---
