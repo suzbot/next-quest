@@ -178,12 +178,10 @@ Polish and quality-of-life improvements:
 
 ## Phase 2E: Editable Attributes and Skills
 
-- CRUD for attributes and skills (add, rename, delete)
-- Auto-assign colors from palette for user-created attributes
+- Add, rename, and delete skills and attributes from the Character tab
 - Orphaned quest links: silently unlink quests when a skill/attribute is deleted
-- Reset behavior: "Reset Char" currently zeroes XP but doesn't touch skill/attribute rows. If users can add/rename/delete skills, what does reset mean? Re-seed defaults? Preserve custom ones?
-- Seed data guard: seed_data() skips if a character row exists. Needs rethinking if skills/attributes can be independently added/removed.
-- SQLite WAL cleanup: when resetting data by deleting the DB file, WAL/SHM journal files must also be deleted or the old data survives.
+- New attributes get a default color
+
 
 ## Phase 2F: Logic Enhancement
 
@@ -207,6 +205,10 @@ Polish and quality-of-life improvements:
 
 ## Phase 3: "The Full Party"
 
+- Auto-assign colors from palette for custom attributes (user-picks or rotation strategy)
+- Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
+- Seed data guard rework (seed_data() skips if character exists, needs rethinking)
+- SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
 - Character Class selection
 - Elemental Alignment Matrix: Fire (Fight, Shout, Hot and Bright) <-> Water (Follow, Attune, Adapt, Flow, Listen, Reflect), Earth (Grounded, Solidity, Present,) <-> Sky (Abstract, Future/Past, Thinking, Planning, Remembering) Centered: Green, Growth
 - Character image with visual progression

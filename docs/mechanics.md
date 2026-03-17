@@ -6,36 +6,102 @@ and adjust.
 ## XP Formula
 
 ```
-XP = base * difficulty_multiplier * cycle_multiplier
+Base XP     = 5 × difficulty_multiplier × cycle_multiplier
+Time mult   = f(time_since_last_done / cycle_days)     [recurring only]
+Final XP    = round(Base XP × Time mult)
 ```
 
-**Base XP:** 10
+Three factors combine to determine quest XP:
+
+1. **Difficulty** — how hard the quest is
+2. **Cycle** — how often it recurs (or one-off)
+3. **Time elapsed** — how long since you last did it
 
 ### Difficulty Multipliers
 
-| Difficulty | Multiplier | XP (daily) | Example |
+| Difficulty | Multiplier | Base XP (daily) | Example |
 |---|---|---|---|
-| Trivial | 1x | 10 | Take meds, drink water |
-| Easy | 2x | 20 | Shower, do dishes |
-| Moderate | 4x | 40 | Exercise, meal prep |
-| Challenging | 7x | 70 | Deep clean, long study session |
-| Epic | 12x | 120 | Major project milestone, file taxes |
+| Trivial | 1x | 5 | Take meds, drink water |
+| Easy | 5x | 25 | Shower, do dishes |
+| Moderate | 10x | 50 | Exercise, meal prep |
+| Challenging | 20x | 100 | Deep clean, long study session |
+| Epic | 40x | 200 | Major project milestone, file taxes |
 
 ### Cycle Multipliers
 
 | Cycle | Multiplier | Formula |
 |---|---|---|
-| Recurring | sqrt(cycle_days) | Daily=1x, 3-day=1.7x, Weekly=2.6x, Monthly=5.5x, Yearly=19.1x |
+| Recurring | sqrt(cycle_days) | Daily=1x, 3-day=1.7x, Weekly=2.6x, Monthly=5.5x |
 | One-off | 3x | Fixed (equivalent of ~9-day cycle) |
+
+### Base XP Table (difficulty × cycle, before time modifier)
+
+| | Trivial | Easy | Moderate | Challenging | Epic |
+|---|---|---|---|---|---|
+| **Daily** | 5 | 25 | 50 | 100 | 200 |
+| **Every 3 days** | 9 | 43 | 87 | 173 | 346 |
+| **Weekly** | 13 | 66 | 132 | 265 | 529 |
+| **Monthly** | 27 | 137 | 274 | 548 | 1,095 |
+| **One-off** | 15 | 75 | 150 | 300 | 600 |
+
+### Time-Elapsed Modifier
+
+A multiplier applied to recurring quest base XP based on how long since the quest was last completed, relative to its cycle.
+
+```
+r = time_since_last_done / cycle_days
+
+r < 1:  multiplier = 0.1 + 0.9 × √r
+r >= 1: multiplier = 1.0 + 0.5 × ln(r)
+Floor:  0.1 (you always get something)
+```
+
+**Special cases:**
+- One-off quests: multiplier = 1.0 (no cycle to measure against)
+- Never completed: multiplier = 1.0
+
+**Reference values:**
+
+| r | Multiplier | Daily example | Weekly example |
+|---|---|---|---|
+| 0.04 | 0.28x | 1 hour ago | 7 hours ago |
+| 0.14 | 0.44x | 3 hours ago | 1 day ago |
+| 0.50 | 0.74x | 12 hours ago | 3.5 days ago |
+| 1.0 | 1.00x | On time | On time |
+| 2.0 | 1.35x | 2 days late | 2 weeks late |
+| 3.0 | 1.55x | 3 days late | 3 weeks late |
+| 7.0 | 1.97x | 1 week late | 7 weeks late |
+| 30.0 | 2.70x | 1 month late | — |
+
+### Combined Examples (all three factors)
+
+| Scenario | Base XP | Time mult | Final XP |
+|---|---|---|---|
+| Easy daily, on time | 25 | 1.0x | 25 |
+| Easy daily, 12 hours early | 25 | 0.74x | 19 |
+| Easy daily, 3 days late | 25 | 1.55x | 39 |
+| Moderate weekly, on time | 132 | 1.0x | 132 |
+| Moderate weekly, 2 weeks late | 132 | 1.35x | 178 |
+| Trivial daily, repeated after 1 hour | 5 | 0.28x | 1 |
+| Epic monthly, on time | 1,095 | 1.0x | 1,095 |
+| Epic monthly, 2 months late | 1,095 | 1.35x | 1,478 |
+| Challenging one-off | 300 | 1.0x | 300 |
+
+**Design rationale:** Piecewise formula with square root ramp below cycle (rewards doing things even if early — at half-cycle you earn 74% XP) and logarithmic growth above cycle (motivates overdue quests without making procrastination a strategy). The turn of the curve is at r=1, the target cycle time.
 
 ### XP Distribution
 
-On quest completion, XP is awarded to:
+On quest completion, final XP is awarded to:
 1. **Character** (always) — full XP amount
 2. **Linked attributes** — full XP amount per linked attribute
 3. **Linked skills** — full XP amount per linked skill
 
 Quests with no links earn only character XP.
+
+### XP Is Permanent
+
+XP is tallied at the time of quest completion and never subtracted. Deleting a
+completion removes it from the visible history but does not affect XP totals.
 
 ## Level Curves
 
@@ -93,14 +159,10 @@ Seeds: 37, 62.
 
 ### Skill Level → Attribute Bump
 
-When a skill levels up, its mapped attribute receives **70 XP** (equivalent of
-a challenging daily quest). This makes skill progression a meaningful contributor
-to attribute growth, especially at early levels.
-
-### XP Is Permanent
-
-XP is tallied at the time of quest completion and never subtracted. Deleting a
-completion removes it from the visible history but does not affect XP totals.
+When a skill levels up, its mapped attribute receives XP equal to the base XP
+of a **Moderate one-off quest** (currently 150 XP). This is computed from the
+formula, not hardcoded — if base XP or difficulty multipliers change, the bump
+changes with them.
 
 ## Default Skill-to-Attribute Mapping
 
@@ -118,36 +180,3 @@ completion removes it from the visible history but does not affect XP totals.
 | Healing | Health |
 | Crafting | Pluck |
 | Acrobatics | Health |
-
-## Time-Elapsed Modifier (Phase 2D — not yet implemented)
-
-A multiplier applied to quest XP based on how long since the quest was last completed, relative to its cycle.
-
-```
-r = time_since_last_done / cycle_days
-
-r < 1:  multiplier = 0.1 + 0.9 × √r
-r >= 1: multiplier = 1.0 + 0.5 × ln(r)
-Floor:  0.1 (you always get something)
-
-Final XP = base_xp × multiplier
-```
-
-**Special cases:**
-- One-off quests: multiplier = 1.0 (no cycle to measure against)
-- Never completed: multiplier = 1.0
-
-**Reference values:**
-
-| r | Multiplier | Daily example | Weekly example |
-|---|---|---|---|
-| 0.04 | 0.28x | 1 hour ago | 7 hours ago |
-| 0.14 | 0.44x | 3 hours ago | 1 day ago |
-| 0.50 | 0.74x | 12 hours ago | 3.5 days ago |
-| 1.0 | 1.00x | On time | On time |
-| 2.0 | 1.35x | 2 days late | 2 weeks late |
-| 3.0 | 1.55x | 3 days late | 3 weeks late |
-| 7.0 | 1.97x | 1 week late | 7 weeks late |
-| 30.0 | 2.70x | 1 month late | — |
-
-**Design rationale:** Piecewise formula with square root ramp below cycle (rewards doing things even if early — at half-cycle you earn 74% XP) and logarithmic growth above cycle (motivates overdue quests without making procrastination a strategy). The turn of the curve is at r=1, the target cycle time.

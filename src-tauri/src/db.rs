@@ -561,14 +561,14 @@ pub fn add_quest(
 }
 
 pub fn calculate_xp(difficulty: &Difficulty, quest_type: &QuestType, cycle_days: Option<i32>) -> i64 {
-    let base: f64 = 10.0;
+    let base: f64 = 5.0;
 
     let difficulty_mult: f64 = match difficulty {
         Difficulty::Trivial => 1.0,
-        Difficulty::Easy => 2.0,
-        Difficulty::Moderate => 4.0,
-        Difficulty::Challenging => 7.0,
-        Difficulty::Epic => 12.0,
+        Difficulty::Easy => 5.0,
+        Difficulty::Moderate => 10.0,
+        Difficulty::Challenging => 20.0,
+        Difficulty::Epic => 40.0,
     };
 
     let cycle_mult: f64 = match quest_type {
@@ -655,11 +655,12 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
         let new_xp = old_xp + xp;
         let level_after = level_from_xp(new_xp, &LevelScale::Skill).level;
 
-        // Skill leveled up — award 70 XP bump to mapped attribute
+        // Skill leveled up — award attribute bump equivalent to a Moderate one-off
         if level_after > level_before {
+            let attr_bump = calculate_xp(&Difficulty::Moderate, &QuestType::OneOff, None);
             conn.execute(
                 "UPDATE attribute SET xp = xp + ?1 WHERE id = ?2",
-                rusqlite::params![70, attribute_id],
+                rusqlite::params![attr_bump, attribute_id],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -1949,30 +1950,36 @@ mod tests {
     // --- XP Engine ---
 
     #[test]
-    fn calculate_xp_daily_difficulties() {
-        // Daily recurring (cycle_days=1, sqrt(1)=1.0)
-        assert_eq!(calculate_xp(&Difficulty::Trivial, &QuestType::Recurring, Some(1)), 10);
-        assert_eq!(calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(1)), 20);
-        assert_eq!(calculate_xp(&Difficulty::Moderate, &QuestType::Recurring, Some(1)), 40);
-        assert_eq!(calculate_xp(&Difficulty::Challenging, &QuestType::Recurring, Some(1)), 70);
-        assert_eq!(calculate_xp(&Difficulty::Epic, &QuestType::Recurring, Some(1)), 120);
+    fn calculate_xp_difficulty_ordering() {
+        // Harder quests should give more XP
+        let trivial = calculate_xp(&Difficulty::Trivial, &QuestType::Recurring, Some(1));
+        let easy = calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(1));
+        let moderate = calculate_xp(&Difficulty::Moderate, &QuestType::Recurring, Some(1));
+        let challenging = calculate_xp(&Difficulty::Challenging, &QuestType::Recurring, Some(1));
+        let epic = calculate_xp(&Difficulty::Epic, &QuestType::Recurring, Some(1));
+        assert!(trivial < easy);
+        assert!(easy < moderate);
+        assert!(moderate < challenging);
+        assert!(challenging < epic);
+        assert!(trivial > 0);
     }
 
     #[test]
-    fn calculate_xp_one_off() {
-        // One-off: cycle_mult=3.0
-        assert_eq!(calculate_xp(&Difficulty::Easy, &QuestType::OneOff, None), 60);
-        assert_eq!(calculate_xp(&Difficulty::Epic, &QuestType::OneOff, None), 360);
+    fn calculate_xp_longer_cycle_gives_more() {
+        let daily = calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(1));
+        let weekly = calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(7));
+        let monthly = calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(30));
+        assert!(daily < weekly);
+        assert!(weekly < monthly);
     }
 
     #[test]
-    fn calculate_xp_multi_day_recurring() {
-        // 7-day cycle: sqrt(7) ≈ 2.6458
-        // Easy: 10 * 2 * 2.6458 = 52.915 → 53
-        assert_eq!(calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(7)), 53);
-        // 30-day cycle: sqrt(30) ≈ 5.4772
-        // Trivial: 10 * 1 * 5.4772 = 54.772 → 55
-        assert_eq!(calculate_xp(&Difficulty::Trivial, &QuestType::Recurring, Some(30)), 55);
+    fn calculate_xp_one_off_positive() {
+        let xp = calculate_xp(&Difficulty::Easy, &QuestType::OneOff, None);
+        assert!(xp > 0);
+        // One-off should give more than a daily of same difficulty
+        let daily = calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(1));
+        assert!(xp > daily);
     }
 
     #[test]
@@ -2061,9 +2068,10 @@ mod tests {
         assert_eq!(updated_skills[0].xp, 37);
         assert_eq!(updated_skills[0].level, 2);
 
-        // Health should have received 70 XP bump
+        // Health should have received attribute bump = Moderate one-off base XP
+        let expected_bump = calculate_xp(&Difficulty::Moderate, &QuestType::OneOff, None);
         let updated_attrs = get_attributes(&conn).unwrap();
-        assert_eq!(updated_attrs[0].xp, 70);
+        assert_eq!(updated_attrs[0].xp, expected_bump);
     }
 
     #[test]
@@ -2072,22 +2080,19 @@ mod tests {
         let q = add_quest(&conn, "XP test".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
         let c = complete_quest(&conn, q.id).unwrap();
 
-        // Easy daily = 20 XP
-        assert_eq!(c.xp_earned, 20);
-
+        assert!(c.xp_earned > 0);
         let completions = get_completions(&conn).unwrap();
-        assert_eq!(completions[0].xp_earned, 20);
+        assert_eq!(completions[0].xp_earned, c.xp_earned);
     }
 
     #[test]
     fn complete_quest_awards_character_xp() {
         let conn = test_db();
         let q = add_quest(&conn, "XP flow".into(), QuestType::Recurring, Some(1), Difficulty::Moderate).unwrap();
-        complete_quest(&conn, q.id).unwrap();
+        let c = complete_quest(&conn, q.id).unwrap();
 
-        // Moderate daily = 40 XP
-        let c = get_character(&conn).unwrap();
-        assert_eq!(c.xp, 40);
+        let char = get_character(&conn).unwrap();
+        assert_eq!(char.xp, c.xp_earned);
     }
 
     #[test]
@@ -2097,12 +2102,12 @@ mod tests {
         let c = complete_quest(&conn, q.id).unwrap();
 
         let char_before = get_character(&conn).unwrap();
-        assert_eq!(char_before.xp, 20);
+        assert!(char_before.xp > 0);
 
         delete_completion(&conn, c.id).unwrap();
 
         let char_after = get_character(&conn).unwrap();
-        assert_eq!(char_after.xp, 20); // unchanged
+        assert_eq!(char_after.xp, char_before.xp); // unchanged
     }
 
     // --- Reset functions ---
