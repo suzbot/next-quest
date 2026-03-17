@@ -59,33 +59,37 @@ Seeds: 300, 500.
 | 9 | 8,900 | 22,800 |
 | 10 | 14,400 | 37,200 |
 
-### Attribute Level Curve (1/5th of character)
+### Attribute Level Curve (1/2 of character)
 
-Seeds: 60, 100.
-
-| Level | XP for this level | Cumulative XP |
-|---|---|---|
-| 2 | 60 | 60 |
-| 3 | 100 | 160 |
-| 4 | 160 | 320 |
-| 5 | 260 | 580 |
-| 6 | 420 | 1,000 |
-| 7 | 680 | 1,680 |
-| 8 | 1,100 | 2,780 |
-
-### Skill Level Curve (1/10th of character)
-
-Seeds: 30, 50.
+Seeds: 150, 250.
 
 | Level | XP for this level | Cumulative XP |
 |---|---|---|
-| 2 | 30 | 30 |
-| 3 | 50 | 80 |
-| 4 | 80 | 160 |
-| 5 | 130 | 290 |
-| 6 | 210 | 500 |
-| 7 | 340 | 840 |
-| 8 | 550 | 1,390 |
+| 2 | 150 | 150 |
+| 3 | 250 | 400 |
+| 4 | 400 | 800 |
+| 5 | 650 | 1,450 |
+| 6 | 1,050 | 2,500 |
+| 7 | 1,700 | 4,200 |
+| 8 | 2,750 | 6,950 |
+| 9 | 4,450 | 11,400 |
+| 10 | 7,200 | 18,600 |
+
+### Skill Level Curve (1/8 of character)
+
+Seeds: 37, 62.
+
+| Level | XP for this level | Cumulative XP |
+|---|---|---|
+| 2 | 37 | 37 |
+| 3 | 62 | 99 |
+| 4 | 99 | 198 |
+| 5 | 161 | 359 |
+| 6 | 260 | 619 |
+| 7 | 421 | 1,040 |
+| 8 | 681 | 1,721 |
+| 9 | 1,102 | 2,823 |
+| 10 | 1,783 | 4,606 |
 
 ### Skill Level → Attribute Bump
 
@@ -115,8 +119,35 @@ completion removes it from the visible history but does not affect XP totals.
 | Crafting | Pluck |
 | Acrobatics | Health |
 
-## Future Mechanics (not yet implemented)
+## Time-Elapsed Modifier (Phase 2D — not yet implemented)
 
-- **Time-elapsed modifier** (Phase 2): Log-curve modifier based on time since
-  last completion. Diminishing returns for rapid repeats, increasing reward as
-  time passes, leveling off to avoid rewarding procrastination.
+A multiplier applied to quest XP based on how long since the quest was last completed, relative to its cycle.
+
+```
+r = time_since_last_done / cycle_days
+
+r < 1:  multiplier = 0.1 + 0.9 × √r
+r >= 1: multiplier = 1.0 + 0.5 × ln(r)
+Floor:  0.1 (you always get something)
+
+Final XP = base_xp × multiplier
+```
+
+**Special cases:**
+- One-off quests: multiplier = 1.0 (no cycle to measure against)
+- Never completed: multiplier = 1.0
+
+**Reference values:**
+
+| r | Multiplier | Daily example | Weekly example |
+|---|---|---|---|
+| 0.04 | 0.28x | 1 hour ago | 7 hours ago |
+| 0.14 | 0.44x | 3 hours ago | 1 day ago |
+| 0.50 | 0.74x | 12 hours ago | 3.5 days ago |
+| 1.0 | 1.00x | On time | On time |
+| 2.0 | 1.35x | 2 days late | 2 weeks late |
+| 3.0 | 1.55x | 3 days late | 3 weeks late |
+| 7.0 | 1.97x | 1 week late | 7 weeks late |
+| 30.0 | 2.70x | 1 month late | — |
+
+**Design rationale:** Piecewise formula with square root ramp below cycle (rewards doing things even if early — at half-cycle you earn 74% XP) and logarithmic growth above cycle (motivates overdue quests without making procrastination a strategy). The turn of the curve is at r=1, the target cycle time.

@@ -26,21 +26,25 @@
 
 ## 3. XP time-elapsed modifier
 
-Quest XP is currently flat based on cycle and difficulty. This adds a time-based multiplier:
+Quest XP is currently flat based on cycle and difficulty. This adds a time-based multiplier using a piecewise formula (Option B from design discussion):
 
-- **Too soon** (quest completed well before its cycle is up): diminishing XP. Doing laundry twice in one day shouldn't give full XP both times.
-- **On time** (around when the cycle says it's due): full XP. This is the baseline.
-- **Overdue** (past due): increasing XP to encourage doing the thing. But log-curve — procrastinating for a month shouldn't give 10x XP.
-- Exact curve shape and multiplier ranges TBD.
-- One-off quests: no modifier (no cycle to measure against).
+- **Below cycle** (r < 1): `0.1 + 0.9 × √r` — square root ramp from 0.1x to 1.0x
+- **At cycle** (r = 1): 1.0x — full base XP
+- **Above cycle** (r >= 1): `1.0 + 0.5 × ln(r)` — log growth, ~1.35x at 2x overdue, ~2.7x at 30x overdue
+- **Floor**: 0.1x (always earn something)
+- **One-off quests**: no modifier (1.0x)
+- **Never completed**: no modifier (1.0x)
 
-## 4. Retuning XP amounts and leveling formula
+See `docs/mechanics.md` for full formula and reference table.
 
-Current XP values were set during Phase 0.5 and haven't been adjusted since. After living with the app, revisit:
+## 4. Retuning leveling curves — DONE
 
-- Base XP per difficulty tier
-- Level thresholds (how much XP per level)
-- Attribute/skill XP rates relative to general XP
-- How the time-elapsed modifier interacts with all of the above
+Attribute and skill level curves adjusted to slow progression:
 
-This is a tuning pass, not a formula rewrite. Exact values TBD after the time-elapsed modifier is in and playable.
+- **Attributes**: changed from 1/5 to 1/2 of character curve (seeds: 60,100 → 150,250)
+- **Skills**: changed from 1/10 to 1/8 of character curve (seeds: 30,50 → 37,62)
+- **Character curve**: unchanged (seeds: 300, 500)
+- **Base XP per difficulty**: unchanged
+- **Skill level-up attribute bump**: unchanged (70 XP)
+
+See `docs/mechanics.md` for updated level tables.

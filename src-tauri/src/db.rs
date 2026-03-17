@@ -582,6 +582,22 @@ pub fn calculate_xp(difficulty: &Difficulty, quest_type: &QuestType, cycle_days:
     (base * difficulty_mult * cycle_mult).round() as i64
 }
 
+/// Compute the time-elapsed XP multiplier.
+/// r = elapsed_secs / cycle_secs. Returns multiplier >= 0.1.
+/// For r < 1: 0.1 + 0.9 * sqrt(r)
+/// For r >= 1: 1.0 + 0.5 * ln(r)
+pub fn time_elapsed_multiplier(r: f64) -> f64 {
+    if r < 0.0 {
+        return 0.1;
+    }
+    let mult = if r < 1.0 {
+        0.1 + 0.9 * r.sqrt()
+    } else {
+        1.0 + 0.5 * r.ln()
+    };
+    mult.max(0.1)
+}
+
 pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String> {
     // Award to character
     conn.execute(
@@ -664,7 +680,34 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
 
     let difficulty = Difficulty::from_str(&difficulty_str);
     let quest_type = QuestType::from_str(&quest_type_str);
-    let xp_earned = calculate_xp(&difficulty, &quest_type, cycle_days);
+    let base_xp = calculate_xp(&difficulty, &quest_type, cycle_days);
+
+    // Apply time-elapsed multiplier for recurring quests
+    let xp_earned = match quest_type {
+        QuestType::OneOff => base_xp,
+        QuestType::Recurring => {
+            let last_completed: Option<String> = conn.query_row(
+                "SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = ?1",
+                rusqlite::params![quest_id],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?;
+
+            match last_completed.and_then(|ts| iso_utc_to_unix_secs(&ts)) {
+                None => base_xp, // never completed → 1.0x
+                Some(last_secs) => {
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("Time went backwards")
+                        .as_secs() as i64;
+                    let elapsed_secs = (now_secs - last_secs).max(0) as f64;
+                    let cycle_secs = (cycle_days.unwrap_or(1).max(1) as f64) * 86400.0;
+                    let r = elapsed_secs / cycle_secs;
+                    let multiplier = time_elapsed_multiplier(r);
+                    (base_xp as f64 * multiplier).round() as i64
+                }
+            }
+        }
+    };
 
     // Snapshot levels before XP award
     let char_level_before = {
@@ -1111,8 +1154,8 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
 pub fn level_from_xp(xp: i64, scale: &LevelScale) -> LevelInfo {
     let (seed1, seed2) = match scale {
         LevelScale::Character => (300i64, 500i64),
-        LevelScale::Attribute => (60, 100),
-        LevelScale::Skill => (30, 50),
+        LevelScale::Attribute => (150, 250),
+        LevelScale::Skill => (37, 62),
     };
 
     let mut level = 1;
@@ -1745,32 +1788,36 @@ mod tests {
 
     #[test]
     fn level_from_xp_attribute_scale() {
+        // Attribute seeds: 150, 250 (1/2 character)
         let info = level_from_xp(0, &LevelScale::Attribute);
         assert_eq!(info.level, 1);
-        assert_eq!(info.xp_for_current_level, 60);
+        assert_eq!(info.xp_for_current_level, 150);
 
-        let info = level_from_xp(60, &LevelScale::Attribute);
+        let info = level_from_xp(150, &LevelScale::Attribute);
         assert_eq!(info.level, 2);
-        assert_eq!(info.xp_for_current_level, 100);
+        assert_eq!(info.xp_for_current_level, 250);
 
-        let info = level_from_xp(160, &LevelScale::Attribute);
+        // Level 3 at 150+250=400
+        let info = level_from_xp(400, &LevelScale::Attribute);
         assert_eq!(info.level, 3);
-        assert_eq!(info.xp_for_current_level, 160);
+        assert_eq!(info.xp_for_current_level, 400); // 150+250
     }
 
     #[test]
     fn level_from_xp_skill_scale() {
+        // Skill seeds: 37, 62 (1/8 character)
         let info = level_from_xp(0, &LevelScale::Skill);
         assert_eq!(info.level, 1);
-        assert_eq!(info.xp_for_current_level, 30);
+        assert_eq!(info.xp_for_current_level, 37);
 
-        let info = level_from_xp(30, &LevelScale::Skill);
+        let info = level_from_xp(37, &LevelScale::Skill);
         assert_eq!(info.level, 2);
-        assert_eq!(info.xp_for_current_level, 50);
+        assert_eq!(info.xp_for_current_level, 62);
 
-        let info = level_from_xp(80, &LevelScale::Skill);
+        // Level 3 at 37+62=99
+        let info = level_from_xp(99, &LevelScale::Skill);
         assert_eq!(info.level, 3);
-        assert_eq!(info.xp_for_current_level, 80);
+        assert_eq!(info.xp_for_current_level, 99); // 37+62
     }
 
     // --- Difficulty ---
@@ -1929,6 +1976,41 @@ mod tests {
     }
 
     #[test]
+    fn time_elapsed_multiplier_at_key_points() {
+        // r=0: floor
+        assert!((time_elapsed_multiplier(0.0) - 0.1).abs() < 0.01);
+        // r=0.25: 0.1 + 0.9 * sqrt(0.25) = 0.1 + 0.45 = 0.55
+        assert!((time_elapsed_multiplier(0.25) - 0.55).abs() < 0.01);
+        // r=0.5: 0.1 + 0.9 * sqrt(0.5) ≈ 0.736
+        assert!((time_elapsed_multiplier(0.5) - 0.736).abs() < 0.01);
+        // r=1.0: exactly 1.0 (boundary — both formulas give 1.0)
+        assert!((time_elapsed_multiplier(1.0) - 1.0).abs() < 0.01);
+        // r=2.0: 1.0 + 0.5 * ln(2) ≈ 1.347
+        assert!((time_elapsed_multiplier(2.0) - 1.347).abs() < 0.01);
+        // r=7.0: 1.0 + 0.5 * ln(7) ≈ 1.973
+        assert!((time_elapsed_multiplier(7.0) - 1.973).abs() < 0.01);
+        // negative r: floor
+        assert!((time_elapsed_multiplier(-1.0) - 0.1).abs() < 0.01);
+    }
+
+    #[test]
+    fn time_elapsed_multiplier_never_below_floor() {
+        for &r in &[0.0, 0.001, 0.01, 0.1, 0.5, 1.0, 2.0, 10.0, 100.0] {
+            assert!(time_elapsed_multiplier(r) >= 0.1);
+        }
+    }
+
+    #[test]
+    fn time_elapsed_multiplier_monotonically_increasing() {
+        let points = [0.0, 0.1, 0.25, 0.5, 0.75, 0.99, 1.0, 1.5, 2.0, 5.0, 10.0, 50.0];
+        for w in points.windows(2) {
+            assert!(time_elapsed_multiplier(w[1]) >= time_elapsed_multiplier(w[0]),
+                "multiplier should increase: r={} gave {} but r={} gave {}",
+                w[0], time_elapsed_multiplier(w[0]), w[1], time_elapsed_multiplier(w[1]));
+        }
+    }
+
+    #[test]
     fn award_xp_character_only_no_links() {
         let conn = test_db();
         let q = add_quest(&conn, "Solo".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
@@ -1970,13 +2052,13 @@ mod tests {
         let q = add_quest(&conn, "Grind".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
         let skills = get_skills(&conn).unwrap();
         // Cooking (skill[0]) maps to Health (attr[0])
-        // Skill level 2 at 30 XP. Award 30 to trigger level-up.
+        // Skill level 2 at 37 XP. Award 37 to trigger level-up.
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
 
-        award_xp(&conn, &q.id, 30).unwrap();
+        award_xp(&conn, &q.id, 37).unwrap();
 
         let updated_skills = get_skills(&conn).unwrap();
-        assert_eq!(updated_skills[0].xp, 30);
+        assert_eq!(updated_skills[0].xp, 37);
         assert_eq!(updated_skills[0].level, 2);
 
         // Health should have received 70 XP bump
