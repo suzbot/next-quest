@@ -1,6 +1,6 @@
 # Phase 2D: Levelling — Requirements (WIP)
 
-**Status:** WIP — items to be discussed individually before implementation
+**Status:** Complete
 
 **Goal:** Make XP and leveling feel right. Reward consistency without punishing absence, add time-awareness to quest rewards, and clean up the quest list UI.
 

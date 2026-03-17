@@ -169,12 +169,12 @@ Polish and quality-of-life improvements:
 11. **Skill-attribute map from DB** — level-up colors built dynamically, not hardcoded
 12. **Timer rendering fix** — timer display updates text only, no DOM rebuild per tick
 
-## Phase 2D: Levelling
+## Phase 2D: "Levelling" ✓
 
-- Re-organize quest list columns
-- Quests tab rename to 'Quest List'
-- XP time-elapsed modifier: diminishing returns for repeating a quest quickly (same-day laundry), increasing reward as time passes to encourage doing it, but log-curve so procrastination isn't linearly rewarded
-- Retuning XP amounts and leveling formula
+1. **Tab renames** — "Quests" → "Quest List", "Quest Giver" → "Next Quest"
+2. **Quest list reorganization** — expandable detail rows, fixed-width meta columns, icon buttons (⚔/✓), edit-only delete, History moved to Character tab
+3. **XP time-elapsed modifier** — piecewise multiplier (sqrt ramp below cycle, log growth above), 0.1x floor, 1.0x baseline at cycle
+4. **Level curve retuning** — attributes from 1/5 to 1/2 character, skills from 1/10 to 1/8
 
 ## Phase 2E: Editable Attributes and Skills
 
