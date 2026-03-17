@@ -171,19 +171,21 @@ Polish and quality-of-life improvements:
 
 ## Phase 2D: Levelling
 
-- XP time-elapsed modifier: diminishing returns for repeating a quest quickly (same-day laundry), increasing reward as time passes to encourage doing it, but log-curve so procrastination isn't linearly rewarded
-- Editable Attributes and Skills
-  - Reset behavior: "Reset Char" currently zeroes XP but doesn't touch skill/attribute rows. If users can add/rename/delete skills, what does reset mean? Re-seed defaults? Preserve custom ones?
-  - Seed data guard: seed_data() skips if a character row exists. Needs rethinking if skills/attributes can be independently added/removed.
-  - Hardcoded color maps: attrTextColors and attrFillColors are keyed by attribute name. User-created attributes won't have colors. Need a color assignment strategy (user picks? auto-assign from palette?).
-  - Orphaned quest links: deleting a skill/attribute that quests are linked to needs a cleanup or reassignment strategy.
-  - SQLite WAL cleanup: when resetting data by deleting the DB file, WAL/SHM journal files must also be deleted or the old data survives.
-- Retuning XP amounts and leveling formula
 - Re-organize quest list columns
 - Quests tab rename to 'Quest List'
-- Evaluate: adding quest timer to overlay instead of going into full app?
+- XP time-elapsed modifier: diminishing returns for repeating a quest quickly (same-day laundry), increasing reward as time passes to encourage doing it, but log-curve so procrastination isn't linearly rewarded
+- Retuning XP amounts and leveling formula
 
-## Phase 2E: Logic Enhancement
+## Phase 2E: Editable Attributes and Skills
+
+- CRUD for attributes and skills (add, rename, delete)
+- Auto-assign colors from palette for user-created attributes
+- Orphaned quest links: silently unlink quests when a skill/attribute is deleted
+- Reset behavior: "Reset Char" currently zeroes XP but doesn't touch skill/attribute rows. If users can add/rename/delete skills, what does reset mean? Re-seed defaults? Preserve custom ones?
+- Seed data guard: seed_data() skips if a character row exists. Needs rethinking if skills/attributes can be independently added/removed.
+- SQLite WAL cleanup: when resetting data by deleting the DB file, WAL/SHM journal files must also be deleted or the old data survives.
+
+## Phase 2F: Logic Enhancement
 
 - More quest attributes and logic
   -- Time of Day
@@ -195,11 +197,13 @@ Polish and quality-of-life improvements:
 - Sagas for bigger goals
 - Ability to edit last done date
 
-## Phase 2F: Rewards
+## Phase 2G: Rewards
 
 - Receive coin and items from questing
 - Badges, Rewards
 - Buy stuff with gold
+- Evaluate: adding quest timer to overlay instead of going into full app?
+- Evaluate: having quest giver view always at the top and tabs expand bottom detail?
 
 ## Phase 3: "The Full Party"
 

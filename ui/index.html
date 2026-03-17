@@ -106,15 +106,36 @@
     .quest-item {
       padding: 5px 8px;
       border-bottom: 1px solid #999;
+    }
+
+    .quest-item:focus { outline: 1px solid #444; outline-offset: -1px; }
+
+    .quest-row-top {
       display: flex;
       align-items: center;
       gap: 8px;
     }
 
-    .quest-item:focus { outline: 1px solid #444; outline-offset: -1px; }
-
     .quest-title { flex: 1; cursor: pointer; }
     .quest-title:hover { color: #333; }
+
+    .expand-toggle {
+      font-size: 10px;
+      color: #777;
+      cursor: pointer;
+      flex-shrink: 0;
+      width: 12px;
+      text-align: center;
+    }
+    .expand-toggle:hover { color: #444; }
+
+    .quest-last-done {
+      font-size: 10px;
+      color: #555;
+      flex-shrink: 0;
+      width: 75px;
+      text-align: right;
+    }
 
     .quest-meta {
       display: flex;
@@ -125,8 +146,29 @@
       flex-shrink: 0;
     }
 
-    .quest-meta > span {
-      flex-shrink: 0;
+    .meta-difficulty {
+      display: inline-block;
+      width: 85px;
+      text-align: right;
+    }
+
+    .meta-cycle {
+      display: inline-block;
+      width: 85px;
+      text-align: right;
+    }
+
+    .quest-detail {
+      font-size: 10px;
+      color: #555;
+      padding: 3px 0 2px 20px;
+    }
+
+    .action-btn {
+      font-size: 13px;
+      padding: 2px 6px;
+      min-width: 24px;
+      text-align: center;
     }
 
     /* Quest edit */
@@ -143,11 +185,21 @@
 
     .edit-hint { font-size: 9px; color: #777; }
 
+    .close-x {
+      color: #777;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0 2px;
+    }
+    .close-x:hover { color: #992200; }
+
     /* Quest states */
     .quest-due .quest-title { color: #111; }
     .quest-cooldown .quest-title { color: #777; }
     .quest-cooldown .quest-meta { color: #777; }
+    .quest-cooldown .quest-last-done { color: #777; }
     .quest-cooldown .quest-links { color: #777; }
+    .quest-cooldown .quest-detail { color: #777; }
 
     .quest-inactive { opacity: 0.4; }
     .quest-inactive .quest-title { color: #777; cursor: default; }
@@ -356,10 +408,10 @@
 
     .qg-split-text {
       flex: 1;
-      padding: 16px;
+      padding: 0 16px;
       display: flex;
       flex-direction: column;
-      justify-content: center;
+      justify-content: flex-start;
     }
 
     .qg-flavor {
@@ -506,7 +558,7 @@
 <div class="app-border">
 <div class="app-inner">
   <div class="nav">
-    <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')"> Quest Giver </button>
+    <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')"> Next Quest </button>
     <button id="nav-quests" onclick="showView('quests')">Quest List</button>
     <button id="nav-character" onclick="showView('character')">Character</button>
     <button id="nav-settings" onclick="showView('settings')">Settings</button>
@@ -518,7 +570,6 @@
   </div>
 
   <div id="quests-view" class="hidden">
-  <h1>Next Quest</h1>
 
   <form id="add-form">
     <input type="text" id="quest-title" placeholder="Quest name..." autofocus>
@@ -537,20 +588,19 @@
       <option value="challenging">Challenging</option>
       <option value="epic">Epic</option>
     </select>
-    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Links</button>
+    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
     <button type="submit">Add</button>
   </form>
 
   <div id="add-links-row" class="hidden"></div>
 
   <ul id="quest-list"></ul>
-
-  <h2>Completed</h2>
-  <ul id="completion-list"></ul>
   </div>
 
   <div id="character-view" class="hidden">
     <div id="char-content"></div>
+    <h2>History</h2>
+    <ul id="completion-list"></ul>
   </div>
 
   <div id="settings-view" class="hidden">
@@ -794,6 +844,15 @@
       return d.charAt(0).toUpperCase() + d.slice(1);
     }
 
+    function toggleDetail(el) {
+      const li = el.closest(".quest-item");
+      const detail = li.querySelector(".quest-detail");
+      if (!detail) return;
+      const hidden = detail.style.display === "none";
+      detail.style.display = hidden ? "block" : "none";
+      el.textContent = hidden ? "▾" : "▸";
+    }
+
     function renderQuestRow(q) {
       const cycleText = q.quest_type === "recurring"
         ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
@@ -811,29 +870,33 @@
       const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
 
       const links = linkNamesText(q);
-      const linksHtml = links ? `<span class="quest-links">${escapeHtml(links)}</span>` : "";
+      const hasDetail = !!links;
 
-      const doneBtn = q.active
-        ? `<button class="done-btn" onclick="completeQuest('${q.id}')">Done</button>`
-        : "";
+      const diffColor = q.is_due ? (diffTextColors[q.difficulty] || '#555') : '#777';
 
       const questNowBtn = q.active
-        ? `<button onclick="listQuestNow('${q.id}')">Quest Now</button>`
+        ? `<button class="action-btn" onclick="listQuestNow('${q.id}')">⚔</button>`
+        : "";
+
+      const doneBtn = q.active
+        ? `<button class="action-btn done-btn" onclick="completeQuest('${q.id}')">✓</button>`
         : "";
 
       return `<li class="quest-item ${stateClass}" data-id="${q.id}" tabindex="0"
                   onkeydown="handleQuestKey(event, '${q.id}', '${escapeAttr(q.title)}')"
                   onpointerdown="${q.active ? `onPointerDown(event, '${q.id}')` : ''}">
-        ${doneBtn}
-        ${questNowBtn}
-        <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
-        <span class="quest-meta">
-          ${linksHtml}
-          <span style="color: ${q.is_due ? (diffTextColors[q.difficulty] || '#555') : '#777'}">${difficultyLabel(q.difficulty)}</span>
-          <span>${cycleText}</span>
-          ${lastDone ? `<span>${lastDone}</span>` : ""}
-        </span>
-        <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">Del</button>
+        <div class="quest-row-top">
+          <span class="expand-toggle" onclick="toggleDetail(this)">${hasDetail ? '▸' : ''}</span>
+          <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
+          <span class="quest-meta">
+            <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
+            <span class="meta-cycle">${cycleText}</span>
+          </span>
+          <span class="quest-last-done">${lastDone}</span>
+          ${questNowBtn}
+          ${doneBtn}
+        </div>
+        ${hasDetail ? `<div class="quest-detail" style="display:none"><span class="quest-links">${escapeHtml(links)}</span></div>` : ''}
       </li>`;
     }
 
@@ -861,7 +924,8 @@
           <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
         </select>
         <button onclick="saveEdit('${q.id}')">Save</button>
-        <button onclick="cancelEdit()"> Esc </button>
+        <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">Del</button>
+        <span class="close-x" onclick="cancelEdit()">✕</span>
       </li>
       <li class="quest-edit-links" id="edit-links-container">
         ${renderLinkTagsHtml("edit", q.skill_ids || [], q.attribute_ids || [])}

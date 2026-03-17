@@ -1,51 +1,68 @@
-# Step Spec: Phase 1, Step 6 — "Persistent Settings"
+# Step Spec: Phase 2D, Step 1 — Quest List Reorganization
 
 ## Goal
 
-Call to Adventure settings (on/off toggle and interval) survive app restarts.
-Currently they reset to defaults (off, 20 min) every launch. Store them in
-SQLite alongside existing data.
+Reorganize the quest list into a cleaner, more scannable layout with expandable detail rows, icon action buttons, and fixed-width meta columns.
 
 ## Scope
 
-### New Table: `settings`
+### Quest Row Layout (collapsed, single line)
 
-A single-row key-value-ish table, seeded on first launch:
+Left to right: **▸ | Last Done | Title | Difficulty | Cycle | ⚔ | ✓**
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| id | Integer | 1 | Always 1 (single row) |
-| cta_enabled | Integer | 0 | Call to Adventure on/off (0/1) |
-| cta_interval_minutes | Integer | 20 | Polling interval in minutes |
+- **▸** expand toggle — clicks to reveal/hide detail row
+- **Last Done** — fixed-width, right-aligned (e.g. "Today 9am", "Mar 14", blank if never)
+- **Title** — flex, click to enter edit mode (same as today)
+- **Difficulty** — fixed-width, right-aligned, color-coded when due
+- **Cycle** — fixed-width, right-aligned (e.g. "Every 3 days", "One-off")
+- **⚔** — Quest Now button (replaces text "Quest Now")
+- **✓** — Done button (replaces text "Done")
 
-### Backend Changes
+### Quest Row Detail (expanded)
 
-**db.rs:**
-- Add `settings` table to `create_tables`
-- Seed default row in `seed_data` (if not exists)
-- `get_settings_db(conn) -> (bool, u64)` — reads cta_enabled and interval
-- `set_settings_db(conn, enabled, interval_minutes)` — updates the row
+Toggled by ▸. Shows below the collapsed row:
 
-**commands.rs / main.rs:**
-- On app startup, read settings from DB and initialize `TrayStateInner`
-  with the persisted values instead of defaults
-- `set_cta_interval` writes to DB after updating in-memory state
-- `toggle_call_to_adventure` writes to DB after updating in-memory state
+- Skills and attributes linked to the quest
+- Indented to align with title column
 
-### Frontend Changes
+### Delete Button
 
-None — the frontend already reads from `get_settings` and writes via
-`set_cta_interval` / `toggle_call_to_adventure`. The persistence is
-invisible to the frontend.
+- Remove from display row
+- Add to edit mode row (alongside Save and Esc)
+
+### Styling
+
+- Last Done, Difficulty, Cycle: fixed widths, right-aligned so they form clean columns across rows
+- Cooldown rows: greyed out (same as today)
+- Inactive rows: dimmed (same as today)
+- Difficulty colors: same color scheme as today, only when due
+
+### What Changes
+
+**ui/index.html:**
+- `renderQuestRow()` — new layout with expand toggle, fixed-width meta, icon buttons
+- `renderEditMode()` — add Del button
+- CSS: new classes for fixed-width columns, expand toggle, detail row
+
+### What Doesn't Change
+
+- Drag-to-reorder behavior (pointer-down on row)
+- Edit mode flow (click title → inline edit)
+- Quest state logic (due/cooldown/inactive)
+- Backend — no Rust changes
 
 ## NOT in this step
 
-- Persisting other settings (future)
-- Settings migration strategy (only one setting for now)
+- Changing what meta is displayed (same fields as today, just reorganized)
+- Adding new meta fields (that's 2F)
+- Tooltips on buttons
 
 ## Done When
 
-- Toggle CTA on, quit app, relaunch → CTA is still on
-- Change interval to 5 min, quit, relaunch → interval is still 5 min
-- Fresh install seeds defaults (off, 20 min)
+- Quest list rows show: ▸ | Last Done | Title | Difficulty | Cycle | ⚔ | ✓
+- Difficulty and Cycle columns are visually aligned across rows
+- ▸ expands to show skills/attributes below the row
+- ⚔ starts Quest Now, ✓ completes quest (same behavior as today)
+- Del button only appears in edit mode
+- Drag reorder still works
 - All existing tests pass
