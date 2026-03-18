@@ -561,6 +561,8 @@
       text-align: right;
     }
 
+    .meter-row:focus { outline: 1px solid #444; outline-offset: -1px; }
+
     .meter-label-clickable { cursor: pointer; }
     .meter-label-clickable:hover { color: #333; }
 
@@ -625,8 +627,8 @@
 
   <div id="character-view" class="hidden">
     <div id="char-content"></div>
-    <h2>History</h2>
-    <ul id="completion-list"></ul>
+    <h2><span class="expand-toggle" onclick="toggleHistory(this)" style="font-size:10px; cursor:pointer; color:#777">▸</span> History</h2>
+    <ul id="completion-list" style="display:none"></ul>
   </div>
 
   <div id="settings-view" class="hidden">
@@ -1285,6 +1287,8 @@
     let renamingChar = false;
     let editingAttrId = null;
     let addingAttr = false;
+    let editingSkillId = null;
+    let addingSkill = false;
 
     const settingsView = document.getElementById("settings-view");
 
@@ -1548,6 +1552,10 @@
         invoke("get_attributes"),
         invoke("get_skills"),
       ]);
+      cachedAttributes = attributes;
+      cachedSkills = skills;
+      attrIndexById = {};
+      cachedAttributes.forEach((a, i) => { attrIndexById[a.id] = i; });
       renderCharacterView(character, attributes, skills);
     }
 
@@ -1588,11 +1596,11 @@
                    onkeydown="handleAttrEditKey(event, '${a.id}')">
             <button onclick="saveAttrRename('${a.id}')">Save</button>
             <button onclick="deleteWithConfirm(this, 'attr', '${a.id}')">Del</button>
-            <span style="flex:1"></span>
             <span class="close-x" onclick="cancelAttrEdit()">✕</span>
           </div>`;
         }
-        return `<div class="meter-row">
+        return `<div class="meter-row" tabindex="0" data-type="attr" data-id="${a.id}"
+                     onkeydown="handleMeterRowKey(event, 'attr', '${a.id}')">
           <span class="meter-label meter-label-clickable" onclick="startAttrEdit('${a.id}')">${escapeHtml(a.name)}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
           <span class="meter-text">Lv ${a.level} (${a.xp_into_current_level}/${a.xp_for_current_level} XP)</span>
@@ -1611,17 +1619,46 @@
       const attrMap = {};
       attributes.forEach(a => { attrMap[a.id] = a.name; });
 
+      function attrDropdown(selectedId, idPrefix) {
+        const options = [`<option value="">None</option>`]
+          .concat(attributes.map(a =>
+            `<option value="${a.id}" ${a.id === selectedId ? "selected" : ""}>${escapeHtml(a.name)}</option>`
+          ));
+        return `<select id="${idPrefix}-attr-select">${options.join("")}</select>`;
+      }
+
       const skillRows = skills.map(s => {
         const attrIdx = s.attribute_id ? (attrIndexById[s.attribute_id] ?? -1) : -1;
         const color = attrFillColor(attrIdx);
         const pct = meterPercent(s.xp_into_current_level, s.xp_for_current_level);
-        return `<div class="meter-row">
-          <span class="meter-label">${escapeHtml(s.name)}</span>
+        if (editingSkillId === s.id) {
+          return `<div class="meter-edit">
+            <input type="text" id="edit-skill-name" value="${escapeAttr(s.name)}"
+                   onkeydown="handleSkillEditKey(event, '${s.id}')">
+            ${attrDropdown(s.attribute_id, 'edit-skill')}
+            <button onclick="saveSkillEdit('${s.id}')">Save</button>
+            <button onclick="deleteWithConfirm(this, 'skill', '${s.id}')">Del</button>
+            <span class="close-x" onclick="cancelSkillEdit()">✕</span>
+          </div>`;
+        }
+        return `<div class="meter-row" tabindex="0" data-type="skill" data-id="${s.id}"
+                     onkeydown="handleMeterRowKey(event, 'skill', '${s.id}')">
+          <span class="meter-label meter-label-clickable" onclick="startSkillEdit('${s.id}')">${escapeHtml(s.name)}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
           <span class="meter-text">Lv ${s.level} (${s.xp_into_current_level}/${s.xp_for_current_level} XP)</span>
           <span class="char-row-attr">${escapeHtml(attrMap[s.attribute_id] || "")}</span>
         </div>`;
       }).join("");
+
+      const addSkillRow = addingSkill
+        ? `<div class="meter-edit">
+            <input type="text" id="add-skill-name" placeholder="Skill name..."
+                   onkeydown="handleAddSkillKey(event)">
+            ${attrDropdown(null, 'add-skill')}
+            <button onclick="saveNewSkill()">Add</button>
+            <span class="close-x" onclick="cancelSkillAdd()">✕</span>
+          </div>`
+        : '';
 
       charContent.innerHTML = `
         <div class="char-header">
@@ -1629,13 +1666,14 @@
         </div>
         ${charMeter}
         <div class="char-section">
-          <h2>Attributes <span class="add-x" onclick="startAttrAdd()" style="font-size:11px">+</span></h2>
+          <h2>Attributes <span class="add-x" tabindex="0" onclick="startAttrAdd()" onkeydown="if(event.key==='Enter'){event.preventDefault();startAttrAdd()}" style="font-size:11px">+</span></h2>
           ${attrRows}
           ${addAttrRow}
         </div>
         <div class="char-section">
-          <h2>Skills</h2>
+          <h2>Skills <span class="add-x" tabindex="0" onclick="startSkillAdd()" onkeydown="if(event.key==='Enter'){event.preventDefault();startSkillAdd()}" style="font-size:11px">+</span></h2>
           ${skillRows}
+          ${addSkillRow}
         </div>
       `;
 
@@ -1649,6 +1687,14 @@
       }
       if (addingAttr) {
         const input = document.getElementById("add-attr-name");
+        if (input) input.focus();
+      }
+      if (editingSkillId) {
+        const input = document.getElementById("edit-skill-name");
+        if (input) { input.focus(); input.select(); }
+      }
+      if (addingSkill) {
+        const input = document.getElementById("add-skill-name");
         if (input) input.focus();
       }
     }
@@ -1680,6 +1726,36 @@
       await invoke("update_character", { name });
       renamingChar = false;
       await loadCharacterView();
+    }
+
+    function toggleHistory(el) {
+      const list = document.getElementById("completion-list");
+      const hidden = list.style.display === "none";
+      list.style.display = hidden ? "" : "none";
+      el.textContent = hidden ? "▾" : "▸";
+    }
+
+    // --- Meter row keyboard nav ---
+
+    function handleMeterRowKey(e, type, id) {
+      if (e.key === "e" || e.key === "E" || e.key === "Enter") {
+        e.preventDefault();
+        if (type === "attr") startAttrEdit(id);
+        else startSkillEdit(id);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusAdjacentMeterRow(e.target, -1);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusAdjacentMeterRow(e.target, 1);
+      }
+    }
+
+    function focusAdjacentMeterRow(current, direction) {
+      const rows = Array.from(charContent.querySelectorAll(".meter-row[tabindex]"));
+      const idx = rows.indexOf(current);
+      const target = rows[idx + direction];
+      if (target) target.focus();
     }
 
     // --- Attribute CRUD ---
@@ -1734,12 +1810,70 @@
       await loadCharacterView();
     }
 
+    // --- Skill CRUD ---
+
+    function startSkillEdit(id) {
+      editingSkillId = id;
+      addingSkill = false;
+      loadCharacterView();
+    }
+
+    function cancelSkillEdit() {
+      editingSkillId = null;
+      loadCharacterView();
+    }
+
+    function handleSkillEditKey(e, id) {
+      if (e.key === "Enter") { e.preventDefault(); saveSkillEdit(id); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelSkillEdit(); }
+    }
+
+    async function saveSkillEdit(id) {
+      const nameInput = document.getElementById("edit-skill-name");
+      const attrSelect = document.getElementById("edit-skill-attr-select");
+      const name = nameInput?.value.trim();
+      if (!name) return;
+      await invoke("rename_skill", { id, name });
+      const attributeId = attrSelect?.value || null;
+      await invoke("update_skill_attribute", { skillId: id, attributeId });
+      editingSkillId = null;
+      await loadCharacterView();
+    }
+
+    function startSkillAdd() {
+      addingSkill = true;
+      editingSkillId = null;
+      loadCharacterView();
+    }
+
+    function cancelSkillAdd() {
+      addingSkill = false;
+      loadCharacterView();
+    }
+
+    function handleAddSkillKey(e) {
+      if (e.key === "Enter") { e.preventDefault(); saveNewSkill(); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelSkillAdd(); }
+    }
+
+    async function saveNewSkill() {
+      const nameInput = document.getElementById("add-skill-name");
+      const attrSelect = document.getElementById("add-skill-attr-select");
+      const name = nameInput?.value.trim();
+      if (!name) return;
+      const attributeId = attrSelect?.value || null;
+      await invoke("add_skill", { name, attributeId });
+      addingSkill = false;
+      await loadCharacterView();
+    }
+
     function deleteWithConfirm(btn, type, id) {
       if (btn.dataset.confirming) {
         btn.dataset.confirming = "";
         const command = type === "attr" ? "delete_attribute" : "delete_skill";
         invoke(command, { id }).then(() => {
           editingAttrId = null;
+          editingSkillId = null;
           loadCharacterView();
           loadAll(); // refresh quest links
         });

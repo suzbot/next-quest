@@ -176,12 +176,15 @@ Polish and quality-of-life improvements:
 3. **XP time-elapsed modifier** — piecewise multiplier (sqrt ramp below cycle, log growth above), 0.1x floor, 1.0x baseline at cycle
 4. **Level curve retuning** — attributes from 1/5 to 1/2 character, skills from 1/10 to 1/8
 
-## Phase 2E: Editable Attributes and Skills
+## Phase 2E: "Editable Attributes and Skills" ✓
 
-- Add, rename, and delete skills and attributes from the Character tab
-- Orphaned quest links: silently unlink quests when a skill/attribute is deleted
-- New attributes get a default color
-
+1. **Backend CRUD** — add, rename, delete for attributes and skills, skill attribute remapping, nullable attribute_id with migration
+2. **Index-based color palette** — 10-color cycling palette (5 fill + 5 text), replaces hardcoded name-keyed maps
+3. **Attribute UI** — inline rename, delete with confirm, add via + on header
+4. **Skill UI** — inline rename with attribute dropdown, delete with confirm, add via + on header
+5. **Keyboard navigation** — Arrow up/down between rows, E/Enter to edit, Tab to + buttons
+6. **Collapsible History** — caret toggle on Character tab
+7. **Orphaned quest links** — silently removed on skill/attribute deletion
 
 ## Phase 2F: Logic Enhancement
 
