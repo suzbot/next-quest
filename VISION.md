@@ -186,19 +186,27 @@ Polish and quality-of-life improvements:
 6. **Collapsible History** — caret toggle on Character tab
 7. **Orphaned quest links** — silently removed on skill/attribute deletion
 
-## Phase 2F: Logic Enhancement
+## Phase 2F: "Logic Enhancement"
 
-- More quest attributes and logic
-  -- Time of Day
-  -- Time Over Due
-  -- Day of Week
-- Smarter quest giving
-- Category Tags
-- Filtering
-- Sagas for bigger goals
-- Ability to edit last done date
+Smarter quest selection based on new quest attributes and offer tracking:
 
-## Phase 2G: Rewards
+1. **Time-of-day windows** — quests have a preferred time (Morning, Afternoon, Evening, Anytime); selector prioritizes quests whose window matches now
+2. **Overdue escalation** — how far past cycle factors into priority; more overdue = higher weight, not punishment
+3. **Day-of-week affinity** — quests can specify which days they're relevant (specific days, weekdays, weekends)
+4. **Last-offered freshness** — track when a quest was last offered; repeated skips sink priority for the session, resets daily
+5. **Manual filtering** — filter quest list and quest giver by attribute, skill, or other quest properties
+
+## Phase 2G: "Advanced Logic"
+
+Second logic pass after living with 2F:
+
+1. **Edit last-done date** — correct mistakes in completion history
+2. **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
+3. **Attribute/skill balancing** — favor quests linked to underleveled attributes for variety
+4. **Difficulty ramping** — start day with easier quests, suggest harder ones after momentum builds
+5. **Sagas** — multi-step goals with ordered sub-quests, surfaced one step at a time
+
+## Phase 2H: "Rewards"
 
 - Receive coin and items from questing
 - Badges, Rewards
@@ -208,6 +216,7 @@ Polish and quality-of-life improvements:
 
 ## Phase 3: "The Full Party"
 
+- Category tags and context filtering — freeform tags (Home, Computer, Errands) for filtering quests by current context
 - Auto-assign colors from palette for custom attributes (user-picks or rotation strategy)
 - Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
 - Seed data guard rework (seed_data() skips if character exists, needs rethinking)

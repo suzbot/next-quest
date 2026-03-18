@@ -148,13 +148,19 @@
 
     .meta-difficulty {
       display: inline-block;
-      width: 85px;
+      width: 40px;
       text-align: right;
     }
 
     .meta-cycle {
       display: inline-block;
-      width: 105px;
+      width: 50px;
+      text-align: right;
+    }
+
+    .meta-tod {
+      display: inline-block;
+      width: 22px;
       text-align: right;
     }
 
@@ -612,9 +618,15 @@
     <select id="quest-difficulty">
       <option value="trivial">Trivial</option>
       <option value="easy" selected>Easy</option>
-      <option value="moderate">Moderate</option>
-      <option value="challenging">Challenging</option>
+      <option value="moderate">Fair</option>
+      <option value="challenging">Hard</option>
       <option value="epic">Epic</option>
+    </select>
+    <select id="quest-time-of-day">
+      <option value="anytime" selected>Anytime</option>
+      <option value="morning">Morning</option>
+      <option value="afternoon">Afternoon</option>
+      <option value="evening">Evening</option>
     </select>
     <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
     <button type="submit">Add</button>
@@ -672,6 +684,7 @@
     const cycleInput = document.getElementById("quest-cycle");
     const cycleLabel = document.getElementById("cycle-label");
     const difficultySelect = document.getElementById("quest-difficulty");
+    const timeOfDaySelect = document.getElementById("quest-time-of-day");
     const addLinksRow = document.getElementById("add-links-row");
 
     // Difficulty color maps (text variants for WCAG AA on #b4b4b4)
@@ -883,7 +896,8 @@
     }
 
     function difficultyLabel(d) {
-      return d.charAt(0).toUpperCase() + d.slice(1);
+      const labels = { trivial: "Trivial", easy: "Easy", moderate: "Fair", challenging: "Hard", epic: "Epic" };
+      return labels[d] || d;
     }
 
     function toggleDetail(el) {
@@ -897,8 +911,11 @@
 
     function renderQuestRow(q) {
       const cycleText = q.quest_type === "recurring"
-        ? `Every ${q.cycle_days} day${q.cycle_days !== 1 ? "s" : ""}`
+        ? `↻ ${q.cycle_days}d`
         : "One-off";
+
+      const todAbbr = { morning: "AM", afternoon: "PM", evening: "NT" };
+      const todText = todAbbr[q.time_of_day] || "";
 
       let stateClass;
       if (!q.active) {
@@ -931,6 +948,7 @@
           <span class="expand-toggle" onclick="toggleDetail(this)">${hasDetail ? '▸' : ''}</span>
           <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
           <span class="quest-meta">
+            ${todText ? `<span class="meta-tod">${todText}</span>` : ''}
             <span class="meta-cycle">${cycleText}</span>
             <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
           </span>
@@ -946,6 +964,7 @@
       const isRecurring = q.quest_type === "recurring";
       const cycleVal = q.cycle_days || 1;
       const diff = q.difficulty;
+      const tod = q.time_of_day || "anytime";
       return `<li class="quest-edit" data-id="${q.id}">
         <input type="text" id="edit-title" value="${escapeAttr(q.title)}"
                onkeydown="handleEditKey(event, '${q.id}')">
@@ -961,9 +980,15 @@
         <select id="edit-difficulty" onkeydown="handleEditKey(event, '${q.id}')">
           <option value="trivial" ${diff === "trivial" ? "selected" : ""}>Trivial</option>
           <option value="easy" ${diff === "easy" ? "selected" : ""}>Easy</option>
-          <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Moderate</option>
-          <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Challenging</option>
+          <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Fair</option>
+          <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Hard</option>
           <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
+        </select>
+        <select id="edit-time-of-day" onkeydown="handleEditKey(event, '${q.id}')">
+          <option value="anytime" ${tod === "anytime" ? "selected" : ""}>Anytime</option>
+          <option value="morning" ${tod === "morning" ? "selected" : ""}>Morning</option>
+          <option value="afternoon" ${tod === "afternoon" ? "selected" : ""}>Afternoon</option>
+          <option value="evening" ${tod === "evening" ? "selected" : ""}>Evening</option>
         </select>
         <button onclick="saveEdit('${q.id}')">Save</button>
         <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">Del</button>
@@ -1050,7 +1075,8 @@
 
       const questType = document.getElementById("edit-type").value;
       const difficulty = document.getElementById("edit-difficulty").value;
-      const params = { questId: id, title, questType, difficulty };
+      const timeOfDay = document.getElementById("edit-time-of-day").value;
+      const params = { questId: id, title, questType, difficulty, timeOfDay };
 
       if (questType === "recurring") {
         params.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
@@ -1238,7 +1264,8 @@
 
       const questType = typeSelect.value;
       const difficulty = difficultySelect.value;
-      const params = { title, questType, difficulty };
+      const timeOfDay = timeOfDaySelect.value;
+      const params = { title, questType, difficulty, timeOfDay };
 
       if (questType === "recurring") {
         params.cycleDays = parseInt(cycleInput.value, 10) || 1;
@@ -1252,6 +1279,7 @@
       }
 
       titleInput.value = "";
+      timeOfDaySelect.value = "anytime";
       addLinksRow.classList.add("hidden");
       renderAddLinkTags();
       titleInput.focus();

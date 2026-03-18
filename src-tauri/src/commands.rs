@@ -75,9 +75,11 @@ pub fn add_quest(
     quest_type: db::QuestType,
     cycle_days: Option<i32>,
     difficulty: db::Difficulty,
+    time_of_day: Option<String>,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::add_quest(&conn, title, quest_type, cycle_days, difficulty)
+    let tod = time_of_day.unwrap_or_else(|| "anytime".to_string());
+    db::add_quest(&conn, title, quest_type, cycle_days, difficulty, tod)
 }
 
 #[tauri::command]
@@ -97,9 +99,10 @@ pub fn update_quest(
     quest_type: Option<db::QuestType>,
     cycle_days: Option<i32>,
     difficulty: Option<db::Difficulty>,
+    time_of_day: Option<String>,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::update_quest(&conn, quest_id, title, quest_type, cycle_days, difficulty)
+    db::update_quest(&conn, quest_id, title, quest_type, cycle_days, difficulty, time_of_day)
 }
 
 #[tauri::command]

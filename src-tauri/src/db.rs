@@ -75,6 +75,7 @@ pub struct Quest {
     pub active: bool,
     pub created_at: String,
     pub difficulty: Difficulty,
+    pub time_of_day: String,
     pub last_completed: Option<String>,
     pub is_due: bool,
     pub skill_ids: Vec<String>,
@@ -175,7 +176,8 @@ fn create_tables(conn: &Connection) {
             sort_order  INTEGER NOT NULL,
             active      INTEGER NOT NULL DEFAULT 1,
             created_at  TEXT NOT NULL,
-            difficulty  TEXT NOT NULL DEFAULT 'easy'
+            difficulty  TEXT NOT NULL DEFAULT 'easy',
+            time_of_day TEXT NOT NULL DEFAULT 'anytime'
         );
 
         CREATE TABLE IF NOT EXISTS quest_completion (
@@ -332,6 +334,17 @@ fn migrate(conn: &Connection) {
         ).expect("Failed to migrate skill to nullable attribute_id");
         conn.execute_batch("PRAGMA foreign_keys = ON;").expect("Failed to re-enable foreign keys");
     }
+
+    // Migration: add time_of_day to quest if missing
+    let has_time_of_day: bool = conn
+        .prepare("SELECT time_of_day FROM quest LIMIT 0")
+        .is_ok();
+
+    if !has_time_of_day {
+        conn.execute_batch(
+            "ALTER TABLE quest ADD COLUMN time_of_day TEXT NOT NULL DEFAULT 'anytime';"
+        ).expect("Failed to add time_of_day column");
+    }
 }
 
 fn seed_data(conn: &Connection) {
@@ -430,7 +443,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                    q.difficulty,
+                    q.difficulty, q.time_of_day,
                     (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
              FROM quest q
              WHERE q.active = 1 OR (q.active = 0 AND q.quest_type = 'one_off')
@@ -445,7 +458,8 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
             let cycle_days: Option<i32> = row.get(3)?;
             let active = row.get::<_, i32>(5)? != 0;
             let difficulty_str: String = row.get(7)?;
-            let last_completed: Option<String> = row.get(8)?;
+            let time_of_day: String = row.get(8)?;
+            let last_completed: Option<String> = row.get(9)?;
             let last_completed_days = last_completed.as_deref().and_then(utc_iso_to_local_days);
             let is_due = compute_is_due(&quest_type, active, last_completed_days, cycle_days, today);
             Ok(Quest {
@@ -457,6 +471,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
                 active,
                 created_at: row.get(6)?,
                 difficulty: Difficulty::from_str(&difficulty_str),
+                time_of_day,
                 last_completed,
                 is_due,
                 skill_ids: Vec::new(),
@@ -544,6 +559,7 @@ pub fn add_quest(
     quest_type: QuestType,
     cycle_days: Option<i32>,
     difficulty: Difficulty,
+    time_of_day: String,
 ) -> Result<Quest, String> {
     let id = Uuid::new_v4().to_string();
     let created_at = chrono_now();
@@ -563,9 +579,9 @@ pub fn add_quest(
     };
 
     conn.execute(
-        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty)
-         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
-        rusqlite::params![id, title, quest_type.as_str(), effective_cycle, sort_order, created_at, difficulty.as_str()],
+        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty, time_of_day)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8)",
+        rusqlite::params![id, title, quest_type.as_str(), effective_cycle, sort_order, created_at, difficulty.as_str(), time_of_day],
     )
     .map_err(|e| e.to_string())?;
 
@@ -578,6 +594,7 @@ pub fn add_quest(
         active: true,
         created_at,
         difficulty,
+        time_of_day,
         last_completed: None,
         is_due: true,
         skill_ids: Vec::new(),
@@ -836,6 +853,7 @@ pub fn update_quest(
     quest_type: Option<QuestType>,
     cycle_days: Option<i32>,
     difficulty: Option<Difficulty>,
+    time_of_day: Option<String>,
 ) -> Result<Quest, String> {
     let exists: bool = conn
         .query_row(
@@ -898,6 +916,14 @@ pub fn update_quest(
         conn.execute(
             "UPDATE quest SET difficulty = ?1 WHERE id = ?2",
             rusqlite::params![diff.as_str(), quest_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if let Some(ref tod) = time_of_day {
+        conn.execute(
+            "UPDATE quest SET time_of_day = ?1 WHERE id = ?2",
+            rusqlite::params![tod, quest_id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -1147,7 +1173,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
     let (skill_ids, attribute_ids) = load_quest_link_ids(conn, quest_id)?;
     conn.query_row(
         "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                q.difficulty,
+                q.difficulty, q.time_of_day,
                 (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
          FROM quest q WHERE q.id = ?1",
         rusqlite::params![quest_id],
@@ -1157,7 +1183,8 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
             let cycle_days: Option<i32> = row.get(3)?;
             let active = row.get::<_, i32>(5)? != 0;
             let difficulty_str: String = row.get(7)?;
-            let last_completed: Option<String> = row.get(8)?;
+            let time_of_day: String = row.get(8)?;
+            let last_completed: Option<String> = row.get(9)?;
             let last_completed_days = last_completed.as_deref().and_then(utc_iso_to_local_days);
             let is_due = compute_is_due(&quest_type, active, last_completed_days, cycle_days, today);
             Ok(Quest {
@@ -1169,6 +1196,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
                 active,
                 created_at: row.get(6)?,
                 difficulty: Difficulty::from_str(&difficulty_str),
+                time_of_day,
                 last_completed,
                 is_due,
                 skill_ids: skill_ids.clone(),
@@ -1475,6 +1503,28 @@ fn local_today_days() -> i64 {
     unix_to_local_days(secs)
 }
 
+/// Get the current local hour (0–23).
+pub fn local_hour() -> u32 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs() as i64;
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    let time_t = secs as libc::time_t;
+    unsafe { libc::localtime_r(&time_t, &mut tm) };
+    tm.tm_hour as u32
+}
+
+/// Check if a time-of-day window matches a given hour (0–23).
+pub fn matches_time_of_day(window: &str, hour: u32) -> bool {
+    match window {
+        "morning" => hour >= 4 && hour < 12,
+        "afternoon" => hour >= 12 && hour < 17,
+        "evening" => hour >= 17 || hour < 4,
+        _ => true, // "anytime" or unknown
+    }
+}
+
 fn chrono_now() -> String {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1551,7 +1601,7 @@ mod tests {
     #[test]
     fn add_recurring_quest() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         assert_eq!(q.quest_type, QuestType::Recurring);
         assert_eq!(q.cycle_days, Some(1));
         assert!(q.active);
@@ -1561,14 +1611,14 @@ mod tests {
     #[test]
     fn add_recurring_quest_defaults_cycle_to_1() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, None, Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, None, Difficulty::Easy, "anytime".into()).unwrap();
         assert_eq!(q.cycle_days, Some(1));
     }
 
     #[test]
     fn add_one_off_quest() {
         let conn = test_db();
-        let q = add_quest(&conn, "File taxes".into(), QuestType::OneOff, None, Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "File taxes".into(), QuestType::OneOff, None, Difficulty::Easy, "anytime".into()).unwrap();
         assert_eq!(q.quest_type, QuestType::OneOff);
         assert_eq!(q.cycle_days, None);
         assert!(q.is_due);
@@ -1577,16 +1627,16 @@ mod tests {
     #[test]
     fn add_one_off_ignores_cycle_days() {
         let conn = test_db();
-        let q = add_quest(&conn, "Taxes".into(), QuestType::OneOff, Some(5), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Taxes".into(), QuestType::OneOff, Some(5), Difficulty::Easy, "anytime".into()).unwrap();
         assert_eq!(q.cycle_days, None); // ignored for one-off
     }
 
     #[test]
     fn quests_ordered_by_sort_order_descending() {
         let conn = test_db();
-        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        add_quest(&conn, "Third".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        add_quest(&conn, "Third".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
 
         let quests = get_quests(&conn).unwrap();
         assert_eq!(quests[0].title, "Third");
@@ -1597,8 +1647,8 @@ mod tests {
     #[test]
     fn sort_order_auto_increments() {
         let conn = test_db();
-        let q1 = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        let q2 = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q1 = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        let q2 = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         assert_eq!(q1.sort_order, 1);
         assert_eq!(q2.sort_order, 2);
     }
@@ -1608,7 +1658,7 @@ mod tests {
     #[test]
     fn complete_quest_snapshots_title() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let c = complete_quest(&conn, q.id.clone()).unwrap();
         assert_eq!(c.quest_title, "Shower");
         assert_eq!(c.quest_id, Some(q.id));
@@ -1617,7 +1667,7 @@ mod tests {
     #[test]
     fn complete_recurring_stays_active() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
         let quests = get_quests(&conn).unwrap();
@@ -1628,7 +1678,7 @@ mod tests {
     #[test]
     fn complete_one_off_deactivates() {
         let conn = test_db();
-        let q = add_quest(&conn, "Taxes".into(), QuestType::OneOff, None, Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Taxes".into(), QuestType::OneOff, None, Difficulty::Easy, "anytime".into()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
         let quests = get_quests(&conn).unwrap();
@@ -1639,7 +1689,7 @@ mod tests {
     #[test]
     fn multiple_completions() {
         let conn = test_db();
-        let q = add_quest(&conn, "Water".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Water".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
@@ -1657,7 +1707,7 @@ mod tests {
     #[test]
     fn delete_quest_preserves_completions() {
         let conn = test_db();
-        let q = add_quest(&conn, "Delete me".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Delete me".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
         delete_quest(&conn, q.id.clone()).unwrap();
@@ -1680,7 +1730,7 @@ mod tests {
     #[test]
     fn delete_completion_removes_one() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let c1 = complete_quest(&conn, q.id.clone()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
@@ -1699,8 +1749,8 @@ mod tests {
     #[test]
     fn update_quest_title() {
         let conn = test_db();
-        let q = add_quest(&conn, "Old".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        let u = update_quest(&conn, q.id, Some("New".into()), None, None, None).unwrap();
+        let q = add_quest(&conn, "Old".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        let u = update_quest(&conn, q.id, Some("New".into()), None, None, None, None).unwrap();
         assert_eq!(u.title, "New");
         assert_eq!(u.cycle_days, Some(1));
     }
@@ -1708,16 +1758,16 @@ mod tests {
     #[test]
     fn update_quest_cycle() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        let u = update_quest(&conn, q.id, None, None, Some(3), None).unwrap();
+        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        let u = update_quest(&conn, q.id, None, None, Some(3), None, None).unwrap();
         assert_eq!(u.cycle_days, Some(3));
     }
 
     #[test]
     fn update_quest_type_to_one_off() {
         let conn = test_db();
-        let q = add_quest(&conn, "Maybe once".into(), QuestType::Recurring, Some(7), Difficulty::Easy).unwrap();
-        let u = update_quest(&conn, q.id, None, Some(QuestType::OneOff), None, None).unwrap();
+        let q = add_quest(&conn, "Maybe once".into(), QuestType::Recurring, Some(7), Difficulty::Easy, "anytime".into()).unwrap();
+        let u = update_quest(&conn, q.id, None, Some(QuestType::OneOff), None, None, None).unwrap();
         assert_eq!(u.quest_type, QuestType::OneOff);
         assert_eq!(u.cycle_days, None); // cleared
     }
@@ -1725,8 +1775,8 @@ mod tests {
     #[test]
     fn update_quest_type_to_recurring() {
         let conn = test_db();
-        let q = add_quest(&conn, "Now recurring".into(), QuestType::OneOff, None, Difficulty::Easy).unwrap();
-        let u = update_quest(&conn, q.id, None, Some(QuestType::Recurring), Some(3), None).unwrap();
+        let q = add_quest(&conn, "Now recurring".into(), QuestType::OneOff, None, Difficulty::Easy, "anytime".into()).unwrap();
+        let u = update_quest(&conn, q.id, None, Some(QuestType::Recurring), Some(3), None, None).unwrap();
         assert_eq!(u.quest_type, QuestType::Recurring);
         assert_eq!(u.cycle_days, Some(3));
     }
@@ -1734,8 +1784,8 @@ mod tests {
     #[test]
     fn update_quest_type_to_recurring_defaults_cycle() {
         let conn = test_db();
-        let q = add_quest(&conn, "Now recurring".into(), QuestType::OneOff, None, Difficulty::Easy).unwrap();
-        let u = update_quest(&conn, q.id, None, Some(QuestType::Recurring), None, None).unwrap();
+        let q = add_quest(&conn, "Now recurring".into(), QuestType::OneOff, None, Difficulty::Easy, "anytime".into()).unwrap();
+        let u = update_quest(&conn, q.id, None, Some(QuestType::Recurring), None, None, None).unwrap();
         assert_eq!(u.quest_type, QuestType::Recurring);
         assert_eq!(u.cycle_days, Some(1)); // default
     }
@@ -1743,7 +1793,7 @@ mod tests {
     #[test]
     fn update_nonexistent_errors() {
         let conn = test_db();
-        assert!(update_quest(&conn, "nope".into(), Some("x".into()), None, None, None).is_err());
+        assert!(update_quest(&conn, "nope".into(), Some("x".into()), None, None, None, None).is_err());
     }
 
     // --- Reorder ---
@@ -1751,8 +1801,8 @@ mod tests {
     #[test]
     fn reorder_quests_swaps_order() {
         let conn = test_db();
-        let a = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        let b = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let a = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        let b = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         // B has higher sort_order, so it's first in get_quests (DESC)
         let quests = get_quests(&conn).unwrap();
         assert_eq!(quests[0].title, "B");
@@ -1772,7 +1822,7 @@ mod tests {
     #[test]
     fn reorder_quests_invalid_id_errors() {
         let conn = test_db();
-        let q = add_quest(&conn, "Real".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Real".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let result = reorder_quests(&conn, vec![
             QuestOrder { id: q.id, sort_order: 5 },
             QuestOrder { id: "nonexistent".into(), sort_order: 3 },
@@ -1962,7 +2012,7 @@ mod tests {
     #[test]
     fn add_quest_with_difficulty() {
         let conn = test_db();
-        let q = add_quest(&conn, "Hard task".into(), QuestType::OneOff, None, Difficulty::Epic).unwrap();
+        let q = add_quest(&conn, "Hard task".into(), QuestType::OneOff, None, Difficulty::Epic, "anytime".into()).unwrap();
         assert_eq!(q.difficulty, Difficulty::Epic);
 
         let quests = get_quests(&conn).unwrap();
@@ -1972,15 +2022,15 @@ mod tests {
     #[test]
     fn quest_defaults_to_easy() {
         let conn = test_db();
-        let q = add_quest(&conn, "Simple".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Simple".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         assert_eq!(q.difficulty, Difficulty::Easy);
     }
 
     #[test]
     fn update_quest_difficulty() {
         let conn = test_db();
-        let q = add_quest(&conn, "Task".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        let u = update_quest(&conn, q.id, None, None, None, Some(Difficulty::Challenging)).unwrap();
+        let q = add_quest(&conn, "Task".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        let u = update_quest(&conn, q.id, None, None, None, Some(Difficulty::Challenging), None).unwrap();
         assert_eq!(u.difficulty, Difficulty::Challenging);
     }
 
@@ -1989,7 +2039,7 @@ mod tests {
     #[test]
     fn set_and_get_quest_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
 
@@ -2012,7 +2062,7 @@ mod tests {
     #[test]
     fn set_quest_links_replaces_previous() {
         let conn = test_db();
-        let q = add_quest(&conn, "Replace".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Replace".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
 
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
@@ -2026,7 +2076,7 @@ mod tests {
     #[test]
     fn get_quests_returns_link_ids() {
         let conn = test_db();
-        let q = add_quest(&conn, "With links".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "With links".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
 
@@ -2047,14 +2097,14 @@ mod tests {
     #[test]
     fn delete_quest_cleans_up_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Delete links".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Delete links".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
 
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
         delete_quest(&conn, q.id.clone()).unwrap();
 
         // Verify link rows are gone (create another quest to reuse the skill)
-        let q2 = add_quest(&conn, "New".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q2 = add_quest(&conn, "New".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         set_quest_links(&conn, q2.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
         let links = get_quest_links(&conn, q2.id.clone()).unwrap();
         assert_eq!(links.skill_ids.len(), 1);
@@ -2070,7 +2120,7 @@ mod tests {
     #[test]
     fn set_quest_links_invalid_skill_errors() {
         let conn = test_db();
-        let q = add_quest(&conn, "Bad link".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Bad link".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let result = set_quest_links(&conn, q.id, vec!["fake-skill".into()], vec![]);
         assert!(result.is_err());
     }
@@ -2078,7 +2128,7 @@ mod tests {
     #[test]
     fn set_quest_links_invalid_attribute_errors() {
         let conn = test_db();
-        let q = add_quest(&conn, "Bad link".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Bad link".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let result = set_quest_links(&conn, q.id, vec![], vec!["fake-attr".into()]);
         assert!(result.is_err());
     }
@@ -2156,7 +2206,7 @@ mod tests {
     #[test]
     fn award_xp_character_only_no_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Solo".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Solo".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         award_xp(&conn, &q.id, 20).unwrap();
 
         let c = get_character(&conn).unwrap();
@@ -2170,7 +2220,7 @@ mod tests {
     #[test]
     fn award_xp_distributes_to_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
 
@@ -2192,7 +2242,7 @@ mod tests {
     #[test]
     fn skill_levelup_triggers_attribute_bump() {
         let conn = test_db();
-        let q = add_quest(&conn, "Grind".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Grind".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
         // Cooking (skill[0]) maps to Health (attr[0])
         // Skill level 2 at 37 XP. Award 37 to trigger level-up.
@@ -2213,7 +2263,7 @@ mod tests {
     #[test]
     fn complete_quest_stores_xp_earned() {
         let conn = test_db();
-        let q = add_quest(&conn, "XP test".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "XP test".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let c = complete_quest(&conn, q.id).unwrap();
 
         assert!(c.xp_earned > 0);
@@ -2224,7 +2274,7 @@ mod tests {
     #[test]
     fn complete_quest_awards_character_xp() {
         let conn = test_db();
-        let q = add_quest(&conn, "XP flow".into(), QuestType::Recurring, Some(1), Difficulty::Moderate).unwrap();
+        let q = add_quest(&conn, "XP flow".into(), QuestType::Recurring, Some(1), Difficulty::Moderate, "anytime".into()).unwrap();
         let c = complete_quest(&conn, q.id).unwrap();
 
         let char = get_character(&conn).unwrap();
@@ -2234,7 +2284,7 @@ mod tests {
     #[test]
     fn delete_completion_does_not_reduce_xp() {
         let conn = test_db();
-        let q = add_quest(&conn, "Permanent".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Permanent".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let c = complete_quest(&conn, q.id).unwrap();
 
         let char_before = get_character(&conn).unwrap();
@@ -2347,7 +2397,7 @@ mod tests {
         let target_attr = &attrs[0];
 
         // Create a quest linked to this attribute
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         set_quest_links(&conn, q.id.clone(), vec![], vec![target_attr.id.clone()]).unwrap();
 
         // Find a skill mapped to this attribute
@@ -2379,7 +2429,7 @@ mod tests {
         let target_skill = &skills[0];
 
         // Create a quest linked to this skill
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         set_quest_links(&conn, q.id.clone(), vec![target_skill.id.clone()], vec![]).unwrap();
 
         delete_skill(&conn, target_skill.id.clone()).unwrap();
@@ -2410,7 +2460,7 @@ mod tests {
     #[test]
     fn reset_character_zeroes_all_xp() {
         let conn = test_db();
-        let q = add_quest(&conn, "XP".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "XP".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![attrs[0].id.clone()]).unwrap();
@@ -2428,7 +2478,7 @@ mod tests {
     #[test]
     fn reset_quests_deletes_all() {
         let conn = test_db();
-        let q = add_quest(&conn, "Gone".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Gone".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         let skills = get_skills(&conn).unwrap();
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
 
@@ -2440,7 +2490,7 @@ mod tests {
     #[test]
     fn reset_completions_deletes_all() {
         let conn = test_db();
-        let q = add_quest(&conn, "Done".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Done".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
         complete_quest(&conn, q.id).unwrap();
 
         reset_completions(&conn).unwrap();
@@ -2468,8 +2518,8 @@ mod tests {
     #[test]
     fn get_next_quest_returns_first_due() {
         let conn = test_db();
-        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
 
         let next = get_next_quest(&conn, 0).unwrap().unwrap();
         // sort_order DESC means higher sort_order first — Second was added last with higher sort_order
@@ -2479,8 +2529,8 @@ mod tests {
     #[test]
     fn get_next_quest_skip_cycles() {
         let conn = test_db();
-        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
-        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy).unwrap();
+        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
 
         let q0 = get_next_quest(&conn, 0).unwrap().unwrap();
         let q1 = get_next_quest(&conn, 1).unwrap().unwrap();
@@ -2500,12 +2550,74 @@ mod tests {
     fn get_next_quest_none_due_falls_back() {
         let conn = test_db();
         // Add a quest with a long cycle so it won't be due after completion
-        let q = add_quest(&conn, "Long cycle".into(), QuestType::Recurring, Some(999), Difficulty::Easy).unwrap();
+        let q = add_quest(&conn, "Long cycle".into(), QuestType::Recurring, Some(999), Difficulty::Easy, "anytime".into()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
         // Not due, but should fall back to longest-ago-completed
         let next = get_next_quest(&conn, 0).unwrap();
         assert!(next.is_some());
         assert_eq!(next.unwrap().id, q.id);
+    }
+
+    // --- Time-of-day ---
+
+    #[test]
+    fn matches_time_of_day_morning() {
+        assert!(!matches_time_of_day("morning", 3));
+        assert!(matches_time_of_day("morning", 4));
+        assert!(matches_time_of_day("morning", 11));
+        assert!(!matches_time_of_day("morning", 12));
+    }
+
+    #[test]
+    fn matches_time_of_day_afternoon() {
+        assert!(!matches_time_of_day("afternoon", 11));
+        assert!(matches_time_of_day("afternoon", 12));
+        assert!(matches_time_of_day("afternoon", 16));
+        assert!(!matches_time_of_day("afternoon", 17));
+    }
+
+    #[test]
+    fn matches_time_of_day_evening() {
+        assert!(matches_time_of_day("evening", 3));  // 3am is still evening
+        assert!(!matches_time_of_day("evening", 4)); // 4am is morning
+        assert!(matches_time_of_day("evening", 17));
+        assert!(matches_time_of_day("evening", 23));
+        assert!(matches_time_of_day("evening", 0));
+    }
+
+    #[test]
+    fn matches_time_of_day_anytime() {
+        assert!(matches_time_of_day("anytime", 0));
+        assert!(matches_time_of_day("anytime", 12));
+        assert!(matches_time_of_day("anytime", 23));
+    }
+
+    #[test]
+    fn add_quest_with_time_of_day() {
+        let conn = test_db();
+        let q = add_quest(&conn, "Morning shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "morning".into()).unwrap();
+        assert_eq!(q.time_of_day, "morning");
+
+        let quests = get_quests(&conn).unwrap();
+        let found = quests.iter().find(|qq| qq.id == q.id).unwrap();
+        assert_eq!(found.time_of_day, "morning");
+    }
+
+    #[test]
+    fn update_quest_time_of_day() {
+        let conn = test_db();
+        let q = add_quest(&conn, "Walk".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        assert_eq!(q.time_of_day, "anytime");
+
+        let u = update_quest(&conn, q.id, None, None, None, None, Some("evening".into())).unwrap();
+        assert_eq!(u.time_of_day, "evening");
+    }
+
+    #[test]
+    fn add_quest_default_time_of_day() {
+        let conn = test_db();
+        let q = add_quest(&conn, "Default".into(), QuestType::Recurring, Some(1), Difficulty::Easy, "anytime".into()).unwrap();
+        assert_eq!(q.time_of_day, "anytime");
     }
 }

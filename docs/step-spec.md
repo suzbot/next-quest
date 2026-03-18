@@ -1,91 +1,92 @@
-# Step Spec: Phase 2E — Editable Attributes and Skills
+# Step Spec: Phase 2F-1 — Time-of-Day Windows
 
 ## Goal
 
-Add, rename, and delete skills and attributes from the Character tab without code changes.
+Quests gain a time-of-day preference. The quest giver doesn't use it yet (that's 2F-4), but the data is stored, editable, and displayed.
 
 ---
 
-## Substep 1: Backend CRUD
+## Substep 1: Backend — migration, struct, CRUD
 
-All new db.rs functions, commands.rs wrappers, and tests. No UI changes.
+**Migration** (`db.rs` → `migrate()`):
+- Add column `time_of_day TEXT NOT NULL DEFAULT 'anytime'` to `quest` table.
+- Detection pattern: `SELECT time_of_day FROM quest LIMIT 0` (same as existing migrations).
 
-**db.rs — new functions:**
-- `add_attribute(conn, name) -> Attribute`
-- `add_skill(conn, name, attribute_id: Option<String>) -> Skill`
-- `rename_attribute(conn, id, name)`
-- `rename_skill(conn, id, name)`
-- `update_skill_attribute(conn, skill_id, attribute_id: Option<String>)`
-- `delete_attribute(conn, id)` — deletes row + quest_attribute links + unsets skills mapped to it
-- `delete_skill(conn, id)` — deletes row + quest_skill links
+**Quest struct** (`db.rs`):
+- Add `time_of_day: String` to `Quest` struct.
 
-**commands.rs — new Tauri commands** wrapping each db function.
+**`get_quests`**:
+- Add `q.time_of_day` to the SELECT. Map to the struct field.
+
+**`add_quest`**:
+- New parameter: `time_of_day: String`. Defaults handled by the frontend (passes `"anytime"` if unset).
+- Include in INSERT.
+
+**`update_quest`**:
+- New optional parameter: `time_of_day: Option<String>`.
+- When `Some`, UPDATE the column.
+
+**`local_hour()`** — new helper function:
+- Uses existing `libc::localtime_r` pattern (same as `unix_to_local_days`).
+- Returns `u32` (0–23) for the current local hour.
+
+**`matches_time_of_day(window: &str, hour: u32) -> bool`** — new public function:
+- `"anytime"` → `true`
+- `"morning"` → `hour >= 4 && hour < 12`
+- `"afternoon"` → `hour >= 12 && hour < 17`
+- `"evening"` → `hour >= 17 || hour < 4`
+- Anything else → `true` (defensive default)
+
+**commands.rs**:
+- `add_quest`: add `time_of_day: String` parameter, pass through.
+- `update_quest`: add `time_of_day: Option<String>` parameter, pass through.
 
 **Tests:**
-- Add attribute, verify returned with 0 XP
-- Add skill with and without attribute mapping
-- Rename attribute, verify name changed
-- Rename skill, verify name changed
-- Update skill attribute mapping
-- Delete attribute cleans up quest links and unsets mapped skills
-- Delete skill cleans up quest links
-- Delete nonexistent attribute/skill errors gracefully
+- `matches_time_of_day` — all four windows at boundary hours: 3, 4, 11, 12, 16, 17, 23, 0.
+- `add_quest` with `time_of_day` set to `"morning"` — verify persisted and returned.
+- `update_quest` changing `time_of_day` from default to `"evening"` — verify updated.
+- `get_quests` returns `time_of_day` field.
+- Existing tests updated to pass the new `time_of_day` parameter (use `"anytime"`).
 
 **Testing checkpoint:** `cargo test` — all existing + new tests pass.
 
 ---
 
-## Substep 2: Color Palette
+## Substep 2: Frontend — add form, edit form, display
 
-Replace hardcoded name-to-color maps with index-based cycling palette.
+**Add form** (`index.html`):
+- New dropdown after the difficulty select:
+  ```html
+  <select id="quest-time-of-day">
+    <option value="anytime" selected>Anytime</option>
+    <option value="morning">Morning</option>
+    <option value="afternoon">Afternoon</option>
+    <option value="evening">Evening</option>
+  </select>
+  ```
+- `addForm` submit handler reads the value, passes to `invoke("add_quest", { ... timeOfDay })`.
 
-**Changes:**
-- Define ordered palette arrays (5 fill colors, then 5 text colors, cycling)
-- Attribute color determined by index in the attributes list, not by name
-- Skill color determined by its mapped attribute's color, or gray if unmapped
-- Remove `attrFillColors` and `attrTextColors` name-keyed objects
-- Level-up notification colors also driven by palette
+**Edit form** (`renderEditMode`):
+- New dropdown `id="edit-time-of-day"` with the same four options, pre-selecting the quest's current value.
+- `saveEdit` reads the value, passes to `invoke("update_quest", { ... timeOfDay })`.
 
-**Testing checkpoint:** Build app, verify Character tab looks the same as before (colors in same order for default attributes). Level-up notifications still show correct colors.
+**Expanded detail row** (`renderQuestItem`):
+- If `time_of_day` is not `"anytime"`, append it to the detail line (e.g., "Morning" alongside skill/attribute links).
+- Capitalize for display: `morning` → `Morning`.
+- If no links and time is anytime, no detail row (existing behavior — `hasDetail` stays false).
 
----
-
-## Substep 3: Attribute UI
-
-Add/rename/delete for attributes on the Character tab.
-
-**Changes:**
-- Click attribute name → inline rename input with Save and ✕
-- Delete button on each attribute row with confirm pattern ("Sure?" → 2s timeout)
-- "Add Attribute" button below attribute list → inline input for name
-- Refresh character view after each operation
-
-**Testing checkpoint:** Build app. Add a new attribute — appears with meter at 0 XP and a color from the palette. Rename it. Delete it with confirmation. Verify quest links to deleted attribute are gone.
+**Testing checkpoint:** Build app. Add a quest with "Morning" — see it in the expanded detail. Edit an existing quest to "Evening" — detail updates. Add a quest with "Anytime" — no time shown in detail.
 
 ---
 
-## Substep 4: Skill UI
+## NOT in this step
 
-Add/rename/delete for skills, plus attribute mapping dropdown.
-
-**Changes:**
-- Click skill name → inline rename input with Save and ✕
-- Attribute mapping shown as dropdown (current attribute selected, "None" for unmapped)
-- Changing dropdown calls update_skill_attribute
-- Delete button with confirm pattern
-- "Add Skill" button below skill list → inline input for name + attribute dropdown
-- Unmapped skills show gray meters
-
-**Testing checkpoint:** Build app. Add a new skill mapped to an attribute — appears with correct color. Change its mapping — color updates. Set to None — turns gray. Delete it with confirmation. Verify quest links cleaned up.
-
----
-
-## NOT in this phase
-
-- User-selectable color picker for attributes
-- Reset behavior changes
-- Seed data guard rework
+- Day-of-week affinity (2F-2)
+- Quest giver filtering by time-of-day (2F-4)
+- Quest list filter bar (2F-3)
+- Scoring system (2F-4)
+- Skip tracking (2F-5)
 
 ## Done When
 
-All four substeps complete and tested.
+Both substeps complete. Quests can be created and edited with a time-of-day window. The value is stored, returned by the API, and visible in the quest list detail row. `cargo test` passes.
