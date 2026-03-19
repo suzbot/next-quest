@@ -42,6 +42,7 @@ A saga's first step becomes due when:
 - The active step is the first due step (lowest step_order that meets the due criteria above).
 - All active sagas contribute simultaneously — no limit on how many sagas are active.
 - Saga steps score using the same formula as regular quests. The active step scores like a one-off: `(days_since_activated + 9) / 9`, where `days_since_activated` is the number of days since the previous step was completed (or since the saga became due, for the first step).
+- **First step of a new recurring saga** (no prior completions): the step is due immediately and scores based on days since the saga was created, same as a new one-off quest. There's no prior run to derive a cycle reset from, so the saga is treated as starting its first run on creation.
 
 ## 5. Step auto-advance
 
@@ -71,6 +72,7 @@ A new tab in the app for managing sagas.
 - Same UI as the Quest List for managing steps: add, edit, resequence, delete, mark complete
 - Same add-quest form (title, difficulty, TOD, DOW, skill/attribute tags)
 - Steps show completion status for the current run
+- **Full resequencing**: steps can be reordered freely within their saga via drag-and-drop and keyboard (arrow keys to move position), same as quest list reordering. Not limited to neighbor swaps — any step can be moved to any position.
 
 **Saga management:**
 - Add new saga (name, optional cycle days)
