@@ -1,6 +1,6 @@
 # Phase 2F: Logic Enhancement — Requirements (WIP)
 
-**Status:** Draft
+**Status:** Complete
 
 **Goal:** Make the quest giver smarter. Quests gain time-of-day, day-of-week, and overdue context. The selector shifts from list-order-first to a scoring system that weighs these factors. Skipped quests sink for the day. The quest list gets manual filtering.
 

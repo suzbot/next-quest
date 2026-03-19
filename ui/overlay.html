@@ -229,20 +229,19 @@
       return pick;
     }
 
-    let skipCount = 0;
-    let currentQuest = null;
+    let currentResult = null; // ScoredQuest from backend
     let currentMonster = null;
     let currentEncounter = null;
 
     async function loadQuest() {
-      currentQuest = await invoke("get_next_quest", { skipCount });
+      currentResult = await invoke("get_next_quest", {});
       currentMonster = randomFromExcluding(monsterImages, currentMonster);
       currentEncounter = randomFromExcluding(encounterLines, currentEncounter);
       render();
     }
 
     function render() {
-      if (!currentQuest) {
+      if (!currentResult) {
         content.innerHTML = `
           <div class="empty">All caught up. Rest well, adventurer.</div>
         `;
@@ -250,6 +249,7 @@
         return;
       }
 
+      const quest = currentResult.quest;
       content.innerHTML = `
         <div class="split">
           <div class="split-image">
@@ -257,7 +257,7 @@
           </div>
           <div class="split-text">
             <div class="flavor">${currentEncounter}</div>
-            <div class="quest-name">${escapeHtml(currentQuest.title)}</div>
+            <div class="quest-name">${escapeHtml(quest.title)}</div>
             <div class="prompt">Do you...</div>
             <div class="actions">
               <button onclick="questNow()"><u>F</u>ight</button>
@@ -272,9 +272,10 @@
     }
 
     async function questDone() {
-      if (!currentQuest) return;
-      const difficulty = currentQuest.difficulty;
-      const completion = await invoke("complete_quest", { questId: currentQuest.id });
+      if (!currentResult) return;
+      const quest = currentResult.quest;
+      const difficulty = quest.difficulty;
+      const completion = await invoke("complete_quest", { questId: quest.id });
       const color = diffTextColors[difficulty] || "#1a6e1a";
 
       let textHtml = `<div class="quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
@@ -293,7 +294,6 @@
       `;
       resizeToFit();
 
-      skipCount = 0;
       setTimeout(() => {
         content.classList.add("fading-out");
         setTimeout(() => {
@@ -304,17 +304,27 @@
     }
 
     async function questNow() {
-      if (!currentQuest) return;
-      await invoke("start_timer", { questId: currentQuest.id, monsterImage: currentMonster, encounterLine: currentEncounter });
+      if (!currentResult) return;
+      const quest = currentResult.quest;
+      await invoke("start_timer", { questId: quest.id, monsterImage: currentMonster, encounterLine: currentEncounter });
       await invoke("dismiss_overlay", { action: "quest_now" });
     }
 
-    function somethingElse() {
-      skipCount++;
-      loadQuest();
+    async function somethingElse() {
+      if (currentResult) {
+        const questId = currentResult.quest.id;
+        await invoke("skip_quest", { questId });
+        currentResult = await invoke("get_next_quest", { excludeQuestId: questId });
+      } else {
+        currentResult = await invoke("get_next_quest", {});
+      }
+      currentMonster = randomFromExcluding(monsterImages, currentMonster);
+      currentEncounter = randomFromExcluding(encounterLines, currentEncounter);
+      render();
     }
 
     async function maybeLater() {
+      // Hide does NOT count as a skip
       await invoke("dismiss_overlay", { action: "later" });
     }
 
@@ -333,7 +343,6 @@
     });
 
     window.__TAURI__.event.listen("overlay-refresh", () => {
-      skipCount = 0;
       loadQuest();
     });
 

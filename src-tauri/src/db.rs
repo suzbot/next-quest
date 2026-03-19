@@ -100,6 +100,7 @@ pub struct ScoredQuest {
     pub quest: Quest,
     pub score: f64,
     pub overdue_ratio: f64,
+    pub skip_penalty: f64,
     pub list_order_bonus: f64,
     pub pool: String,
     pub due_count: usize,
@@ -573,7 +574,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     Ok(quests)
 }
 
-pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<ScoredQuest>, String> {
+pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, exclude_quest_id: Option<&str>) -> Result<Option<ScoredQuest>, String> {
     let quests = get_quests(conn)?;
     let today = local_today_days();
     let hour = local_hour();
@@ -595,23 +596,49 @@ pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<Score
     let due_count = due.len();
     let not_due_count = not_due.len();
 
-    // Score and pick from due pool first, then not-due fallback
-    let (mut scored, pool_name) = if !due.is_empty() {
-        (score_due_quests(&due, today), "due")
+    // Score due pool first
+    let (mut scored, mut pool_name) = if !due.is_empty() {
+        (score_quests_due(&due, today, skip_counts), "due")
     } else {
-        (score_not_due_quests(&not_due, today), "not_due")
+        (Vec::new(), "due")
     };
+
+    // If due pool is empty or all scores <= 0, include not-due pool
+    let all_skipped = !scored.is_empty() && scored.iter().all(|s| s.0 <= 0.0);
+    if scored.is_empty() || all_skipped {
+        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts);
+        if scored.is_empty() {
+            scored = not_due_scored;
+            pool_name = "not_due";
+        } else {
+            scored.extend(not_due_scored);
+            pool_name = "due+not_due";
+        }
+    }
+
+    if scored.is_empty() {
+        return Ok(None);
+    }
 
     // Sort by score descending (highest first)
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    let idx = (skip_count as usize) % scored.len();
-    let (score, overdue_ratio, list_order_bonus, quest) = scored.into_iter().nth(idx).unwrap();
+    // Skip excluded quest if possible (fall back to it if it's the only one)
+    let top = if let Some(exc_id) = exclude_quest_id {
+        scored.iter()
+            .find(|(_, _, _, _, q)| q.id != exc_id)
+            .cloned()
+            .unwrap_or_else(|| scored.into_iter().next().unwrap())
+    } else {
+        scored.into_iter().next().unwrap()
+    };
+    let (score, overdue_ratio, skip_penalty, list_order_bonus, quest) = top;
 
     Ok(Some(ScoredQuest {
         quest,
         score,
         overdue_ratio,
+        skip_penalty,
         list_order_bonus,
         pool: pool_name.to_string(),
         due_count,
@@ -619,34 +646,37 @@ pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<Score
     }))
 }
 
-fn score_due_quests(quests: &[&Quest], today: i64) -> Vec<(f64, f64, f64, Quest)> {
+fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, Quest)> {
     let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
     quests.iter().map(|q| {
         let overdue_ratio = compute_overdue_ratio(q, today);
+        let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
+        let skip_penalty = skips * 0.5;
         let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
-        let score = overdue_ratio + list_order_bonus;
-        (score, overdue_ratio, list_order_bonus, (*q).clone())
+        let score = overdue_ratio - skip_penalty + list_order_bonus;
+        (score, overdue_ratio, skip_penalty, list_order_bonus, (*q).clone())
     }).collect()
 }
 
-fn score_not_due_quests(quests: &[&Quest], today: i64) -> Vec<(f64, f64, f64, Quest)> {
+fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, Quest)> {
     let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
-    // Compute days since completed for normalization
     let days_since: Vec<f64> = quests.iter().map(|q| {
         match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
             Some(d) => (today - d) as f64,
-            None => f64::MAX, // never completed = max priority
+            None => f64::MAX,
         }
     }).collect();
     let max_days = days_since.iter().cloned().filter(|d| *d < f64::MAX).fold(1.0f64, f64::max);
 
     quests.iter().enumerate().map(|(i, q)| {
         let normalized = if days_since[i] == f64::MAX { 1.0 } else { days_since[i] / max_days };
+        let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
+        let skip_penalty = skips * 0.5;
         let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
-        let score = normalized + list_order_bonus;
-        (score, normalized, list_order_bonus, (*q).clone())
+        let score = normalized - skip_penalty + list_order_bonus;
+        (score, normalized, skip_penalty, list_order_bonus, (*q).clone())
     }).collect()
 }
 
@@ -1658,6 +1688,18 @@ fn local_today_days() -> i64 {
         .expect("Time went backwards")
         .as_secs() as i64;
     unix_to_local_days(secs)
+}
+
+/// Get today's local date as a string (YYYY-MM-DD) for skip reset comparison.
+pub fn local_today_str() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs() as i64;
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    let time_t = secs as libc::time_t;
+    unsafe { libc::localtime_r(&time_t, &mut tm) };
+    format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday)
 }
 
 /// Get the current local hour (0–23).
@@ -2706,7 +2748,7 @@ mod tests {
         add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
         add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
 
-        let next = get_next_quest(&conn, 0).unwrap().unwrap();
+        let next = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
         // Both never-completed daily quests created at same time — scores should be equal,
         // so list_order_bonus breaks tie (higher sort_order = lower bonus = sorted later)
         assert!(next.score > 0.0);
@@ -2714,23 +2756,32 @@ mod tests {
     }
 
     #[test]
-    fn get_next_quest_skip_cycles() {
+    fn get_next_quest_skip_changes_result() {
         let conn = test_db();
         add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
         add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
 
-        let q0 = get_next_quest(&conn, 0).unwrap().unwrap();
-        let q1 = get_next_quest(&conn, 1).unwrap().unwrap();
-        assert_ne!(q0.quest.id, q1.quest.id);
-        // Wraps around
-        let q2 = get_next_quest(&conn, 2).unwrap().unwrap();
-        assert_eq!(q0.quest.id, q2.quest.id);
+        let empty = std::collections::HashMap::new();
+        let q0 = get_next_quest(&conn, &empty, None).unwrap().unwrap();
+        let top_id = q0.quest.id.clone();
+
+        // Skip the top quest — the other one should surface
+        let mut skips = std::collections::HashMap::new();
+        skips.insert(top_id.clone(), 10); // heavy skip
+        let q1 = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        assert_ne!(q1.quest.id, top_id);
+
+        // Skip both heavily — exhaustion fallback returns the least-negative
+        let other_id = q1.quest.id.clone();
+        skips.insert(other_id.clone(), 10);
+        let q2 = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        assert!(q2.score <= 0.0); // both heavily penalized
     }
 
     #[test]
     fn get_next_quest_empty_db() {
         let conn = test_db();
-        assert!(get_next_quest(&conn, 0).unwrap().is_none());
+        assert!(get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().is_none());
     }
 
     #[test]
@@ -2741,7 +2792,7 @@ mod tests {
         complete_quest(&conn, q.id.clone()).unwrap();
 
         // Not due, but should fall back to not_due pool
-        let next = get_next_quest(&conn, 0).unwrap();
+        let next = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap();
         assert!(next.is_some());
         let scored = next.unwrap();
         assert_eq!(scored.quest.id, q.id);
@@ -2756,7 +2807,7 @@ mod tests {
         add_quest(&conn, "Weekly".into(), QuestType::Recurring, Some(7), Difficulty::Easy, 7, 127).unwrap();
         add_quest(&conn, "Daily".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
 
-        let top = get_next_quest(&conn, 0).unwrap().unwrap();
+        let top = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
         // Daily quest has higher overdue ratio ((0+1)/1=1.0 vs (0+7)/7=1.0... actually equal for new quests)
         // Both are due, both have same overdue ratio for never-completed. list_order_bonus breaks tie.
         assert!(top.score > 0.0);

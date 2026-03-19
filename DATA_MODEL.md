@@ -1,6 +1,6 @@
 # Next Quest — Data Model
 
-## Current Entities (Phase 0.5)
+## Current Entities
 
 ### Quest
 A template for something you do. Can be recurring or one-off.
@@ -15,6 +15,8 @@ A template for something you do. Can be recurring or one-off.
 | active | Bool (int) | 1 = active, 0 = deactivated (completed one-off) |
 | created_at | Timestamp | ISO 8601 creation time |
 | difficulty | Enum | `trivial`, `easy`, `moderate`, `challenging`, `epic` |
+| time_of_day | Integer | Bitmask: Morning=1, Afternoon=2, Evening=4. Default 7 (all). 0 or 7 = anytime. |
+| days_of_week | Integer | Bitmask: Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 (every day). |
 
 **Derived values (computed, not stored):**
 - `last_completed` — most recent completion timestamp for this quest
@@ -26,7 +28,9 @@ A template for something you do. Can be recurring or one-off.
 - Recurring quests stay active after completion and refresh after `cycle_days` elapse.
 - One-off quests are deactivated (`active = 0`) on completion. Can still be deleted.
 - `quest_type` is an explicit field — type is never inferred from `cycle_days`.
-- Difficulty defaults to `easy`.
+- Difficulty defaults to `easy`. Display labels: Trivial, Easy, Fair, Hard, Epic.
+- Time-of-day defaults to 7 (all times). All or none selected = anytime.
+- Days-of-week defaults to 127 (every day). All or none selected = every day.
 
 ### Completion
 A visible record that you did a quest at a specific time.
@@ -126,7 +130,7 @@ and quest_attribute.
 XP earned per completion: `base * difficulty_mult * cycle_mult`, rounded.
 
 - **Base:** 10
-- **Difficulty multiplier:** Trivial=1, Easy=2, Moderate=4, Challenging=7, Epic=12
+- **Difficulty multiplier:** Trivial=1, Easy=2, Fair=4, Hard=7, Epic=12
 - **Cycle multiplier:** One-off=3, Recurring=sqrt(cycle_days)
 
 ### XP Distribution
@@ -157,6 +161,36 @@ App configuration. Single row, seeded on first launch.
 | id | Integer | 1 | Always 1 (single row) |
 | cta_enabled | Integer | 0 | Call to Adventure on/off (0/1) |
 | cta_interval_minutes | Integer | 20 | Polling interval in minutes |
+| debug_scoring | Integer | 0 | Show score breakdown in quest giver (0/1) |
+
+## Quest Selector
+
+The quest giver picks quests using a scoring system with hard filters and soft ranking.
+
+### Candidate Pool
+1. All active quests
+2. Hard-filter: time-of-day bitmask matches current local hour (Morning 4am–noon, Afternoon noon–5pm, Evening 5pm–4am)
+3. Hard-filter: days-of-week bitmask includes today
+4. Split into **due** and **not-due** pools; due always preferred
+
+### Scoring (due quests)
+```
+score = overdue_ratio - skip_penalty + list_order_bonus
+```
+- **Overdue ratio**: `days_since_completed / cycle_days` (min 1.0). Never-completed recurring: `(days_since_created + cycle) / cycle`. One-off: `(days_since_created + 9) / 9`.
+- **Skip penalty**: `skip_count × 0.5`. Resets daily. Recorded on "Something Else" (main) and "Run" (overlay). "Hide in the Shadows" does not count.
+- **List order bonus**: `0.01 × sort_order / max_sort_order`. Top-of-list quests score slightly higher.
+
+### Scoring (not-due fallback)
+Only reached when due pool is empty or all due scores ≤ 0.
+```
+score = days_since_completed / max_days - skip_penalty + list_order_bonus
+```
+
+### Behavior
+- "Something Else" / "Run": records a skip, then re-scores. The just-skipped quest is excluded from the next pick (unless it's the only quest).
+- Exhaustion fallback: if all scores ≤ 0, returns the least-negative.
+- Skip counts are in-memory, reset at local midnight or app restart.
 
 ## Planned Entities (Phase 2+)
 

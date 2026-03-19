@@ -4,7 +4,7 @@ mod commands;
 mod db;
 mod tray;
 
-use commands::{AppTimerState, AppTrayState, DbState, TimerStateInner, TrayStateInner};
+use commands::{AppSkipState, AppTimerState, AppTrayState, DbState, SkipStateInner, TimerStateInner, TrayStateInner};
 use std::sync::Mutex;
 use tauri::{Manager, WindowEvent};
 
@@ -35,6 +35,7 @@ fn main() {
         .manage(DbState(Mutex::new(conn)))
         .manage(AppTimerState(Mutex::new(TimerStateInner::default())))
         .manage(AppTrayState(Mutex::new(tray_state)))
+        .manage(AppSkipState(Mutex::new(SkipStateInner::default())))
         .setup(|app| {
             tray::setup_tray(app).expect("Failed to set up system tray");
 
@@ -81,6 +82,7 @@ fn main() {
             commands::set_cta_interval,
             commands::toggle_call_to_adventure,
             commands::set_debug_scoring,
+            commands::skip_quest,
             commands::dismiss_overlay,
             commands::add_attribute,
             commands::add_skill,
@@ -159,7 +161,7 @@ fn cta_poll_loop(app: tauri::AppHandle) {
         let has_quest = {
             let db_state = app.state::<DbState>();
             let conn = db_state.0.lock().unwrap();
-            db::get_next_quest(&conn, 0)
+            db::get_next_quest(&conn, &std::collections::HashMap::new(), None)
                 .map(|q| q.is_some())
                 .unwrap_or(false)
         };

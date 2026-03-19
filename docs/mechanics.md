@@ -23,8 +23,8 @@ Three factors combine to determine quest XP:
 |---|---|---|---|
 | Trivial | 1x | 5 | Take meds, drink water |
 | Easy | 5x | 25 | Shower, do dishes |
-| Moderate | 10x | 50 | Exercise, meal prep |
-| Challenging | 20x | 100 | Deep clean, long study session |
+| Fair | 10x | 50 | Exercise, meal prep |
+| Hard | 20x | 100 | Deep clean, long study session |
 | Epic | 40x | 200 | Major project milestone, file taxes |
 
 ### Cycle Multipliers
@@ -163,6 +163,58 @@ When a skill levels up, its mapped attribute receives XP equal to the base XP
 of a **Moderate one-off quest** (currently 150 XP). This is computed from the
 formula, not hardcoded — if base XP or difficulty multipliers change, the bump
 changes with them.
+
+## Quest Selector Scoring
+
+### Overdue Ratio
+
+The primary signal for quest priority. Higher = more urgent.
+
+| Quest state | Formula |
+|---|---|
+| Recurring, has completions | `days_since_completed / cycle_days` (min 1.0) |
+| Recurring, never completed | `(days_since_created + cycle_days) / cycle_days` |
+| One-off, never completed | `(days_since_created + 9) / 9` |
+
+### Skip Penalty
+
+Each "Something Else" or "Run" action adds 0.5 to the penalty. Resets at local midnight.
+
+### List Order Bonus
+
+`0.01 × sort_order / max_sort_order` — tiny tiebreaker favoring quests higher in the user's list.
+
+### Combined Score
+
+```
+score = overdue_ratio - skip_penalty + list_order_bonus
+```
+
+### Reference Values
+
+| Scenario | Overdue ratio | 0 skips | 1 skip | 2 skips | 3 skips |
+|---|---|---|---|---|---|
+| Just due (1x cycle) | 1.0 | 1.01 | 0.51 | 0.01 | -0.49 |
+| 2x overdue | 2.0 | 2.01 | 1.51 | 1.01 | 0.51 |
+| 3x overdue | 3.0 | 3.01 | 2.51 | 2.01 | 1.51 |
+| 7x overdue | 7.0 | 7.01 | 6.51 | 6.01 | 5.51 |
+| New one-off (created today) | 1.0 | 1.01 | 0.51 | 0.01 | -0.49 |
+| New one-off (9 days old) | 2.0 | 2.01 | 1.51 | 1.01 | 0.51 |
+
+(List order bonus shown as +0.01 for illustration; actual value varies by position.)
+
+### Time-of-Day Windows
+
+| Window | Hours (local) | Bitmask |
+|---|---|---|
+| Morning | 4:00 AM – 11:59 AM | 1 |
+| Afternoon | 12:00 PM – 4:59 PM | 2 |
+| Evening | 5:00 PM – 3:59 AM | 4 |
+| All times | — | 7 (or 0) |
+
+### Days-of-Week Bitmask
+
+Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 = every day.
 
 ## Default Skill-to-Attribute Mapping
 

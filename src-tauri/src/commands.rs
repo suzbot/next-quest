@@ -45,6 +45,14 @@ impl TrayStateInner {
 
 pub struct AppTrayState(pub Mutex<TrayStateInner>);
 
+#[derive(Default)]
+pub struct SkipStateInner {
+    pub skip_counts: std::collections::HashMap<String, i32>,
+    pub reset_date: String,
+}
+
+pub struct AppSkipState(pub Mutex<SkipStateInner>);
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimerInfo {
@@ -205,10 +213,33 @@ pub fn reset_completions(state: State<DbState>) -> Result<(), String> {
 #[tauri::command]
 pub fn get_next_quest(
     state: State<DbState>,
-    skip_count: i32,
+    skip_state: State<AppSkipState>,
+    exclude_quest_id: Option<String>,
 ) -> Result<Option<db::ScoredQuest>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::get_next_quest(&conn, skip_count)
+    let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    // Daily reset
+    let today = db::local_today_str();
+    if skips.reset_date != today {
+        skips.skip_counts.clear();
+        skips.reset_date = today;
+    }
+    db::get_next_quest(&conn, &skips.skip_counts, exclude_quest_id.as_deref())
+}
+
+#[tauri::command]
+pub fn skip_quest(
+    skip_state: State<AppSkipState>,
+    quest_id: String,
+) -> Result<(), String> {
+    let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    let today = db::local_today_str();
+    if skips.reset_date != today {
+        skips.skip_counts.clear();
+        skips.reset_date = today;
+    }
+    *skips.skip_counts.entry(quest_id).or_insert(0) += 1;
+    Ok(())
 }
 
 // --- Timer ---

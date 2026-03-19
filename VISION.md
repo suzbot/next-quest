@@ -186,15 +186,25 @@ Polish and quality-of-life improvements:
 6. **Collapsible History** — caret toggle on Character tab
 7. **Orphaned quest links** — silently removed on skill/attribute deletion
 
-## Phase 2F: "Logic Enhancement"
+## Phase 2F: "Logic Enhancement" ✓
 
 Smarter quest selection based on new quest attributes and offer tracking:
 
-1. **Time-of-day windows** — quests have a preferred time (Morning, Afternoon, Evening, Anytime); selector prioritizes quests whose window matches now
-2. **Overdue escalation** — how far past cycle factors into priority; more overdue = higher weight, not punishment
-3. **Day-of-week affinity** — quests can specify which days they're relevant (specific days, weekdays, weekends)
-4. **Last-offered freshness** — track when a quest was last offered; repeated skips sink priority for the session, resets daily
-5. **Manual filtering** — filter quest list and quest giver by attribute, skill, or other quest properties
+1. **Time-of-day windows** — bitmask multiselect (Morning=1, Afternoon=2, Evening=4); hard-filtered in quest selector
+2. **Day-of-week affinity** — bitmask multiselect (Mon=1..Sun=64); hard-filtered in quest selector
+3. **Overdue escalation** — scoring system replaces list-order selection; overdue ratio is primary signal
+4. **Last-offered freshness** — in-memory skip tracking with daily reset; 0.5 penalty per skip
+5. **Quest selector scoring** — `score = overdue_ratio - skip_penalty + list_order_bonus`; due pool preferred, not-due fallback
+6. **Manual filtering** — quest list filter bar (attribute, skill, time, day, due-only); frontend-only, AND-combined
+7. **Debug scoring** — settings toggle shows score breakdown in quest giver
+8. **UI polish** — difficulty labels renamed (Fair/Hard), cycle abbreviated (↻ #d), meter layout (level left, XP right)
+
+## Phase 2F.5: "Cleanup"
+
+Code quality pass before adding more features:
+
+1. **Parameter structs** — replace positional argument sprawl in `add_quest` (7 params), `update_quest` (8 params), `get_next_quest` (3 params) with structs that have defaults. Adding a field becomes a one-place change.
+2. **Test helper** — `test_add_quest(&conn, "Title")` with sensible defaults, so new quest fields don't require updating 40+ test calls.
 
 ## Phase 2G: "Advanced Logic"
 

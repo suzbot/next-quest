@@ -982,7 +982,7 @@
     let attrNameMap = {};
 
     // Quest Giver state
-    let nextQuestIndex = 0;
+    // Skip tracking now lives in backend (AppSkipState)
 
     // Break timer state (display only — state lives in backend)
     let timerStartLocal = null;   // Date.now() cached locally for display
@@ -1617,8 +1617,11 @@
       }
 
       // Selection mode — ask backend for the next quest
-      const result = await invoke("get_next_quest", { skipCount: nextQuestIndex });
+      const result = await invoke("get_next_quest", {});
+      await renderQuestGiverWith(result);
+    }
 
+    async function renderQuestGiverWith(result) {
       if (cachedQuests.filter(q => q.active).length === 0) {
         qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quest List tab.</div>';
         return;
@@ -1632,7 +1635,7 @@
       const quest = result.quest;
       const debugHtml = debugScoring ? `
         <div class="qg-debug">
-          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | order: +${result.list_order_bonus.toFixed(3)})
+          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | skips: -${result.skip_penalty.toFixed(1)} | order: +${result.list_order_bonus.toFixed(3)})
           <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
         </div>` : "";
 
@@ -1651,7 +1654,7 @@
             <div class="qg-actions">
               <button onclick="qgDone('${quest.id}', '${quest.difficulty}')">Done</button>
               <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
-              <button onclick="qgSomethingElse()">Something Else</button>
+              <button onclick="qgSomethingElse('${quest.id}')">Something Else</button>
             </div>
           </div>
         </div>
@@ -1727,7 +1730,7 @@
             </div>
           </div>
         `;
-        nextQuestIndex++;
+
         setTimeout(() => {
           qgContent.classList.add("qg-content-fading");
           setTimeout(() => {
@@ -1737,7 +1740,7 @@
           }, 400);
         }, 3000);
       } else {
-        nextQuestIndex++;
+
         currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
         renderQuestGiver();
       }
@@ -1764,7 +1767,7 @@
       setTabsLocked(false);
       const completion = await invoke("complete_timer");
 
-      nextQuestIndex = 0;
+
       let textHtml = `<div class="qg-quest-name pulsing" style="font-size: 18px;">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
         textHtml += `<div class="qg-xp-flash pulsing">+${completion.xp_earned} XP</div>`;
@@ -1810,7 +1813,7 @@
       `;
 
       // Hold for 2.5s, then fade out and show next quest
-      nextQuestIndex = 0;
+
       setTimeout(() => {
         qgContent.classList.add("qg-content-fading");
         setTimeout(() => {
@@ -1821,10 +1824,12 @@
       }, 2500);
     }
 
-    async function qgSomethingElse() {
-      nextQuestIndex++;
+    async function qgSomethingElse(questId) {
+      await invoke("skip_quest", { questId });
       currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
-      await renderQuestGiver();
+      // Pass exclude so the just-skipped quest doesn't immediately reappear
+      const result = await invoke("get_next_quest", { excludeQuestId: questId });
+      await renderQuestGiverWith(result);
     }
 
     // Quest Now from list view

@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** Phase 2E complete. Next: Phase 2F — "Logic Enhancement"
+**Current phase:** Phase 2F complete. Next: Phase 2F.5 — "Cleanup"
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 
@@ -34,7 +34,7 @@ Tauri app: Rust backend + web frontend.
 ### File Structure
 
 - `src-tauri/src/db.rs` — all data logic, migrations, and tests
-- `src-tauri/src/commands.rs` — Tauri command wrappers, timer state, tray state, settings
+- `src-tauri/src/commands.rs` — Tauri command wrappers, timer state, tray state, skip state, settings
 - `src-tauri/src/tray.rs` — system tray icon, menu, and event handling
 - `src-tauri/src/main.rs` — app setup, Encounters polling thread
 - `src-tauri/build.rs` — build-time image manifest generation
