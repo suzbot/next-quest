@@ -1586,6 +1586,7 @@
       questsView.classList.toggle("hidden", view !== "quests");
       characterView.classList.toggle("hidden", view !== "character");
       settingsView.classList.toggle("hidden", view !== "settings");
+      if (view === "quests") loadAll();
       if (view === "character") loadCharacterView();
       if (view === "quest-giver") renderQuestGiver();
       if (view === "settings") loadSettings();
