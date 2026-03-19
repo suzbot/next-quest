@@ -1,52 +1,53 @@
-# Step Spec: Phase 2F-1 — Time-of-Day Windows
+# Step Spec: Phase 2F-2 — Day-of-Week Affinity
 
 ## Goal
 
-Quests gain a time-of-day preference. The quest giver doesn't use it yet (that's 2F-4), but the data is stored, editable, and displayed.
+Quests gain a day-of-week preference stored as a bitmask. The quest giver doesn't filter by it yet (that's 2F-4), but the data is stored, editable, and displayed.
 
 ---
 
 ## Substep 1: Backend — migration, struct, CRUD
 
 **Migration** (`db.rs` → `migrate()`):
-- Add column `time_of_day TEXT NOT NULL DEFAULT 'anytime'` to `quest` table.
-- Detection pattern: `SELECT time_of_day FROM quest LIMIT 0` (same as existing migrations).
+- Add column `days_of_week INTEGER NOT NULL DEFAULT 127` to `quest` table.
+- 127 = all bits set = every day. Detection: `SELECT days_of_week FROM quest LIMIT 0`.
+
+**Bitmask encoding:**
+- Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64
 
 **Quest struct** (`db.rs`):
-- Add `time_of_day: String` to `Quest` struct.
+- Add `days_of_week: i32` to `Quest` struct.
 
-**`get_quests`**:
-- Add `q.time_of_day` to the SELECT. Map to the struct field.
+**`get_quests`** / **`query_single_quest`**:
+- Add `q.days_of_week` to SELECT, map to struct field.
 
 **`add_quest`**:
-- New parameter: `time_of_day: String`. Defaults handled by the frontend (passes `"anytime"` if unset).
+- New parameter: `days_of_week: i32`. Frontend passes 127 by default.
 - Include in INSERT.
 
 **`update_quest`**:
-- New optional parameter: `time_of_day: Option<String>`.
+- New optional parameter: `days_of_week: Option<i32>`.
 - When `Some`, UPDATE the column.
 
-**`local_hour()`** — new helper function:
-- Uses existing `libc::localtime_r` pattern (same as `unix_to_local_days`).
-- Returns `u32` (0–23) for the current local hour.
+**`local_weekday()`** — new helper:
+- Uses `libc::localtime_r` (same pattern as `local_hour`).
+- `tm_wday` returns 0=Sun. Map to: Mon=0, Tue=1, ..., Sun=6.
+- Returns `u32`.
 
-**`matches_time_of_day(window: &str, hour: u32) -> bool`** — new public function:
-- `"anytime"` → `true`
-- `"morning"` → `hour >= 4 && hour < 12`
-- `"afternoon"` → `hour >= 12 && hour < 17`
-- `"evening"` → `hour >= 17 || hour < 4`
-- Anything else → `true` (defensive default)
+**`matches_day_of_week(mask: i32, weekday: u32) -> bool`** — new public function:
+- `let bit = 1 << weekday;`
+- `mask & bit != 0`
+- mask=127 always true.
 
 **commands.rs**:
-- `add_quest`: add `time_of_day: String` parameter, pass through.
-- `update_quest`: add `time_of_day: Option<String>` parameter, pass through.
+- `add_quest`: add `days_of_week: Option<i32>` parameter, default to 127.
+- `update_quest`: add `days_of_week: Option<i32>` parameter, pass through.
 
 **Tests:**
-- `matches_time_of_day` — all four windows at boundary hours: 3, 4, 11, 12, 16, 17, 23, 0.
-- `add_quest` with `time_of_day` set to `"morning"` — verify persisted and returned.
-- `update_quest` changing `time_of_day` from default to `"evening"` — verify updated.
-- `get_quests` returns `time_of_day` field.
-- Existing tests updated to pass the new `time_of_day` parameter (use `"anytime"`).
+- `matches_day_of_week` — all 7 days against single-day masks, 127 (every day), 31 (weekdays), 96 (weekends).
+- `add_quest` with specific `days_of_week` — verify persisted and returned.
+- `update_quest` changing `days_of_week` — verify updated.
+- Existing tests updated to pass the new parameter (use `127`).
 
 **Testing checkpoint:** `cargo test` — all existing + new tests pass.
 
@@ -55,38 +56,28 @@ Quests gain a time-of-day preference. The quest giver doesn't use it yet (that's
 ## Substep 2: Frontend — add form, edit form, display
 
 **Add form** (`index.html`):
-- New dropdown after the difficulty select:
-  ```html
-  <select id="quest-time-of-day">
-    <option value="anytime" selected>Anytime</option>
-    <option value="morning">Morning</option>
-    <option value="afternoon">Afternoon</option>
-    <option value="evening">Evening</option>
-  </select>
-  ```
-- `addForm` submit handler reads the value, passes to `invoke("add_quest", { ... timeOfDay })`.
+- Seven small toggle buttons in a row after the time-of-day dropdown: `M Tu W Th F Sa Su`.
+- All on by default (filled). Clicking toggles individual bits.
+- Hidden state tracked in a JS variable, combined into bitmask on submit.
 
 **Edit form** (`renderEditMode`):
-- New dropdown `id="edit-time-of-day"` with the same four options, pre-selecting the quest's current value.
-- `saveEdit` reads the value, passes to `invoke("update_quest", { ... timeOfDay })`.
+- Same seven toggles, pre-set from `q.days_of_week` bitmask.
+- `saveEdit` reads the bitmask, passes to `invoke("update_quest", { ... daysOfWeek })`.
 
-**Expanded detail row** (`renderQuestItem`):
-- If `time_of_day` is not `"anytime"`, append it to the detail line (e.g., "Morning" alongside skill/attribute links).
-- Capitalize for display: `morning` → `Morning`.
-- If no links and time is anytime, no detail row (existing behavior — `hasDetail` stays false).
+**Quest list display:**
+- Detail row shows active days when not every day (127). Format: abbreviated day labels with inactive days omitted, e.g., "M W F" or "Sa Su".
 
-**Testing checkpoint:** Build app. Add a quest with "Morning" — see it in the expanded detail. Edit an existing quest to "Evening" — detail updates. Add a quest with "Anytime" — no time shown in detail.
+**Testing checkpoint:** Build app. Add a quest with only weekdays — see "M Tu W Th F" in detail. Edit to weekends only — detail updates. Set all days — no days shown in detail.
 
 ---
 
 ## NOT in this step
 
-- Day-of-week affinity (2F-2)
-- Quest giver filtering by time-of-day (2F-4)
+- Quest giver filtering by day-of-week (2F-4)
 - Quest list filter bar (2F-3)
 - Scoring system (2F-4)
 - Skip tracking (2F-5)
 
 ## Done When
 
-Both substeps complete. Quests can be created and edited with a time-of-day window. The value is stored, returned by the API, and visible in the quest list detail row. `cargo test` passes.
+Both substeps complete. Quests can be created and edited with day-of-week affinity. The bitmask is stored, returned by the API, and visible in the quest list. `cargo test` passes.

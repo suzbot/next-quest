@@ -164,10 +164,53 @@
       text-align: right;
     }
 
+    .meta-dow {
+      display: inline-block;
+      text-align: right;
+    }
+
     .quest-detail {
       font-size: 10px;
       color: #555;
       padding: 3px 0 2px 20px;
+    }
+
+    .dow-dropdown {
+      position: relative;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .dow-dropdown .dow-trigger {
+      cursor: pointer;
+      font-size: inherit;
+      padding: 2px 4px;
+      min-width: 55px;
+      text-align: left;
+    }
+    .dow-dropdown .dow-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      z-index: 10;
+      background: #222;
+      border: 2px outset #888;
+      padding: 4px;
+      white-space: nowrap;
+    }
+    .dow-dropdown.open .dow-menu {
+      display: block;
+    }
+    .dow-dropdown .dow-menu label {
+      display: block;
+      cursor: pointer;
+      padding: 1px 4px;
+      font-size: 11px;
+      color: #b4b4b4;
+    }
+    .dow-dropdown .dow-menu label:hover,
+    .dow-dropdown .dow-menu label:focus-within {
+      background: #444;
     }
 
     .action-btn {
@@ -628,6 +671,7 @@
       <option value="afternoon">Afternoon</option>
       <option value="evening">Evening</option>
     </select>
+    <span id="add-dow" class="dow-dropdown"></span>
     <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
     <button type="submit">Add</button>
   </form>
@@ -685,7 +729,81 @@
     const cycleLabel = document.getElementById("cycle-label");
     const difficultySelect = document.getElementById("quest-difficulty");
     const timeOfDaySelect = document.getElementById("quest-time-of-day");
+    const addDowContainer = document.getElementById("add-dow");
     const addLinksRow = document.getElementById("add-links-row");
+
+    const DOW_LABELS = ["M", "Tu", "W", "Th", "F", "Sa", "Su"];
+    const DOW_FULL = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    function dowSummary(mask) {
+      if (mask === 127 || mask === 0) return "Days ▾";
+      const days = DOW_LABELS.filter((_, i) => mask & (1 << i));
+      return days.join(" ") + " ▾";
+    }
+
+    function dowText(mask) {
+      if (mask === 127 || mask === 0) return "";
+      return DOW_LABELS.filter((_, i) => mask & (1 << i)).join(" ");
+    }
+
+    function renderDowDropdown(container, mask) {
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "dow-trigger";
+      trigger.textContent = dowSummary(mask);
+
+      const menu = document.createElement("div");
+      menu.className = "dow-menu";
+
+      DOW_FULL.forEach((label, i) => {
+        const lbl = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!(mask & (1 << i));
+        cb.onchange = () => {
+          trigger.textContent = dowSummary(readDowMask(container));
+        };
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(" " + label));
+        menu.appendChild(lbl);
+      });
+
+      trigger.onclick = (e) => {
+        e.stopPropagation();
+        container.classList.toggle("open");
+        if (container.classList.contains("open")) {
+          const first = menu.querySelector("input");
+          if (first) first.focus();
+        }
+      };
+
+      menu.onkeydown = (e) => {
+        if (e.key === "Escape") {
+          container.classList.remove("open");
+          trigger.focus();
+        }
+      };
+
+      container.innerHTML = "";
+      container.appendChild(trigger);
+      container.appendChild(menu);
+    }
+
+    function readDowMask(container) {
+      let mask = 0;
+      container.querySelectorAll("input[type=checkbox]").forEach((cb, i) => {
+        if (cb.checked) mask |= (1 << i);
+      });
+      return mask;
+    }
+
+    document.addEventListener("click", (e) => {
+      document.querySelectorAll(".dow-dropdown.open").forEach(dd => {
+        if (!dd.contains(e.target)) dd.classList.remove("open");
+      });
+    });
+
+    renderDowDropdown(addDowContainer, 127);
 
     // Difficulty color maps (text variants for WCAG AA on #b4b4b4)
     const diffTextColors = {
@@ -892,6 +1010,11 @@
       if (editingId) {
         const el = document.getElementById("edit-title");
         if (el) el.focus();
+        const editDow = document.getElementById("edit-dow");
+        const editQuest = quests.find(q => q.id === editingId);
+        if (editDow && editQuest) {
+          renderDowDropdown(editDow, editQuest.days_of_week ?? 127);
+        }
       }
     }
 
@@ -929,6 +1052,7 @@
       const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
 
       const links = linkNamesText(q);
+      const dowLabel = dowText(q.days_of_week ?? 127);
       const hasDetail = !!links;
 
       const diffColor = q.is_due ? (diffTextColors[q.difficulty] || '#555') : '#777';
@@ -948,6 +1072,7 @@
           <span class="expand-toggle" onclick="toggleDetail(this)">${hasDetail ? '▸' : ''}</span>
           <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
           <span class="quest-meta">
+            ${dowLabel ? `<span class="meta-dow">${dowLabel}</span>` : ''}
             ${todText ? `<span class="meta-tod">${todText}</span>` : ''}
             <span class="meta-cycle">${cycleText}</span>
             <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
@@ -990,6 +1115,7 @@
           <option value="afternoon" ${tod === "afternoon" ? "selected" : ""}>Afternoon</option>
           <option value="evening" ${tod === "evening" ? "selected" : ""}>Evening</option>
         </select>
+        <span id="edit-dow" class="dow-dropdown"></span>
         <button onclick="saveEdit('${q.id}')">Save</button>
         <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">Del</button>
         <span class="close-x" onclick="cancelEdit()">✕</span>
@@ -1076,7 +1202,9 @@
       const questType = document.getElementById("edit-type").value;
       const difficulty = document.getElementById("edit-difficulty").value;
       const timeOfDay = document.getElementById("edit-time-of-day").value;
-      const params = { questId: id, title, questType, difficulty, timeOfDay };
+      const editDow = document.getElementById("edit-dow");
+      const daysOfWeek = editDow ? readDowMask(editDow) : 127;
+      const params = { questId: id, title, questType, difficulty, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
         params.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
@@ -1265,7 +1393,8 @@
       const questType = typeSelect.value;
       const difficulty = difficultySelect.value;
       const timeOfDay = timeOfDaySelect.value;
-      const params = { title, questType, difficulty, timeOfDay };
+      const daysOfWeek = readDowMask(addDowContainer);
+      const params = { title, questType, difficulty, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
         params.cycleDays = parseInt(cycleInput.value, 10) || 1;
@@ -1280,6 +1409,7 @@
 
       titleInput.value = "";
       timeOfDaySelect.value = "anytime";
+      renderDowDropdown(addDowContainer, 127);
       addLinksRow.classList.add("hidden");
       renderAddLinkTags();
       titleInput.focus();
