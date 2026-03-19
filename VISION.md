@@ -208,26 +208,36 @@ Code quality pass before adding more features:
 
 ## Phase 2G: "Advanced Logic"
 
-Second logic pass after living with 2F:
+2G.1 - Sagas:
 
-1. **Edit last-done date** — correct mistakes in completion history
+1. **Sagas** — multi-step goals with ordered sub-quests, surfaced one step at a time
+   a. Need to brainstorm ideas for how this would work. I'm thinking a new saga tab. Then, one item at a time out of each saga gets pulled in the quest pool.
+   b. Sagas can be recurring at the umbrella level (number of cycle days after last task completion before first task starts up)
+   c. Substeps can have their own attributes, skills, DOW, TOD, difficulty.
+   d. Other ideas? bonus xp for finishing a saga beyond that from its steps?
+
+2G.2 Second logic pass after living with 2F:
+
 2. **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
 3. **Attribute/skill balancing** — favor quests linked to underleveled attributes for variety
 4. **Difficulty ramping** — start day with easier quests, suggest harder ones after momentum builds
-5. **Sagas** — multi-step goals with ordered sub-quests, surfaced one step at a time
+
+2G.3 Clean up abilities and general UI improvements
+
+1. **Edit last-done date** — correct mistakes in completion history
+2. Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
+3. Evaluate: adding quest timer to overlay instead of going into full app?
+4. Evaluate: having quest giver view always at the top and tabs expand bottom detail?
+5. Try again with the reseqencing of attributes and skills (don't screw it up this time)
 
 ## Phase 2H: "Rewards"
 
 - Receive coin and items from questing
 - Badges, Rewards
 - Buy stuff with gold
-- Evaluate: adding quest timer to overlay instead of going into full app?
-- Evaluate: having quest giver view always at the top and tabs expand bottom detail?
 
 ## Phase 3: "The Full Party"
 
-- Category tags and context filtering — freeform tags (Home, Computer, Errands) for filtering quests by current context
-- Auto-assign colors from palette for custom attributes (user-picks or rotation strategy)
 - Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
 - Seed data guard rework (seed_data() skips if character exists, needs rethinking)
 - SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
