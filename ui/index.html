@@ -687,12 +687,7 @@
       <option value="challenging">Hard</option>
       <option value="epic">Epic</option>
     </select>
-    <select id="quest-time-of-day">
-      <option value="anytime" selected>Anytime</option>
-      <option value="morning">Morning</option>
-      <option value="afternoon">Afternoon</option>
-      <option value="evening">Evening</option>
-    </select>
+    <span id="add-tod" class="dow-dropdown"></span>
     <span id="add-dow" class="dow-dropdown"></span>
     <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
     <button type="submit">Add</button>
@@ -705,9 +700,9 @@
     <select id="filter-skill" onchange="applyFilters()"></select>
     <select id="filter-tod" onchange="applyFilters()">
       <option value="">All Times</option>
-      <option value="morning">Morning</option>
-      <option value="afternoon">Afternoon</option>
-      <option value="evening">Evening</option>
+      <option value="1">Morning</option>
+      <option value="2">Afternoon</option>
+      <option value="4">Evening</option>
     </select>
     <select id="filter-dow" onchange="applyFilters()">
       <option value="">All Days</option>
@@ -773,9 +768,23 @@
     const cycleInput = document.getElementById("quest-cycle");
     const cycleLabel = document.getElementById("cycle-label");
     const difficultySelect = document.getElementById("quest-difficulty");
-    const timeOfDaySelect = document.getElementById("quest-time-of-day");
+    const addTodContainer = document.getElementById("add-tod");
     const addDowContainer = document.getElementById("add-dow");
     const addLinksRow = document.getElementById("add-links-row");
+
+    const TOD_LABELS = ["AM", "PM", "NT"];
+    const TOD_FULL = ["Morning", "Afternoon", "Evening"];
+
+    function todSummary(mask) {
+      if (mask === 7 || mask === 0) return "Time ▾";
+      const times = TOD_LABELS.filter((_, i) => mask & (1 << i));
+      return times.join(" ") + " ▾";
+    }
+
+    function todText(mask) {
+      if (mask === 7 || mask === 0) return "";
+      return TOD_LABELS.filter((_, i) => mask & (1 << i)).join(" ");
+    }
 
     const DOW_LABELS = ["M", "Tu", "W", "Th", "F", "Sa", "Su"];
     const DOW_FULL = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -791,22 +800,22 @@
       return DOW_LABELS.filter((_, i) => mask & (1 << i)).join(" ");
     }
 
-    function renderDowDropdown(container, mask) {
+    function renderCheckDropdown(container, mask, labels, summaryFn) {
       const trigger = document.createElement("button");
       trigger.type = "button";
       trigger.className = "dow-trigger";
-      trigger.textContent = dowSummary(mask);
+      trigger.textContent = summaryFn(mask);
 
       const menu = document.createElement("div");
       menu.className = "dow-menu";
 
-      DOW_FULL.forEach((label, i) => {
+      labels.forEach((label, i) => {
         const lbl = document.createElement("label");
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = !!(mask & (1 << i));
         cb.onchange = () => {
-          trigger.textContent = dowSummary(readDowMask(container));
+          trigger.textContent = summaryFn(readMask(container));
         };
         lbl.appendChild(cb);
         lbl.appendChild(document.createTextNode(" " + label));
@@ -834,7 +843,7 @@
       container.appendChild(menu);
     }
 
-    function readDowMask(container) {
+    function readMask(container) {
       let mask = 0;
       container.querySelectorAll("input[type=checkbox]").forEach((cb, i) => {
         if (cb.checked) mask |= (1 << i);
@@ -848,7 +857,8 @@
       });
     });
 
-    renderDowDropdown(addDowContainer, 127);
+    renderCheckDropdown(addTodContainer, 7, TOD_FULL, todSummary);
+    renderCheckDropdown(addDowContainer, 127, DOW_FULL, dowSummary);
 
     // Difficulty color maps (text variants for WCAG AA on #b4b4b4)
     const diffTextColors = {
@@ -995,7 +1005,11 @@
     function passesFilters(q) {
       if (filterAttr.value && !(q.attribute_ids || []).includes(filterAttr.value)) return false;
       if (filterSkill.value && !(q.skill_ids || []).includes(filterSkill.value)) return false;
-      if (filterTod.value && q.time_of_day !== filterTod.value && q.time_of_day !== "anytime") return false;
+      if (filterTod.value) {
+        const bit = parseInt(filterTod.value, 10);
+        const mask = q.time_of_day ?? 7;
+        if (mask !== 7 && mask !== 0 && !(mask & bit)) return false;
+      }
       if (filterDow.value !== "") {
         const day = parseInt(filterDow.value, 10);
         const mask = q.days_of_week ?? 127;
@@ -1104,10 +1118,12 @@
       if (editingId) {
         const el = document.getElementById("edit-title");
         if (el) el.focus();
-        const editDow = document.getElementById("edit-dow");
         const editQuest = quests.find(q => q.id === editingId);
-        if (editDow && editQuest) {
-          renderDowDropdown(editDow, editQuest.days_of_week ?? 127);
+        if (editQuest) {
+          const editTod = document.getElementById("edit-tod");
+          if (editTod) renderCheckDropdown(editTod, editQuest.time_of_day ?? 7, TOD_FULL, todSummary);
+          const editDow = document.getElementById("edit-dow");
+          if (editDow) renderCheckDropdown(editDow, editQuest.days_of_week ?? 127, DOW_FULL, dowSummary);
         }
       }
     }
@@ -1131,8 +1147,7 @@
         ? `↻ ${q.cycle_days}d`
         : "One-off";
 
-      const todAbbr = { morning: "AM", afternoon: "PM", evening: "NT" };
-      const todText = todAbbr[q.time_of_day] || "";
+      const todDisplay = todText(q.time_of_day ?? 7);
 
       let stateClass;
       if (!q.active) {
@@ -1167,7 +1182,7 @@
           <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
           <span class="quest-meta">
             ${dowLabel ? `<span class="meta-dow">${dowLabel}</span>` : ''}
-            ${todText ? `<span class="meta-tod">${todText}</span>` : ''}
+            ${todDisplay ? `<span class="meta-tod">${todDisplay}</span>` : ''}
             <span class="meta-cycle">${cycleText}</span>
             <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
           </span>
@@ -1183,7 +1198,6 @@
       const isRecurring = q.quest_type === "recurring";
       const cycleVal = q.cycle_days || 1;
       const diff = q.difficulty;
-      const tod = q.time_of_day || "anytime";
       return `<li class="quest-edit" data-id="${q.id}">
         <input type="text" id="edit-title" value="${escapeAttr(q.title)}"
                onkeydown="handleEditKey(event, '${q.id}')">
@@ -1203,12 +1217,7 @@
           <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Hard</option>
           <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
         </select>
-        <select id="edit-time-of-day" onkeydown="handleEditKey(event, '${q.id}')">
-          <option value="anytime" ${tod === "anytime" ? "selected" : ""}>Anytime</option>
-          <option value="morning" ${tod === "morning" ? "selected" : ""}>Morning</option>
-          <option value="afternoon" ${tod === "afternoon" ? "selected" : ""}>Afternoon</option>
-          <option value="evening" ${tod === "evening" ? "selected" : ""}>Evening</option>
-        </select>
+        <span id="edit-tod" class="dow-dropdown"></span>
         <span id="edit-dow" class="dow-dropdown"></span>
         <button onclick="saveEdit('${q.id}')">Save</button>
         <button class="del-btn" onclick="deleteQuest('${q.id}', '${escapeAttr(q.title)}')">Del</button>
@@ -1295,9 +1304,10 @@
 
       const questType = document.getElementById("edit-type").value;
       const difficulty = document.getElementById("edit-difficulty").value;
-      const timeOfDay = document.getElementById("edit-time-of-day").value;
+      const editTod = document.getElementById("edit-tod");
+      const timeOfDay = editTod ? readMask(editTod) : 7;
       const editDow = document.getElementById("edit-dow");
-      const daysOfWeek = editDow ? readDowMask(editDow) : 127;
+      const daysOfWeek = editDow ? readMask(editDow) : 127;
       const params = { questId: id, title, questType, difficulty, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
@@ -1486,8 +1496,8 @@
 
       const questType = typeSelect.value;
       const difficulty = difficultySelect.value;
-      const timeOfDay = timeOfDaySelect.value;
-      const daysOfWeek = readDowMask(addDowContainer);
+      const timeOfDay = readMask(addTodContainer);
+      const daysOfWeek = readMask(addDowContainer);
       const params = { title, questType, difficulty, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
@@ -1502,8 +1512,8 @@
       }
 
       titleInput.value = "";
-      timeOfDaySelect.value = "anytime";
-      renderDowDropdown(addDowContainer, 127);
+      renderCheckDropdown(addTodContainer, 7, TOD_FULL, todSummary);
+      renderCheckDropdown(addDowContainer, 127, DOW_FULL, dowSummary);
       addLinksRow.classList.add("hidden");
       renderAddLinkTags();
       titleInput.focus();

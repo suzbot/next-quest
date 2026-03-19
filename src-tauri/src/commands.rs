@@ -75,11 +75,11 @@ pub fn add_quest(
     quest_type: db::QuestType,
     cycle_days: Option<i32>,
     difficulty: db::Difficulty,
-    time_of_day: Option<String>,
+    time_of_day: Option<i32>,
     days_of_week: Option<i32>,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let tod = time_of_day.unwrap_or_else(|| "anytime".to_string());
+    let tod = time_of_day.unwrap_or(7);
     let dow = days_of_week.unwrap_or(127);
     db::add_quest(&conn, title, quest_type, cycle_days, difficulty, tod, dow)
 }
@@ -101,7 +101,7 @@ pub fn update_quest(
     quest_type: Option<db::QuestType>,
     cycle_days: Option<i32>,
     difficulty: Option<db::Difficulty>,
-    time_of_day: Option<String>,
+    time_of_day: Option<i32>,
     days_of_week: Option<i32>,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
