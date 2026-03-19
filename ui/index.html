@@ -310,6 +310,26 @@
 
     #add-links-row { margin-bottom: 12px; }
 
+    #filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      margin-bottom: 4px;
+      font-size: 10px;
+    }
+    #filter-bar select {
+      font-size: 10px;
+    }
+    #filter-bar label {
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    #filter-bar button {
+      font-size: 10px;
+      padding: 1px 6px;
+    }
+
     .quest-links { font-size: 10px; color: #666; width: 180px; text-align: right; overflow-wrap: break-word; flex-shrink: 0; }
     .quest-edit-links { padding: 2px 8px 6px 8px; border-bottom: 1px solid #999; }
 
@@ -591,10 +611,12 @@
       padding: 3px 8px;
     }
 
-    .meter-label { width: 130px; font-size: 11px; }
+    .meter-label { width: 110px; font-size: 11px; flex-shrink: 0; }
+
+    .meter-level { width: 38px; font-size: 10px; flex-shrink: 0; text-align: right; }
 
     .meter-bar-bg {
-      width: 200px;
+      width: 150px;
       flex-shrink: 0;
       height: 10px;
       background: #fff;
@@ -604,10 +626,10 @@
     .meter-bar-fill { height: 100%; }
 
     .meter-text {
-      width: 130px;
       font-size: 10px;
       color: #555;
-      text-align: right;
+      flex-shrink: 0;
+      white-space: nowrap;
     }
 
     .meter-row:focus { outline: 1px solid #444; outline-offset: -1px; }
@@ -677,6 +699,29 @@
   </form>
 
   <div id="add-links-row" class="hidden"></div>
+
+  <div id="filter-bar">
+    <select id="filter-attr" onchange="applyFilters()"></select>
+    <select id="filter-skill" onchange="applyFilters()"></select>
+    <select id="filter-tod" onchange="applyFilters()">
+      <option value="">All Times</option>
+      <option value="morning">Morning</option>
+      <option value="afternoon">Afternoon</option>
+      <option value="evening">Evening</option>
+    </select>
+    <select id="filter-dow" onchange="applyFilters()">
+      <option value="">All Days</option>
+      <option value="0">Mon</option>
+      <option value="1">Tue</option>
+      <option value="2">Wed</option>
+      <option value="3">Thu</option>
+      <option value="4">Fri</option>
+      <option value="5">Sat</option>
+      <option value="6">Sun</option>
+    </select>
+    <label id="filter-due-label"><input type="checkbox" id="filter-due" onchange="applyFilters()"> Due</label>
+    <button type="button" onclick="clearFilters()">Clear</button>
+  </div>
 
   <ul id="quest-list"></ul>
   </div>
@@ -916,6 +961,50 @@
     let timerTitleLocal = null;   // cached quest title for display
     let timerInterval = null;     // setInterval handle
 
+    // Filter state
+    const filterAttr = document.getElementById("filter-attr");
+    const filterSkill = document.getElementById("filter-skill");
+    const filterTod = document.getElementById("filter-tod");
+    const filterDow = document.getElementById("filter-dow");
+    const filterDue = document.getElementById("filter-due");
+
+    function populateFilterDropdowns() {
+      const attrVal = filterAttr.value;
+      const skillVal = filterSkill.value;
+      filterAttr.innerHTML = '<option value="">All Attributes</option>' +
+        cachedAttributes.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
+      filterSkill.innerHTML = '<option value="">All Skills</option>' +
+        cachedSkills.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
+      filterAttr.value = attrVal;
+      filterSkill.value = skillVal;
+    }
+
+    function applyFilters() {
+      renderQuests(cachedQuests);
+    }
+
+    function clearFilters() {
+      filterAttr.value = "";
+      filterSkill.value = "";
+      filterTod.value = "";
+      filterDow.value = "";
+      filterDue.checked = false;
+      applyFilters();
+    }
+
+    function passesFilters(q) {
+      if (filterAttr.value && !(q.attribute_ids || []).includes(filterAttr.value)) return false;
+      if (filterSkill.value && !(q.skill_ids || []).includes(filterSkill.value)) return false;
+      if (filterTod.value && q.time_of_day !== filterTod.value && q.time_of_day !== "anytime") return false;
+      if (filterDow.value !== "") {
+        const day = parseInt(filterDow.value, 10);
+        const mask = q.days_of_week ?? 127;
+        if (!(mask & (1 << day))) return false;
+      }
+      if (filterDue.checked && !q.is_due) return false;
+      return true;
+    }
+
     function toggleCycleInput() {
       cycleLabel.classList.toggle("hidden", typeSelect.value === "one_off");
     }
@@ -987,6 +1076,7 @@
         attrIndexById = {};
         cachedAttributes.forEach((a, i) => { attrIndexById[a.id] = i; });
         renderAddLinkTags();
+        populateFilterDropdowns();
       }
       renderQuests(results[0]);
       renderCompletions(results[1]);
@@ -998,12 +1088,16 @@
     function renderQuests(quests) {
       cachedQuests = quests;
 
-      if (quests.length === 0) {
-        questList.innerHTML = '<li class="empty-state">No quests yet. Add one above.</li>';
+      const filtered = quests.filter(passesFilters);
+
+      if (filtered.length === 0) {
+        questList.innerHTML = quests.length === 0
+          ? '<li class="empty-state">No quests yet. Add one above.</li>'
+          : '<li class="empty-state">No quests match filters.</li>';
         return;
       }
 
-      questList.innerHTML = quests
+      questList.innerHTML = filtered
         .map(q => editingId === q.id ? renderEditMode(q) : renderQuestRow(q))
         .join("");
 
@@ -1714,6 +1808,7 @@
       cachedSkills = skills;
       attrIndexById = {};
       cachedAttributes.forEach((a, i) => { attrIndexById[a.id] = i; });
+      populateFilterDropdowns();
       renderCharacterView(character, attributes, skills);
     }
 
@@ -1740,9 +1835,10 @@
 
       const charMeter = `
         <div class="meter-row">
-          <span class="meter-label">Character XP</span>
+          <span class="meter-label">Character</span>
+          <span class="meter-level">Lvl ${character.level}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${meterPercent(character.xp_into_current_level, character.xp_for_current_level)}%; background: ${charColor};"></div></div>
-          <span class="meter-text">Lv ${character.level} (${character.xp_into_current_level}/${character.xp_for_current_level} XP)</span>
+          <span class="meter-text">(${character.xp_into_current_level}/${character.xp_for_current_level})</span>
         </div>`;
 
       const attrRows = attributes.map((a, i) => {
@@ -1760,8 +1856,9 @@
         return `<div class="meter-row" tabindex="0" data-type="attr" data-id="${a.id}"
                      onkeydown="handleMeterRowKey(event, 'attr', '${a.id}')">
           <span class="meter-label meter-label-clickable" onclick="startAttrEdit('${a.id}')">${escapeHtml(a.name)}</span>
+          <span class="meter-level">Lvl ${a.level}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
-          <span class="meter-text">Lv ${a.level} (${a.xp_into_current_level}/${a.xp_for_current_level} XP)</span>
+          <span class="meter-text">(${a.xp_into_current_level}/${a.xp_for_current_level})</span>
         </div>`;
       }).join("");
 
@@ -1802,8 +1899,9 @@
         return `<div class="meter-row" tabindex="0" data-type="skill" data-id="${s.id}"
                      onkeydown="handleMeterRowKey(event, 'skill', '${s.id}')">
           <span class="meter-label meter-label-clickable" onclick="startSkillEdit('${s.id}')">${escapeHtml(s.name)}</span>
+          <span class="meter-level">Lvl ${s.level}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
-          <span class="meter-text">Lv ${s.level} (${s.xp_into_current_level}/${s.xp_for_current_level} XP)</span>
+          <span class="meter-text">(${s.xp_into_current_level}/${s.xp_for_current_level})</span>
           <span class="char-row-attr">${escapeHtml(attrMap[s.attribute_id] || "")}</span>
         </div>`;
       }).join("");
