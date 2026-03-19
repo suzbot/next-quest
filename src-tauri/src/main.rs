@@ -23,7 +23,7 @@ fn main() {
     let conn = db::init_db(&db_path);
 
     // Load persisted settings
-    let (cta_enabled, cta_interval_minutes) = db::get_settings_db(&conn).unwrap_or((false, 20));
+    let (cta_enabled, cta_interval_minutes, _debug_scoring) = db::get_settings_db(&conn).unwrap_or((false, 20, false));
     let mut tray_state = TrayStateInner::new();
     tray_state.call_to_adventure = cta_enabled;
     tray_state.cta_interval_secs = cta_interval_minutes * 60;
@@ -80,6 +80,7 @@ fn main() {
             commands::get_settings,
             commands::set_cta_interval,
             commands::toggle_call_to_adventure,
+            commands::set_debug_scoring,
             commands::dismiss_overlay,
             commands::add_attribute,
             commands::add_skill,

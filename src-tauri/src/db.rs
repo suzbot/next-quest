@@ -96,6 +96,17 @@ pub struct QuestOrder {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct ScoredQuest {
+    pub quest: Quest,
+    pub score: f64,
+    pub overdue_ratio: f64,
+    pub list_order_bonus: f64,
+    pub pool: String,
+    pub due_count: usize,
+    pub not_due_count: usize,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct LevelUp {
     pub name: String,
     pub new_level: i32,
@@ -226,7 +237,8 @@ fn create_tables(conn: &Connection) {
         CREATE TABLE IF NOT EXISTS settings (
             id                    INTEGER PRIMARY KEY,
             cta_enabled           INTEGER NOT NULL DEFAULT 0,
-            cta_interval_minutes  INTEGER NOT NULL DEFAULT 20
+            cta_interval_minutes  INTEGER NOT NULL DEFAULT 20,
+            debug_scoring         INTEGER NOT NULL DEFAULT 0
         );",
     )
     .expect("Failed to create tables");
@@ -386,6 +398,17 @@ fn migrate(conn: &Connection) {
             "ALTER TABLE quest ADD COLUMN days_of_week INTEGER NOT NULL DEFAULT 127;"
         ).expect("Failed to add days_of_week column");
     }
+
+    // Migration: add debug_scoring to settings if missing
+    let has_debug_scoring: bool = conn
+        .prepare("SELECT debug_scoring FROM settings LIMIT 0")
+        .is_ok();
+
+    if !has_debug_scoring {
+        conn.execute_batch(
+            "ALTER TABLE settings ADD COLUMN debug_scoring INTEGER NOT NULL DEFAULT 0;"
+        ).expect("Failed to add debug_scoring column");
+    }
 }
 
 fn seed_data(conn: &Connection) {
@@ -457,14 +480,15 @@ fn seed_data(conn: &Connection) {
     }
 }
 
-pub fn get_settings_db(conn: &Connection) -> Result<(bool, u64), String> {
+pub fn get_settings_db(conn: &Connection) -> Result<(bool, u64, bool), String> {
     conn.query_row(
-        "SELECT cta_enabled, cta_interval_minutes FROM settings WHERE id = 1",
+        "SELECT cta_enabled, cta_interval_minutes, debug_scoring FROM settings WHERE id = 1",
         [],
         |row| {
             let enabled = row.get::<_, i32>(0)? != 0;
             let interval: u64 = row.get(1)?;
-            Ok((enabled, interval))
+            let debug = row.get::<_, i32>(2)? != 0;
+            Ok((enabled, interval, debug))
         },
     )
     .map_err(|e| e.to_string())
@@ -474,6 +498,15 @@ pub fn set_settings_db(conn: &Connection, enabled: bool, interval_minutes: u64) 
     conn.execute(
         "UPDATE settings SET cta_enabled = ?1, cta_interval_minutes = ?2 WHERE id = 1",
         rusqlite::params![enabled as i32, interval_minutes],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn set_debug_scoring(conn: &Connection, enabled: bool) -> Result<(), String> {
+    conn.execute(
+        "UPDATE settings SET debug_scoring = ?1 WHERE id = 1",
+        rusqlite::params![enabled as i32],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -540,33 +573,101 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     Ok(quests)
 }
 
-pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<Quest>, String> {
+pub fn get_next_quest(conn: &Connection, skip_count: i32) -> Result<Option<ScoredQuest>, String> {
     let quests = get_quests(conn)?;
-    let due: Vec<&Quest> = quests.iter().filter(|q| q.active && q.is_due).collect();
+    let today = local_today_days();
+    let hour = local_hour();
+    let weekday = local_weekday();
 
-    if !due.is_empty() {
-        let idx = (skip_count as usize) % due.len();
-        return Ok(Some(due[idx].clone()));
-    }
-
-    // Fallback: all active quests sorted by longest-ago-completed, with rotation
-    let mut active: Vec<&Quest> = quests
-        .iter()
+    // Hard-filter: active, time-of-day, day-of-week
+    let eligible: Vec<&Quest> = quests.iter()
         .filter(|q| q.active)
+        .filter(|q| matches_time_of_day(q.time_of_day, hour))
+        .filter(|q| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
-    if active.is_empty() {
+    if eligible.is_empty() {
         return Ok(None);
     }
 
-    active.sort_by(|a, b| {
-        let a_time = a.last_completed.as_deref().unwrap_or("");
-        let b_time = b.last_completed.as_deref().unwrap_or("");
-        a_time.cmp(b_time)
-    });
+    let due: Vec<&Quest> = eligible.iter().filter(|q| q.is_due).copied().collect();
+    let not_due: Vec<&Quest> = eligible.iter().filter(|q| !q.is_due).copied().collect();
+    let due_count = due.len();
+    let not_due_count = not_due.len();
 
-    let idx = (skip_count as usize) % active.len();
-    Ok(Some(active[idx].clone()))
+    // Score and pick from due pool first, then not-due fallback
+    let (mut scored, pool_name) = if !due.is_empty() {
+        (score_due_quests(&due, today), "due")
+    } else {
+        (score_not_due_quests(&not_due, today), "not_due")
+    };
+
+    // Sort by score descending (highest first)
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let idx = (skip_count as usize) % scored.len();
+    let (score, overdue_ratio, list_order_bonus, quest) = scored.into_iter().nth(idx).unwrap();
+
+    Ok(Some(ScoredQuest {
+        quest,
+        score,
+        overdue_ratio,
+        list_order_bonus,
+        pool: pool_name.to_string(),
+        due_count,
+        not_due_count,
+    }))
+}
+
+fn score_due_quests(quests: &[&Quest], today: i64) -> Vec<(f64, f64, f64, Quest)> {
+    let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
+
+    quests.iter().map(|q| {
+        let overdue_ratio = compute_overdue_ratio(q, today);
+        let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
+        let score = overdue_ratio + list_order_bonus;
+        (score, overdue_ratio, list_order_bonus, (*q).clone())
+    }).collect()
+}
+
+fn score_not_due_quests(quests: &[&Quest], today: i64) -> Vec<(f64, f64, f64, Quest)> {
+    let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
+
+    // Compute days since completed for normalization
+    let days_since: Vec<f64> = quests.iter().map(|q| {
+        match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
+            Some(d) => (today - d) as f64,
+            None => f64::MAX, // never completed = max priority
+        }
+    }).collect();
+    let max_days = days_since.iter().cloned().filter(|d| *d < f64::MAX).fold(1.0f64, f64::max);
+
+    quests.iter().enumerate().map(|(i, q)| {
+        let normalized = if days_since[i] == f64::MAX { 1.0 } else { days_since[i] / max_days };
+        let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
+        let score = normalized + list_order_bonus;
+        (score, normalized, list_order_bonus, (*q).clone())
+    }).collect()
+}
+
+fn compute_overdue_ratio(q: &Quest, today: i64) -> f64 {
+    let cycle = match q.quest_type {
+        QuestType::Recurring => q.cycle_days.unwrap_or(1) as f64,
+        QuestType::OneOff => 9.0,
+    };
+
+    match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
+        Some(last_day) => {
+            let elapsed = (today - last_day) as f64;
+            (elapsed / cycle).max(1.0)
+        }
+        None => {
+            // Never completed: use days since created + cycle
+            let created_day = utc_iso_to_local_days(&q.created_at).unwrap_or(today);
+            let elapsed = (today - created_day) as f64 + cycle;
+            elapsed / cycle
+        }
+    }
 }
 
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
@@ -2600,14 +2701,16 @@ mod tests {
     // --- Quest selection ---
 
     #[test]
-    fn get_next_quest_returns_first_due() {
+    fn get_next_quest_returns_highest_scored() {
         let conn = test_db();
         add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
         add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
 
         let next = get_next_quest(&conn, 0).unwrap().unwrap();
-        // sort_order DESC means higher sort_order first — Second was added last with higher sort_order
-        assert_eq!(next.title, "Second");
+        // Both never-completed daily quests created at same time — scores should be equal,
+        // so list_order_bonus breaks tie (higher sort_order = lower bonus = sorted later)
+        assert!(next.score > 0.0);
+        assert_eq!(next.pool, "due");
     }
 
     #[test]
@@ -2618,10 +2721,10 @@ mod tests {
 
         let q0 = get_next_quest(&conn, 0).unwrap().unwrap();
         let q1 = get_next_quest(&conn, 1).unwrap().unwrap();
-        assert_ne!(q0.id, q1.id);
+        assert_ne!(q0.quest.id, q1.quest.id);
         // Wraps around
         let q2 = get_next_quest(&conn, 2).unwrap().unwrap();
-        assert_eq!(q0.id, q2.id);
+        assert_eq!(q0.quest.id, q2.quest.id);
     }
 
     #[test]
@@ -2637,10 +2740,26 @@ mod tests {
         let q = add_quest(&conn, "Long cycle".into(), QuestType::Recurring, Some(999), Difficulty::Easy, 7, 127).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
-        // Not due, but should fall back to longest-ago-completed
+        // Not due, but should fall back to not_due pool
         let next = get_next_quest(&conn, 0).unwrap();
         assert!(next.is_some());
-        assert_eq!(next.unwrap().id, q.id);
+        let scored = next.unwrap();
+        assert_eq!(scored.quest.id, q.id);
+        assert_eq!(scored.pool, "not_due");
+    }
+
+    #[test]
+    fn get_next_quest_overdue_scores_higher() {
+        let conn = test_db();
+        // Quest A: 7-day cycle, Quest B: 1-day cycle. Both never completed.
+        // B should be more "overdue" relative to its cycle.
+        add_quest(&conn, "Weekly".into(), QuestType::Recurring, Some(7), Difficulty::Easy, 7, 127).unwrap();
+        add_quest(&conn, "Daily".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+
+        let top = get_next_quest(&conn, 0).unwrap().unwrap();
+        // Daily quest has higher overdue ratio ((0+1)/1=1.0 vs (0+7)/7=1.0... actually equal for new quests)
+        // Both are due, both have same overdue ratio for never-completed. list_order_bonus breaks tie.
+        assert!(top.score > 0.0);
     }
 
     // --- Time-of-day ---

@@ -505,6 +505,13 @@
       margin-bottom: 8px;
     }
 
+    .qg-debug {
+      font-size: 9px;
+      font-family: monospace;
+      color: #777;
+      margin: 4px 0;
+    }
+
     .qg-quest-name {
       font-size: 18px;
       font-weight: 700;
@@ -746,6 +753,17 @@
       <button onclick="saveCTAInterval()">Save</button>
     </div>
 
+    <h2>Debug</h2>
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+      <label class="toggle">
+        <span class="toggle-label">Off</span>
+        <input type="checkbox" id="debug-toggle" onchange="toggleDebugScoring()">
+        <span class="toggle-slider"></span>
+        <span class="toggle-label">On</span>
+      </label>
+      <span style="font-size: 10px; color: #555;">Show scoring in quest giver</span>
+    </div>
+
     <h2>Reset</h2>
     <div class="reset-section" style="margin-top: 8px; border-top: none; padding-top: 0;">
       <button onclick="resetWithConfirm(this, 'reset_character', loadCharacterView)">Reset Char</button>
@@ -970,6 +988,7 @@
     let timerStartLocal = null;   // Date.now() cached locally for display
     let timerTitleLocal = null;   // cached quest title for display
     let timerInterval = null;     // setInterval handle
+    let debugScoring = false;
 
     // Filter state
     const filterAttr = document.getElementById("filter-attr");
@@ -1598,17 +1617,24 @@
       }
 
       // Selection mode — ask backend for the next quest
-      const quest = await invoke("get_next_quest", { skipCount: nextQuestIndex });
+      const result = await invoke("get_next_quest", { skipCount: nextQuestIndex });
 
       if (cachedQuests.filter(q => q.active).length === 0) {
         qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quest List tab.</div>';
         return;
       }
 
-      if (!quest) {
+      if (!result) {
         qgContent.innerHTML = '<div class="qg-empty">All caught up. Rest well, adventurer.</div>';
         return;
       }
+
+      const quest = result.quest;
+      const debugHtml = debugScoring ? `
+        <div class="qg-debug">
+          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | order: +${result.list_order_bonus.toFixed(3)})
+          <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
+        </div>` : "";
 
       if (!currentQGImage) currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
       currentQGLine = randomFromExcluding(questGiverLines, currentQGLine);
@@ -1620,6 +1646,7 @@
           <div class="qg-split-text">
             <div class="qg-flavor">${currentQGLine}</div>
             <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
+            ${debugHtml}
             <div class="qg-prompt">Does our stalwart hero accept this quest?</div>
             <div class="qg-actions">
               <button onclick="qgDone('${quest.id}', '${quest.difficulty}')">Done</button>
@@ -2170,6 +2197,13 @@
       document.getElementById("cta-interval").value = settings.ctaIntervalMinutes;
       document.getElementById("cta-toggle").checked = settings.callToAdventure;
       updateToggleLabels(settings.callToAdventure);
+      debugScoring = settings.debugScoring;
+      document.getElementById("debug-toggle").checked = debugScoring;
+    }
+
+    async function toggleDebugScoring() {
+      debugScoring = document.getElementById("debug-toggle").checked;
+      await invoke("set_debug_scoring", { enabled: debugScoring });
     }
 
     async function toggleCTA() {
@@ -2226,6 +2260,7 @@
     });
 
     loadPools().then(() => loadAll());
+    invoke("get_settings").then(s => { debugScoring = s.debugScoring; });
   </script>
 </body>
 </html>

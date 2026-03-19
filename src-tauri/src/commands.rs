@@ -206,7 +206,7 @@ pub fn reset_completions(state: State<DbState>) -> Result<(), String> {
 pub fn get_next_quest(
     state: State<DbState>,
     skip_count: i32,
-) -> Result<Option<db::Quest>, String> {
+) -> Result<Option<db::ScoredQuest>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::get_next_quest(&conn, skip_count)
 }
@@ -316,16 +316,21 @@ pub fn get_timer_state(
 pub struct SettingsInfo {
     pub call_to_adventure: bool,
     pub cta_interval_minutes: u64,
+    pub debug_scoring: bool,
 }
 
 #[tauri::command]
 pub fn get_settings(
+    db_state: State<DbState>,
     tray_state: State<AppTrayState>,
 ) -> Result<SettingsInfo, String> {
     let tray = tray_state.0.lock().map_err(|e| e.to_string())?;
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    let (_, _, debug) = db::get_settings_db(&conn).unwrap_or((false, 20, false));
     Ok(SettingsInfo {
         call_to_adventure: tray.call_to_adventure,
         cta_interval_minutes: tray.cta_interval_secs / 60,
+        debug_scoring: debug,
     })
 }
 
@@ -366,6 +371,15 @@ pub fn set_cta_interval(
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
     db::set_settings_db(&conn, enabled, minutes)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_debug_scoring(
+    db_state: State<DbState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    db::set_debug_scoring(&conn, enabled)
 }
 
 #[tauri::command]
