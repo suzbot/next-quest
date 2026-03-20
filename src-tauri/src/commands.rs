@@ -70,6 +70,98 @@ pub fn get_quests(state: State<DbState>) -> Result<Vec<db::Quest>, String> {
     db::get_quests(&conn)
 }
 
+// --- Saga commands ---
+
+#[tauri::command]
+pub fn get_sagas(state: State<DbState>) -> Result<Vec<db::Saga>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_sagas(&conn)
+}
+
+#[tauri::command]
+pub fn add_saga(
+    state: State<DbState>,
+    name: String,
+    cycle_days: Option<i32>,
+) -> Result<db::Saga, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::add_saga(&conn, name, cycle_days)
+}
+
+#[tauri::command]
+pub fn update_saga(
+    state: State<DbState>,
+    saga_id: String,
+    name: Option<String>,
+    saga_type: Option<String>,
+    cycle_days: Option<i32>,
+) -> Result<db::Saga, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::update_saga(&conn, saga_id, name, saga_type, cycle_days)
+}
+
+#[tauri::command]
+pub fn delete_saga(
+    state: State<DbState>,
+    saga_id: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::delete_saga(&conn, saga_id)
+}
+
+#[tauri::command]
+pub fn get_sagas_with_progress(
+    state: State<DbState>,
+) -> Result<Vec<db::SagaWithProgress>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_sagas_with_progress(&conn)
+}
+
+#[tauri::command]
+pub fn check_saga_completion(
+    state: State<DbState>,
+    saga_id: String,
+) -> Result<bool, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::check_saga_completion(&conn, &saga_id)
+}
+
+#[tauri::command]
+pub fn get_saga_steps(
+    state: State<DbState>,
+    saga_id: String,
+) -> Result<Vec<db::Quest>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_saga_steps(&conn, &saga_id)
+}
+
+#[tauri::command]
+pub fn add_saga_step(
+    state: State<DbState>,
+    saga_id: String,
+    title: String,
+    difficulty: db::Difficulty,
+    time_of_day: Option<i32>,
+    days_of_week: Option<i32>,
+) -> Result<db::Quest, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let tod = time_of_day.unwrap_or(7);
+    let dow = days_of_week.unwrap_or(127);
+    db::add_saga_step(&conn, saga_id, title, difficulty, tod, dow)
+}
+
+#[tauri::command]
+pub fn reorder_saga_steps(
+    state: State<DbState>,
+    saga_id: String,
+    step_ids: Vec<String>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::reorder_saga_steps(&conn, &saga_id, step_ids)
+}
+
+// --- Completions ---
+
 #[tauri::command]
 pub fn get_completions(state: State<DbState>) -> Result<Vec<db::Completion>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;

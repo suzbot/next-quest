@@ -175,6 +175,18 @@
       padding: 3px 0 2px 20px;
     }
 
+    .saga-progress { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+    .saga-progress-bar { flex: 1; height: 8px; background: #fff; border: 1px solid #444; display: block; }
+    .saga-progress-fill { display: block; height: 100%; background: #55cc55; }
+    .saga-progress-text { font-size: 9px; color: #555; flex-shrink: 0; }
+
+    .saga-steps { padding-left: 16px; border-left: 2px solid #666; margin: 4px 0 4px 8px; }
+    .saga-step-form { display: flex; gap: 4px; padding: 4px 0; align-items: center; font-size: 11px; }
+    .saga-step-form input[type="text"] { flex: 1; }
+    .step-list { list-style: none; padding: 0; margin: 0; }
+    .step-item { padding: 2px 0; }
+    .step-number { font-size: 10px; color: #777; width: 20px; flex-shrink: 0; text-align: right; }
+
     .dow-dropdown {
       position: relative;
       display: inline-block;
@@ -512,6 +524,11 @@
       margin: 4px 0;
     }
 
+    .qg-saga-name {
+      font-size: 10px;
+      color: #777;
+    }
+
     .qg-quest-name {
       font-size: 18px;
       font-weight: 700;
@@ -666,6 +683,7 @@
   <div class="nav">
     <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')"> Next Quest </button>
     <button id="nav-quests" onclick="showView('quests')">Quest List</button>
+    <button id="nav-sagas" onclick="showView('sagas')">Sagas</button>
     <button id="nav-character" onclick="showView('character')">Character</button>
     <button id="nav-settings" onclick="showView('settings')">Settings</button>
   </div>
@@ -726,6 +744,22 @@
   </div>
 
   <ul id="quest-list"></ul>
+  </div>
+
+  <div id="sagas-view" class="hidden">
+  <form id="saga-add-form">
+    <input type="text" id="saga-name" placeholder="Saga name..." autofocus>
+    <select id="saga-type" onchange="toggleSagaCycleInput()">
+      <option value="recurring">Recurring</option>
+      <option value="one_off">One-off</option>
+    </select>
+    <label id="saga-cycle-label">
+      Days
+      <input type="number" id="saga-cycle" value="1" min="1" style="width: 55px;">
+    </label>
+    <button type="submit">Add</button>
+  </form>
+  <ul id="saga-list"></ul>
   </div>
 
   <div id="character-view" class="hidden">
@@ -1369,7 +1403,7 @@
         row.querySelector(".quest-title")?.after(feedbackDiv);
       }
 
-      setTimeout(() => loadAll(), 3000);
+      setTimeout(() => loadAll(), 2500);
     }
 
     async function deleteQuest(id, title) {
@@ -1563,6 +1597,11 @@
     const questGiverView = document.getElementById("quest-giver-view");
     const qgContent = document.getElementById("qg-content");
     const questsView = document.getElementById("quests-view");
+    const sagasView = document.getElementById("sagas-view");
+    const sagaList = document.getElementById("saga-list");
+    const sagaAddForm = document.getElementById("saga-add-form");
+    const sagaNameInput = document.getElementById("saga-name");
+    const sagaCycleInput = document.getElementById("saga-cycle");
     const characterView = document.getElementById("character-view");
     const charContent = document.getElementById("char-content");
     let renamingChar = false;
@@ -1580,20 +1619,23 @@
       }
       document.getElementById("nav-quest-giver").classList.toggle("active", view === "quest-giver");
       document.getElementById("nav-quests").classList.toggle("active", view === "quests");
+      document.getElementById("nav-sagas").classList.toggle("active", view === "sagas");
       document.getElementById("nav-character").classList.toggle("active", view === "character");
       document.getElementById("nav-settings").classList.toggle("active", view === "settings");
       questGiverView.classList.toggle("hidden", view !== "quest-giver");
       questsView.classList.toggle("hidden", view !== "quests");
+      sagasView.classList.toggle("hidden", view !== "sagas");
       characterView.classList.toggle("hidden", view !== "character");
       settingsView.classList.toggle("hidden", view !== "settings");
       if (view === "quests") loadAll();
+      if (view === "sagas") loadSagas();
       if (view === "character") loadCharacterView();
       if (view === "quest-giver") renderQuestGiver();
       if (view === "settings") loadSettings();
     }
 
     function setTabsLocked(locked) {
-      ["nav-quests", "nav-character", "nav-settings"].forEach(id => {
+      ["nav-quests", "nav-sagas", "nav-character", "nav-settings"].forEach(id => {
         document.getElementById(id).classList.toggle("locked", locked);
       });
     }
@@ -1649,6 +1691,7 @@
           </div>
           <div class="qg-split-text">
             <div class="qg-flavor">${currentQGLine}</div>
+            ${result.saga_name ? `<div class="qg-saga-name">${escapeHtml(result.saga_name)}</div>` : ''}
             <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
             ${debugHtml}
             <div class="qg-prompt">Does our stalwart hero accept this quest?</div>
@@ -2190,6 +2233,358 @@
         }
       }, 2000);
     }
+
+    // --- Sagas ---
+
+    let cachedSagas = [];
+    let sagaSteps = {}; // saga_id -> steps array
+    let editingSagaId = null;
+    let expandedSagaId = null;
+    let editingStepId = null;
+    let sagaFlashActive = false;
+
+    async function loadSagas() {
+      cachedSagas = await invoke("get_sagas_with_progress");
+      // Load steps for expanded saga
+      if (expandedSagaId) {
+        sagaSteps[expandedSagaId] = await invoke("get_saga_steps", { sagaId: expandedSagaId });
+      }
+      renderSagas();
+    }
+
+    function renderSagas() {
+      if (sagaFlashActive) return; // Don't re-render during XP flash
+      if (cachedSagas.length === 0) {
+        sagaList.innerHTML = '<li class="empty-state">No sagas yet. Add one above.</li>';
+        return;
+      }
+      sagaList.innerHTML = cachedSagas.map(sp => {
+        const s = sp.saga;
+        if (editingSagaId === s.id) return renderSagaEdit(s);
+        const cycleText = s.cycle_days ? `↻ ${s.cycle_days}d` : "One-off";
+        const isExpanded = expandedSagaId === s.id;
+        const toggle = `<span class="expand-toggle" onclick="toggleSagaExpand('${s.id}')">${isExpanded ? '▾' : '▸'}</span>`;
+        const stateClass = sp.is_due ? "quest-due" : "quest-cooldown";
+        const allDone = sp.is_due && sp.total_steps > 0 && sp.completed_steps >= sp.total_steps;
+        const pct = sp.total_steps > 0 ? Math.round((sp.completed_steps / sp.total_steps) * 100) : 0;
+        const progressText = allDone ? "Done" : `${sp.completed_steps}/${sp.total_steps}`;
+        const lastRun = s.last_run_completed_at ? formatTimestamp(s.last_run_completed_at) : "";
+        let html = `<li class="quest-item ${stateClass}" data-id="${s.id}">
+          <div class="quest-row-top">
+            ${toggle}
+            <span class="quest-title" onclick="startSagaEdit('${s.id}')">${escapeHtml(s.name)}</span>
+            <span class="saga-progress">
+              <span class="saga-progress-bar"><span class="saga-progress-fill" style="width: ${pct}%"></span></span>
+              <span class="saga-progress-text">(${progressText})</span>
+            </span>
+            <span class="quest-meta">
+              <span class="meta-cycle">${cycleText}</span>
+            </span>
+            ${lastRun ? `<span class="quest-last-done">${lastRun}</span>` : ''}
+          </div>`;
+        if (isExpanded) {
+          html += renderSagaSteps(s, sp);
+        }
+        html += `</li>`;
+        return html;
+      }).join("");
+
+      if (editingSagaId) {
+        const el = document.getElementById("saga-edit-name");
+        if (el) el.focus();
+      }
+      if (editingStepId) {
+        const el = document.getElementById("step-edit-title");
+        if (el) el.focus();
+        // Init TOD/DOW for step edit
+        const steps = expandedSagaId ? (sagaSteps[expandedSagaId] || []) : [];
+        const editStep = steps.find(s => s.id === editingStepId);
+        if (editStep) {
+          const etod = document.getElementById("step-edit-tod");
+          const edow = document.getElementById("step-edit-dow");
+          if (etod) renderCheckDropdown(etod, editStep.time_of_day ?? 7, TOD_FULL, todSummary);
+          if (edow) renderCheckDropdown(edow, editStep.days_of_week ?? 127, DOW_FULL, dowSummary);
+        }
+      }
+      // Initialize TOD/DOW dropdowns for step add form
+      if (expandedSagaId) {
+        const todEl = document.getElementById("step-tod-" + expandedSagaId);
+        const dowEl = document.getElementById("step-dow-" + expandedSagaId);
+        if (todEl && !todEl.hasChildNodes()) renderCheckDropdown(todEl, 7, TOD_FULL, todSummary);
+        if (dowEl && !dowEl.hasChildNodes()) renderCheckDropdown(dowEl, 127, DOW_FULL, dowSummary);
+      }
+    }
+
+    function renderSagaSteps(saga, sagaProgress) {
+      const steps = sagaSteps[saga.id] || [];
+      const runStart = saga.last_run_completed_at || saga.created_at;
+      let html = '<div class="saga-steps">';
+
+      // Add step form
+      html += `<form class="saga-step-form" onsubmit="addSagaStep(event, '${saga.id}')">
+        <input type="text" id="step-title-${saga.id}" placeholder="Step name...">
+        <select id="step-diff-${saga.id}">
+          <option value="trivial">Trivial</option>
+          <option value="easy" selected>Easy</option>
+          <option value="moderate">Fair</option>
+          <option value="challenging">Hard</option>
+          <option value="epic">Epic</option>
+        </select>
+        <span id="step-tod-${saga.id}" class="dow-dropdown"></span>
+        <span id="step-dow-${saga.id}" class="dow-dropdown"></span>
+        <button type="submit">Add Step</button>
+      </form>`;
+
+      if (steps.length === 0) {
+        html += '<div class="empty-state" style="padding: 4px 20px; font-size: 10px;">No steps yet.</div>';
+      } else {
+        html += '<ul class="step-list">';
+        steps.forEach((step, i) => {
+          if (editingStepId === step.id) {
+            html += renderStepEdit(step, saga.id);
+          } else {
+            const completedThisRun = step.last_completed && step.last_completed > runStart;
+            const stepClass = completedThisRun ? "quest-cooldown" : (sagaProgress.is_due ? "quest-due" : "quest-cooldown");
+            const diffColor = sagaProgress.is_due && !completedThisRun ? (diffTextColors[step.difficulty] || '#555') : '#777';
+            const lastDone = step.last_completed ? formatTimestamp(step.last_completed) : "";
+            const stepDow = dowText(step.days_of_week ?? 127);
+            const stepTod = todText(step.time_of_day ?? 7);
+            html += `<li class="quest-item step-item ${stepClass}" data-id="${step.id}">
+              <div class="quest-row-top">
+                <span class="step-number">${i + 1}.</span>
+                <span class="quest-title" onclick="startStepEdit('${step.id}')">${escapeHtml(step.title)}</span>
+                <span class="quest-meta">
+                  ${stepDow ? `<span class="meta-dow">${stepDow}</span>` : ''}
+                  ${stepTod ? `<span class="meta-tod">${stepTod}</span>` : ''}
+                  <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(step.difficulty)}</span>
+                </span>
+                <span class="quest-last-done">${lastDone}</span>
+                <button class="action-btn done-btn" onclick="completeSagaStep('${step.id}', '${saga.id}')">✓</button>
+              </div>
+            </li>`;
+          }
+        });
+        html += '</ul>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderStepEdit(step, sagaId) {
+      const diff = step.difficulty;
+      return `<li class="quest-edit step-item" data-id="${step.id}">
+        <input type="text" id="step-edit-title" value="${escapeAttr(step.title)}"
+               onkeydown="handleStepEditKey(event, '${step.id}')">
+        <select id="step-edit-difficulty" onkeydown="handleStepEditKey(event, '${step.id}')">
+          <option value="trivial" ${diff === "trivial" ? "selected" : ""}>Trivial</option>
+          <option value="easy" ${diff === "easy" ? "selected" : ""}>Easy</option>
+          <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Fair</option>
+          <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Hard</option>
+          <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
+        </select>
+        <span id="step-edit-tod" class="dow-dropdown"></span>
+        <span id="step-edit-dow" class="dow-dropdown"></span>
+        <button onclick="saveStepEdit('${step.id}')">Save</button>
+        <button class="del-btn" onclick="deleteStep('${step.id}', '${sagaId}')">Del</button>
+        <span class="close-x" onclick="cancelStepEdit()">✕</span>
+      </li>`;
+    }
+
+    async function toggleSagaExpand(sagaId) {
+      if (expandedSagaId === sagaId) {
+        expandedSagaId = null;
+      } else {
+        expandedSagaId = sagaId;
+        sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+      }
+      renderSagas();
+    }
+
+    async function addSagaStep(e, sagaId) {
+      e.preventDefault();
+      const titleEl = document.getElementById("step-title-" + sagaId);
+      const diffEl = document.getElementById("step-diff-" + sagaId);
+      const todEl = document.getElementById("step-tod-" + sagaId);
+      const dowEl = document.getElementById("step-dow-" + sagaId);
+      const title = titleEl.value.trim();
+      if (!title) return;
+      const timeOfDay = todEl ? readMask(todEl) : 7;
+      const daysOfWeek = dowEl ? readMask(dowEl) : 127;
+      await invoke("add_saga_step", { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek });
+      titleEl.value = "";
+      sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+      renderSagas();
+      // Refocus after re-render
+      const newTitleEl = document.getElementById("step-title-" + sagaId);
+      if (newTitleEl) newTitleEl.focus();
+    }
+
+    function startStepEdit(id) {
+      editingStepId = id;
+      renderSagas();
+    }
+
+    function cancelStepEdit() {
+      editingStepId = null;
+      renderSagas();
+    }
+
+    function handleStepEditKey(e, id) {
+      if (e.key === "Enter") { e.preventDefault(); saveStepEdit(id); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelStepEdit(); }
+    }
+
+    async function saveStepEdit(id) {
+      const title = document.getElementById("step-edit-title").value.trim();
+      if (!title) return;
+      const difficulty = document.getElementById("step-edit-difficulty").value;
+      const todEl = document.getElementById("step-edit-tod");
+      const dowEl = document.getElementById("step-edit-dow");
+      const timeOfDay = todEl ? readMask(todEl) : 7;
+      const daysOfWeek = dowEl ? readMask(dowEl) : 127;
+      await invoke("update_quest", { questId: id, title, difficulty, timeOfDay, daysOfWeek });
+      editingStepId = null;
+      if (expandedSagaId) {
+        sagaSteps[expandedSagaId] = await invoke("get_saga_steps", { sagaId: expandedSagaId });
+      }
+      renderSagas();
+    }
+
+    async function deleteStep(id, sagaId) {
+      await invoke("delete_quest", { questId: id });
+      editingStepId = null;
+      sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+      renderSagas();
+    }
+
+    async function completeSagaStep(questId, sagaId) {
+      const step = (sagaSteps[sagaId] || []).find(s => s.id === questId);
+      const completion = await invoke("complete_quest", { questId });
+
+      // Immediately update progress bar in the DOM
+      const sp = cachedSagas.find(sp => sp.saga.id === sagaId);
+      if (sp) {
+        const newCompleted = Math.min(sp.completed_steps + 1, sp.total_steps);
+        const pct = sp.total_steps > 0 ? Math.round((newCompleted / sp.total_steps) * 100) : 0;
+        const fill = sagaList.querySelector(`[data-id="${sagaId}"] .saga-progress-fill`);
+        const text = sagaList.querySelector(`[data-id="${sagaId}"] .saga-progress-text`);
+        if (fill) fill.style.width = pct + "%";
+        if (text) text.textContent = `(${newCompleted}/${sp.total_steps})`;
+      }
+
+      sagaFlashActive = true;
+
+      // Show XP feedback on the step row
+      const row = sagaList.querySelector(`.step-item[data-id="${questId}"]`);
+      if (row) {
+        const color = diffTextColors[step?.difficulty] || "#1a6e1a";
+        row.style.setProperty("--flash-color", color + "33");
+        row.classList.add("flashing");
+
+        const feedbackDiv = document.createElement("div");
+        feedbackDiv.style.marginLeft = "4px";
+        let feedbackHtml = "";
+        if (completion.xp_earned > 0) {
+          feedbackHtml += `<span class="xp-flash" style="color: ${color}">+${completion.xp_earned} XP</span>`;
+        }
+        if (completion.level_ups?.length > 0) {
+          feedbackHtml += levelUpHtml(completion.level_ups);
+        }
+        feedbackDiv.innerHTML = feedbackHtml;
+        row.querySelector(".quest-title")?.after(feedbackDiv);
+      }
+
+      // Defer saga completion check and full reload
+      setTimeout(async () => {
+        sagaFlashActive = false;
+        await invoke("check_saga_completion", { sagaId });
+        cachedSagas = await invoke("get_sagas_with_progress");
+        sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+        renderSagas();
+      }, 2500);
+    }
+
+    function renderSagaEdit(s) {
+      const isRecurring = s.cycle_days !== null && s.cycle_days !== undefined;
+      const cycleVal = s.cycle_days || 1;
+      return `<li class="quest-edit" data-id="${s.id}">
+        <input type="text" id="saga-edit-name" value="${escapeAttr(s.name)}"
+               onkeydown="handleSagaEditKey(event, '${s.id}')">
+        <select id="saga-edit-type" onchange="toggleSagaEditCycle()" onkeydown="handleSagaEditKey(event, '${s.id}')">
+          <option value="recurring" ${isRecurring ? "selected" : ""}>Recurring</option>
+          <option value="one_off" ${!isRecurring ? "selected" : ""}>One-off</option>
+        </select>
+        <label id="saga-edit-cycle-label" class="${isRecurring ? "" : "hidden"}">
+          Days
+          <input type="number" id="saga-edit-cycle" value="${cycleVal}" min="1" style="width: 55px;"
+                 onkeydown="handleSagaEditKey(event, '${s.id}')">
+        </label>
+        <button onclick="saveSagaEdit('${s.id}')">Save</button>
+        <button class="del-btn" onclick="deleteSaga('${s.id}')">Del</button>
+        <span class="close-x" onclick="cancelSagaEdit()">✕</span>
+      </li>`;
+    }
+
+    function startSagaEdit(id) {
+      editingSagaId = id;
+      renderSagas();
+    }
+
+    function cancelSagaEdit() {
+      editingSagaId = null;
+      renderSagas();
+    }
+
+    function handleSagaEditKey(e, id) {
+      if (e.key === "Enter") { e.preventDefault(); saveSagaEdit(id); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelSagaEdit(); }
+    }
+
+    function toggleSagaCycleInput() {
+      const sagaCycleLabel = document.getElementById("saga-cycle-label");
+      sagaCycleLabel.classList.toggle("hidden", document.getElementById("saga-type").value === "one_off");
+    }
+
+    function toggleSagaEditCycle() {
+      const label = document.getElementById("saga-edit-cycle-label");
+      label.classList.toggle("hidden", document.getElementById("saga-edit-type").value === "one_off");
+    }
+
+    async function saveSagaEdit(id) {
+      const name = document.getElementById("saga-edit-name").value.trim();
+      if (!name) return;
+      const sagaType = document.getElementById("saga-edit-type").value;
+      const params = { sagaId: id, name, sagaType };
+      if (sagaType === "recurring") {
+        params.cycleDays = parseInt(document.getElementById("saga-edit-cycle").value, 10) || 1;
+      }
+      await invoke("update_saga", params);
+      editingSagaId = null;
+      await loadSagas();
+    }
+
+    async function deleteSaga(id) {
+      await invoke("delete_saga", { sagaId: id });
+      editingSagaId = null;
+      await loadSagas();
+    }
+
+    sagaAddForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = sagaNameInput.value.trim();
+      if (!name) return;
+      const sagaType = document.getElementById("saga-type").value;
+      const cycleDays = sagaType === "recurring"
+        ? parseInt(sagaCycleInput.value, 10) || 1
+        : null;
+      await invoke("add_saga", { name, cycleDays });
+      sagaNameInput.value = "";
+      sagaCycleInput.value = "1";
+      document.getElementById("saga-type").value = "recurring";
+      toggleSagaCycleInput();
+      sagaNameInput.focus();
+      await loadSagas();
+    });
 
     // --- Settings ---
 

@@ -161,8 +161,14 @@ Update `get_quests` to exclude saga steps (WHERE saga_id IS NULL) so the Quest L
 
 1. **2G.1-1: Schema + saga CRUD + basic tab** — User can create, rename, and delete sagas from a new Saga tab. Sagas appear as a list with name and cycle info. No steps yet — just the container. Testing: create a saga, rename it, delete it.
 
-2. **2G.1-2: Step management** — User can add, edit, delete, and reorder steps within a saga. Steps use the same add/edit form as quests (title, difficulty, TOD, DOW, tags). Expanded saga view shows the step list. Full resequencing via drag-and-drop + keyboard. Testing: add steps to a saga, reorder them, edit and delete individual steps. Completing a step from the saga tab records a normal completion with XP.
+2. **2G.1-2: Step management** — User can add, edit, delete steps within a saga. Steps use the same add/edit form as quests (title, difficulty). Expanded saga view shows the step list. Completing a step from the saga tab records a normal completion with XP. Testing: add steps to a saga, edit and delete individual steps, complete a step and verify XP.
 
 3. **2G.1-3: Quest selector integration** — Saga steps appear in the quest giver alongside regular quests. Current run logic determines which step is active per saga. Hard filters (TOD, DOW) apply to saga steps like any quest. Saga name shown as smaller text with the step title. Testing: create a saga with steps, see the first step offered by the quest giver. Complete it, see the next step surface. Complete all steps, saga no longer offers steps (or resets after cycle for recurring).
 
-4. **2G.1-4: Completion bonus + progress bar** — Completing the final step of a run awards a 20% bonus based on baseline step XP. Collapsed saga view shows a progress bar (completed steps / total in current run). Testing: complete all steps in a saga, verify bonus XP. Check progress bar updates as steps are completed. Recurring saga resets and progress bar returns to 0 after cycle elapses.
+4. **2G.1-4: Completion detection + stamp + due styling + progress bar** — When all steps in a run are complete, stamp `last_run_completed_at`. Saga and step rows show due/not-due/cooldown styling. Progress bar on collapsed saga rows. Last-run date on saga row. Testing: complete all steps, verify saga shows as done/cooldown. Recurring saga resets after cycle elapses. Progress bar reflects current run.
+
+5. **2G.1-5: Skill/attribute tags + Quest Now** — Tags button on step add/edit forms, linking steps to skills and attributes. XP flows to linked skills/attributes on completion. Quest Now (⚔) button on steps starts timer flow. Testing: add a step with tags, complete it, verify skill/attribute XP. Quest Now enters timer mode. Full step UI is now complete for balance testing.
+
+6. **2G.1-6: Completion bonus + celebration** — 20% bonus of baseline step XP awarded when final step of a run completes. Celebration notification similar to level-up. Bonus distributes to character + final step's linked skills/attributes. Testing: complete all steps, verify bonus XP and celebration.
+
+7. **2G.1-7: Resequencing** — Full drag-and-drop and keyboard resequencing for saga steps (any position, not neighbor-swap). Backend `reorder_saga_steps` is already implemented. Testing: reorder steps, verify order persists.

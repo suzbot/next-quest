@@ -96,6 +96,17 @@ pub struct QuestOrder {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct Saga {
+    pub id: String,
+    pub name: String,
+    pub cycle_days: Option<i32>,
+    pub sort_order: i32,
+    pub active: bool,
+    pub created_at: String,
+    pub last_run_completed_at: Option<String>,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct ScoredQuest {
     pub quest: Quest,
     pub score: f64,
@@ -105,6 +116,7 @@ pub struct ScoredQuest {
     pub pool: String,
     pub due_count: usize,
     pub not_due_count: usize,
+    pub saga_name: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -191,7 +203,9 @@ fn create_tables(conn: &Connection) {
             created_at  TEXT NOT NULL,
             difficulty  TEXT NOT NULL DEFAULT 'easy',
             time_of_day INTEGER NOT NULL DEFAULT 7,
-            days_of_week INTEGER NOT NULL DEFAULT 127
+            days_of_week INTEGER NOT NULL DEFAULT 127,
+            saga_id     TEXT REFERENCES saga(id),
+            step_order  INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS quest_completion (
@@ -233,6 +247,16 @@ fn create_tables(conn: &Connection) {
             quest_id      TEXT NOT NULL REFERENCES quest(id),
             attribute_id  TEXT NOT NULL REFERENCES attribute(id),
             PRIMARY KEY (quest_id, attribute_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS saga (
+            id                     TEXT PRIMARY KEY,
+            name                   TEXT NOT NULL,
+            cycle_days             INTEGER,
+            sort_order             INTEGER NOT NULL,
+            active                 INTEGER NOT NULL DEFAULT 1,
+            created_at             TEXT NOT NULL,
+            last_run_completed_at  TEXT
         );
 
         CREATE TABLE IF NOT EXISTS settings (
@@ -410,6 +434,31 @@ fn migrate(conn: &Connection) {
             "ALTER TABLE settings ADD COLUMN debug_scoring INTEGER NOT NULL DEFAULT 0;"
         ).expect("Failed to add debug_scoring column");
     }
+
+    // Migration: create saga table if missing
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS saga (
+            id                     TEXT PRIMARY KEY,
+            name                   TEXT NOT NULL,
+            cycle_days             INTEGER,
+            sort_order             INTEGER NOT NULL,
+            active                 INTEGER NOT NULL DEFAULT 1,
+            created_at             TEXT NOT NULL,
+            last_run_completed_at  TEXT
+        );"
+    ).expect("Failed to create saga table");
+
+    // Migration: add saga_id and step_order to quest if missing
+    let has_saga_id: bool = conn
+        .prepare("SELECT saga_id FROM quest LIMIT 0")
+        .is_ok();
+
+    if !has_saga_id {
+        conn.execute_batch(
+            "ALTER TABLE quest ADD COLUMN saga_id TEXT REFERENCES saga(id);
+             ALTER TABLE quest ADD COLUMN step_order INTEGER;"
+        ).expect("Failed to add saga columns to quest");
+    }
 }
 
 fn seed_data(conn: &Connection) {
@@ -513,6 +562,446 @@ pub fn set_debug_scoring(conn: &Connection, enabled: bool) -> Result<(), String>
     Ok(())
 }
 
+// --- Saga CRUD ---
+
+pub fn get_sagas(conn: &Connection) -> Result<Vec<Saga>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, cycle_days, sort_order, active, created_at, last_run_completed_at
+             FROM saga
+             ORDER BY sort_order ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let sagas = stmt
+        .query_map([], |row| {
+            Ok(Saga {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                cycle_days: row.get(2)?,
+                sort_order: row.get(3)?,
+                active: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                last_run_completed_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(sagas)
+}
+
+pub fn add_saga(
+    conn: &Connection,
+    name: String,
+    cycle_days: Option<i32>,
+) -> Result<Saga, String> {
+    let id = Uuid::new_v4().to_string();
+    let created_at = chrono_now();
+
+    let max_order: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM saga",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let sort_order = max_order + 1;
+
+    conn.execute(
+        "INSERT INTO saga (id, name, cycle_days, sort_order, active, created_at)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+        rusqlite::params![id, name, cycle_days, sort_order, created_at],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(Saga {
+        id,
+        name,
+        cycle_days,
+        sort_order,
+        active: true,
+        created_at,
+        last_run_completed_at: None,
+    })
+}
+
+pub fn update_saga(
+    conn: &Connection,
+    saga_id: String,
+    name: Option<String>,
+    saga_type: Option<String>,
+    cycle_days: Option<i32>,
+) -> Result<Saga, String> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM saga WHERE id = ?1",
+            rusqlite::params![saga_id],
+            |row| row.get::<_, i32>(0).map(|c| c > 0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if !exists {
+        return Err(format!("Saga not found: {}", saga_id));
+    }
+
+    if let Some(ref new_name) = name {
+        conn.execute(
+            "UPDATE saga SET name = ?1 WHERE id = ?2",
+            rusqlite::params![new_name, saga_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if let Some(ref st) = saga_type {
+        match st.as_str() {
+            "one_off" => {
+                conn.execute(
+                    "UPDATE saga SET cycle_days = NULL WHERE id = ?1",
+                    rusqlite::params![saga_id],
+                ).map_err(|e| e.to_string())?;
+            }
+            "recurring" => {
+                if cycle_days.is_none() {
+                    conn.execute(
+                        "UPDATE saga SET cycle_days = 1 WHERE id = ?1 AND cycle_days IS NULL",
+                        rusqlite::params![saga_id],
+                    ).map_err(|e| e.to_string())?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(days) = cycle_days {
+        conn.execute(
+            "UPDATE saga SET cycle_days = ?1 WHERE id = ?2",
+            rusqlite::params![days, saga_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    conn.query_row(
+        "SELECT id, name, cycle_days, sort_order, active, created_at, last_run_completed_at
+         FROM saga WHERE id = ?1",
+        rusqlite::params![saga_id],
+        |row| {
+            Ok(Saga {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                cycle_days: row.get(2)?,
+                sort_order: row.get(3)?,
+                active: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                last_run_completed_at: row.get(6)?,
+            })
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn delete_saga(conn: &Connection, saga_id: String) -> Result<(), String> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM saga WHERE id = ?1",
+            rusqlite::params![saga_id],
+            |row| row.get::<_, i32>(0).map(|c| c > 0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if !exists {
+        return Err(format!("Saga not found: {}", saga_id));
+    }
+
+    // Delete quest links for saga steps, then the steps themselves
+    conn.execute(
+        "DELETE FROM quest_skill WHERE quest_id IN (SELECT id FROM quest WHERE saga_id = ?1)",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM quest_attribute WHERE quest_id IN (SELECT id FROM quest WHERE saga_id = ?1)",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
+    // Orphan completions (set quest_id to NULL) for saga steps
+    conn.execute(
+        "UPDATE quest_completion SET quest_id = NULL WHERE quest_id IN (SELECT id FROM quest WHERE saga_id = ?1)",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM quest WHERE saga_id = ?1",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM saga WHERE id = ?1",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, String> {
+    let today = local_today_days();
+    let mut stmt = conn
+        .prepare(
+            "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
+                    q.difficulty, q.time_of_day, q.days_of_week, q.step_order,
+                    (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
+             FROM quest q
+             WHERE q.saga_id = ?1
+             ORDER BY q.step_order ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let steps = stmt
+        .query_map(rusqlite::params![saga_id], |row| {
+            let quest_type_str: String = row.get(2)?;
+            let quest_type = QuestType::from_str(&quest_type_str);
+            let cycle_days: Option<i32> = row.get(3)?;
+            let active = row.get::<_, i32>(5)? != 0;
+            let difficulty_str: String = row.get(7)?;
+            let time_of_day: i32 = row.get(8)?;
+            let days_of_week: i32 = row.get(9)?;
+            let last_completed: Option<String> = row.get(11)?;
+            let last_completed_days = last_completed.as_deref().and_then(utc_iso_to_local_days);
+            let is_due = compute_is_due(&quest_type, active, last_completed_days, cycle_days, today);
+            Ok(Quest {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                quest_type,
+                cycle_days,
+                sort_order: row.get(4)?,
+                active,
+                created_at: row.get(6)?,
+                difficulty: Difficulty::from_str(&difficulty_str),
+                time_of_day,
+                days_of_week,
+                last_completed,
+                is_due,
+                skill_ids: Vec::new(),
+                attribute_ids: Vec::new(),
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(steps)
+}
+
+pub fn add_saga_step(
+    conn: &Connection,
+    saga_id: String,
+    title: String,
+    difficulty: Difficulty,
+    time_of_day: i32,
+    days_of_week: i32,
+) -> Result<Quest, String> {
+    // Verify saga exists
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM saga WHERE id = ?1",
+            rusqlite::params![saga_id],
+            |row| row.get::<_, i32>(0).map(|c| c > 0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Err(format!("Saga not found: {}", saga_id));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let created_at = chrono_now();
+
+    let max_step: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(step_order), 0) FROM quest WHERE saga_id = ?1",
+            rusqlite::params![saga_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let step_order = max_step + 1;
+
+    conn.execute(
+        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty, time_of_day, days_of_week, saga_id, step_order)
+         VALUES (?1, ?2, 'one_off', NULL, 0, 1, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![id, title, created_at, difficulty.as_str(), time_of_day, days_of_week, saga_id, step_order],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(Quest {
+        id,
+        title,
+        quest_type: QuestType::OneOff,
+        cycle_days: None,
+        sort_order: 0,
+        active: true,
+        created_at,
+        difficulty,
+        time_of_day,
+        days_of_week,
+        last_completed: None,
+        is_due: true,
+        skill_ids: Vec::new(),
+        attribute_ids: Vec::new(),
+    })
+}
+
+pub fn reorder_saga_steps(conn: &Connection, saga_id: &str, step_ids: Vec<String>) -> Result<(), String> {
+    for (i, step_id) in step_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE quest SET step_order = ?1 WHERE id = ?2 AND saga_id = ?3",
+            rusqlite::params![i as i32 + 1, step_id, saga_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Check if a saga's current run is complete (all steps have a completion >= run start).
+/// If complete, stamps last_run_completed_at and returns true.
+pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<bool, String> {
+    let saga = conn.query_row(
+        "SELECT id, name, cycle_days, sort_order, active, created_at, last_run_completed_at FROM saga WHERE id = ?1",
+        rusqlite::params![saga_id],
+        |row| Ok(Saga {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            cycle_days: row.get(2)?,
+            sort_order: row.get(3)?,
+            active: row.get::<_, i32>(4)? != 0,
+            created_at: row.get(5)?,
+            last_run_completed_at: row.get(6)?,
+        }),
+    ).map_err(|e| e.to_string())?;
+
+    let steps = get_saga_steps(conn, saga_id)?;
+    if steps.is_empty() { return Ok(false); }
+
+    let run_start = saga.last_run_completed_at.as_deref().unwrap_or(&saga.created_at).to_string();
+
+    let all_complete = steps.iter().all(|step| {
+        step.last_completed.as_ref()
+            .map(|lc| lc.as_str() > run_start.as_str())
+            .unwrap_or(false)
+    });
+
+    if all_complete {
+        let now = chrono_now();
+        conn.execute(
+            "UPDATE saga SET last_run_completed_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, saga_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Get saga with current run progress info.
+#[derive(Serialize, Debug, Clone)]
+pub struct SagaWithProgress {
+    pub saga: Saga,
+    pub total_steps: usize,
+    pub completed_steps: usize,
+    pub is_due: bool,
+}
+
+pub fn get_sagas_with_progress(conn: &Connection) -> Result<Vec<SagaWithProgress>, String> {
+    let sagas = get_sagas(conn)?;
+    let today = local_today_days();
+    let mut results = Vec::new();
+
+    for saga in sagas {
+        let steps = get_saga_steps(conn, &saga.id)?;
+        let total_steps = steps.len();
+
+        let run_start = saga.last_run_completed_at.as_deref().unwrap_or(&saga.created_at).to_string();
+
+        // Check if saga is due (for recurring)
+        let is_due = if let (Some(ref last_run), Some(cycle)) = (&saga.last_run_completed_at, saga.cycle_days) {
+            let last_run_days = utc_iso_to_local_days(last_run).unwrap_or(0);
+            today >= last_run_days + cycle as i64
+        } else {
+            true // One-off or never completed = due
+        };
+
+        // Always count completions after run_start — even during cooldown,
+        // the user may have started a new run early.
+        let completed_steps = steps.iter().filter(|s| {
+            s.last_completed.as_ref()
+                .map(|lc| lc.as_str() > run_start.as_str())
+                .unwrap_or(false)
+        }).count();
+
+        // Active = has incomplete steps in current run (whether or not cycle has elapsed)
+        let has_active_work = completed_steps < total_steps && completed_steps > 0;
+        let effective_is_due = is_due || has_active_work;
+
+        // In cooldown with no new work: show full bar (last run was complete)
+        let display_completed = if !effective_is_due && completed_steps == 0 && saga.last_run_completed_at.is_some() {
+            total_steps
+        } else {
+            completed_steps
+        };
+
+        results.push(SagaWithProgress {
+            saga,
+            total_steps,
+            completed_steps: display_completed,
+            is_due: effective_is_due,
+        });
+    }
+
+    Ok(results)
+}
+
+/// Returns one active step per saga (the first due step), along with saga name and activation time.
+pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, String)>, String> {
+    // (quest, saga_name, activated_at ISO timestamp)
+    let sagas = get_sagas(conn)?;
+    let mut results = Vec::new();
+
+    for saga in &sagas {
+        if !saga.active { continue; }
+
+        let steps = get_saga_steps(conn, &saga.id)?;
+        if steps.is_empty() { continue; }
+
+        // Compute current run start
+        let run_start_str = saga.last_run_completed_at.as_deref()
+            .unwrap_or(&saga.created_at)
+            .to_string();
+
+        // Find the first step not completed in this run
+        let mut prev_completed_at = run_start_str.clone();
+        for step in &steps {
+            let completed_this_run = step.last_completed.as_ref()
+                .map(|lc| lc.as_str() > run_start_str.as_str())
+                .unwrap_or(false);
+
+            if !completed_this_run {
+                // This is the active step
+                results.push((step.clone(), saga.name.clone(), prev_completed_at.clone()));
+                break;
+            }
+
+            if let Some(ref lc) = step.last_completed {
+                if lc.as_str() > run_start_str.as_str() {
+                    prev_completed_at = lc.clone();
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+// --- Quests ---
+
 pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     let today = local_today_days();
     let mut stmt = conn
@@ -521,7 +1010,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
                     q.difficulty, q.time_of_day, q.days_of_week,
                     (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
              FROM quest q
-             WHERE q.active = 1 OR (q.active = 0 AND q.quest_type = 'one_off')
+             WHERE q.saga_id IS NULL AND (q.active = 1 OR (q.active = 0 AND q.quest_type = 'one_off'))
              ORDER BY q.active DESC, q.sort_order DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -587,31 +1076,58 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
         .filter(|q| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
-    if eligible.is_empty() {
+    // Get active saga steps and apply same hard filters
+    let saga_steps = get_active_saga_steps(conn).unwrap_or_default();
+    let eligible_saga: Vec<&(Quest, String, String)> = saga_steps.iter()
+        .filter(|(q, _, _)| matches_time_of_day(q.time_of_day, hour))
+        .filter(|(q, _, _)| matches_day_of_week(q.days_of_week, weekday))
+        .collect();
+
+    if eligible.is_empty() && eligible_saga.is_empty() {
         return Ok(None);
     }
 
     let due: Vec<&Quest> = eligible.iter().filter(|q| q.is_due).copied().collect();
     let not_due: Vec<&Quest> = eligible.iter().filter(|q| !q.is_due).copied().collect();
-    let due_count = due.len();
+
+    // Saga steps are always "due" (they're the active step)
+    let total_due = due.len() + eligible_saga.len();
+    let due_count = total_due;
     let not_due_count = not_due.len();
 
-    // Score due pool first
-    let (mut scored, mut pool_name) = if !due.is_empty() {
-        (score_quests_due(&due, today, skip_counts), "due")
-    } else {
-        (Vec::new(), "due")
-    };
+    // Score due pool (regular + saga steps)
+    // type: (score, overdue_ratio, skip_penalty, list_order_bonus, quest, saga_name)
+    let mut scored: Vec<(f64, f64, f64, f64, Quest, Option<String>)> = Vec::new();
+    let mut pool_name = "due";
+
+    if !due.is_empty() || !eligible_saga.is_empty() {
+        // Score regular due quests
+        for (score, overdue, skip, order, quest) in score_quests_due(&due, today, skip_counts) {
+            scored.push((score, overdue, skip, order, quest, None));
+        }
+        // Score saga steps
+        for (quest, saga_name, activated_at) in &eligible_saga {
+            let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
+            let days_since = (today - activated_days) as f64;
+            let overdue_ratio = (days_since + 9.0) / 9.0;
+            let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
+            let skip_penalty = skips * 0.5;
+            let list_order_bonus = 0.001; // saga steps get minimal order bonus
+            let score = overdue_ratio - skip_penalty + list_order_bonus;
+            scored.push((score, overdue_ratio, skip_penalty, list_order_bonus, (*quest).clone(), Some(saga_name.clone())));
+        }
+    }
 
     // If due pool is empty or all scores <= 0, include not-due pool
     let all_skipped = !scored.is_empty() && scored.iter().all(|s| s.0 <= 0.0);
     if scored.is_empty() || all_skipped {
         let not_due_scored = score_quests_not_due(&not_due, today, skip_counts);
-        if scored.is_empty() {
-            scored = not_due_scored;
+        for (score, overdue, skip, order, quest) in not_due_scored {
+            scored.push((score, overdue, skip, order, quest, None));
+        }
+        if due_count == 0 {
             pool_name = "not_due";
         } else {
-            scored.extend(not_due_scored);
             pool_name = "due+not_due";
         }
     }
@@ -626,13 +1142,13 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     // Skip excluded quest if possible (fall back to it if it's the only one)
     let top = if let Some(exc_id) = exclude_quest_id {
         scored.iter()
-            .find(|(_, _, _, _, q)| q.id != exc_id)
+            .find(|(_, _, _, _, q, _)| q.id != exc_id)
             .cloned()
             .unwrap_or_else(|| scored.into_iter().next().unwrap())
     } else {
         scored.into_iter().next().unwrap()
     };
-    let (score, overdue_ratio, skip_penalty, list_order_bonus, quest) = top;
+    let (score, overdue_ratio, skip_penalty, list_order_bonus, quest, saga_name) = top;
 
     Ok(Some(ScoredQuest {
         quest,
@@ -643,6 +1159,7 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
         pool: pool_name.to_string(),
         due_count,
         not_due_count,
+        saga_name,
     }))
 }
 
@@ -2811,6 +3328,95 @@ mod tests {
         // Daily quest has higher overdue ratio ((0+1)/1=1.0 vs (0+7)/7=1.0... actually equal for new quests)
         // Both are due, both have same overdue ratio for never-completed. list_order_bonus breaks tie.
         assert!(top.score > 0.0);
+    }
+
+    // --- Sagas ---
+
+    #[test]
+    fn add_saga_returns_new() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Spring Cleaning".into(), Some(30)).unwrap();
+        assert_eq!(s.name, "Spring Cleaning");
+        assert_eq!(s.cycle_days, Some(30));
+        assert!(s.active);
+        assert!(s.last_run_completed_at.is_none());
+    }
+
+    #[test]
+    fn add_saga_one_off() {
+        let conn = test_db();
+        let s = add_saga(&conn, "File Taxes".into(), None).unwrap();
+        assert_eq!(s.cycle_days, None);
+    }
+
+    #[test]
+    fn get_sagas_returns_all() {
+        let conn = test_db();
+        add_saga(&conn, "First".into(), None).unwrap();
+        add_saga(&conn, "Second".into(), Some(7)).unwrap();
+        let sagas = get_sagas(&conn).unwrap();
+        assert_eq!(sagas.len(), 2);
+        assert_eq!(sagas[0].name, "First");
+        assert_eq!(sagas[1].name, "Second");
+    }
+
+    #[test]
+    fn update_saga_name() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Old".into(), None).unwrap();
+        let u = update_saga(&conn, s.id, Some("New".into()), None, None).unwrap();
+        assert_eq!(u.name, "New");
+    }
+
+    #[test]
+    fn update_saga_cycle() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Test".into(), None).unwrap();
+        assert_eq!(s.cycle_days, None);
+        let u = update_saga(&conn, s.id, None, Some("recurring".into()), Some(14)).unwrap();
+        assert_eq!(u.cycle_days, Some(14));
+    }
+
+    #[test]
+    fn delete_saga_removes_saga_and_steps() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Doomed".into(), None).unwrap();
+        // Add a step (quest with saga_id)
+        let q = add_quest(&conn, "Step 1".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        conn.execute(
+            "UPDATE quest SET saga_id = ?1, step_order = 1 WHERE id = ?2",
+            rusqlite::params![s.id, q.id],
+        ).unwrap();
+
+        delete_saga(&conn, s.id.clone()).unwrap();
+
+        let sagas = get_sagas(&conn).unwrap();
+        assert!(sagas.is_empty());
+        // Step should be gone too
+        let quests = get_quests(&conn).unwrap();
+        assert!(quests.iter().all(|q| q.title != "Step 1"));
+    }
+
+    #[test]
+    fn delete_nonexistent_saga_errors() {
+        let conn = test_db();
+        assert!(delete_saga(&conn, "nope".into()).is_err());
+    }
+
+    #[test]
+    fn saga_steps_excluded_from_quest_list() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Test Saga".into(), None).unwrap();
+        add_quest(&conn, "Regular Quest".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let step = add_quest(&conn, "Saga Step".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        conn.execute(
+            "UPDATE quest SET saga_id = ?1, step_order = 1 WHERE id = ?2",
+            rusqlite::params![s.id, step.id],
+        ).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        assert!(quests.iter().any(|q| q.title == "Regular Quest"));
+        assert!(!quests.iter().any(|q| q.title == "Saga Step"));
     }
 
     // --- Time-of-day ---

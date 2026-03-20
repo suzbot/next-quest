@@ -57,6 +57,15 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_quests,
+            commands::get_sagas,
+            commands::get_sagas_with_progress,
+            commands::check_saga_completion,
+            commands::add_saga,
+            commands::update_saga,
+            commands::delete_saga,
+            commands::get_saga_steps,
+            commands::add_saga_step,
+            commands::reorder_saga_steps,
             commands::get_completions,
             commands::add_quest,
             commands::complete_quest,
