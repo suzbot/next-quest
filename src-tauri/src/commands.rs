@@ -121,9 +121,18 @@ pub fn get_sagas_with_progress(
 pub fn check_saga_completion(
     state: State<DbState>,
     saga_id: String,
-) -> Result<bool, String> {
+) -> Result<db::SagaCompletionResult, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::check_saga_completion(&conn, &saga_id)
+}
+
+#[tauri::command]
+pub fn check_saga_completion_for_quest(
+    state: State<DbState>,
+    quest_id: String,
+) -> Result<db::SagaCompletionResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::check_saga_completion_for_quest(&conn, &quest_id)
 }
 
 #[tauri::command]

@@ -60,6 +60,7 @@ fn main() {
             commands::get_sagas,
             commands::get_sagas_with_progress,
             commands::check_saga_completion,
+            commands::check_saga_completion_for_quest,
             commands::add_saga,
             commands::update_saga,
             commands::delete_saga,

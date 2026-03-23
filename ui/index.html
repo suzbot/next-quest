@@ -180,6 +180,23 @@
     .saga-progress-fill { display: block; height: 100%; background: #55cc55; }
     .saga-progress-text { font-size: 9px; color: #555; flex-shrink: 0; }
 
+    .saga-celebration {
+      padding: 8px 12px;
+      font-size: 13px;
+      color: #7a5500;
+      background: #eea80022;
+      border-left: 3px solid #eea800;
+      margin: 4px 0;
+    }
+    .saga-celebration.pulsing {
+      animation: saga-pulse 3s ease-out;
+    }
+    @keyframes saga-pulse {
+      0% { background: #eea80044; }
+      70% { background: #eea80044; }
+      100% { background: #eea80022; }
+    }
+
     .saga-steps { padding-left: 16px; border-left: 2px solid #666; margin: 4px 0 4px 8px; }
     .saga-step-form { display: flex; gap: 4px; padding: 4px 0; align-items: center; font-size: 11px; }
     .saga-step-form input[type="text"] { flex: 1; }
@@ -1696,7 +1713,7 @@
             ${debugHtml}
             <div class="qg-prompt">Does our stalwart hero accept this quest?</div>
             <div class="qg-actions">
-              <button onclick="qgDone('${quest.id}', '${quest.difficulty}')">Done</button>
+              <button onclick="qgDone('${quest.id}', '${quest.difficulty}', ${quest.saga_id ? `'${quest.saga_id}'` : 'null'})">Done</button>
               <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
               <button onclick="qgSomethingElse('${quest.id}')">Something Else</button>
             </div>
@@ -1811,6 +1828,10 @@
       setTabsLocked(false);
       const completion = await invoke("complete_timer");
 
+      // Check saga completion if this was a saga step
+      if (completion.quest_id) {
+        await invoke("check_saga_completion_for_quest", { questId: completion.quest_id });
+      }
 
       let textHtml = `<div class="qg-quest-name pulsing" style="font-size: 18px;">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
@@ -1837,8 +1858,10 @@
       }, 3000);
     }
 
-    async function qgDone(questId, difficulty) {
+    async function qgDone(questId, difficulty, sagaId) {
       const completion = await invoke("complete_quest", { questId });
+      let sagaResult = null;
+      if (sagaId) sagaResult = await invoke("check_saga_completion", { sagaId });
       const color = diffTextColors[difficulty] || "#1a6e1a";
 
       // Show completion feedback with pulse in split layout
@@ -1847,6 +1870,17 @@
         textHtml += `<div class="qg-xp-flash pulsing" style="color: ${color}">+${completion.xp_earned} XP</div>`;
       }
       textHtml += levelUpHtml(completion.level_ups);
+      if (sagaResult?.completed) {
+        textHtml += `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
+        textHtml += `<strong>${escapeHtml(sagaResult.sagaName)} complete!</strong>`;
+        if (sagaResult.bonusXp > 0) {
+          textHtml += ` <span class="xp-flash" style="color: #7a5500">+${sagaResult.bonusXp} bonus XP</span>`;
+        }
+        if (sagaResult.levelUps?.length > 0) {
+          textHtml += levelUpHtml(sagaResult.levelUps);
+        }
+        textHtml += `</div>`;
+      }
       qgContent.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
@@ -2306,8 +2340,10 @@
           if (edow) renderCheckDropdown(edow, editStep.days_of_week ?? 127, DOW_FULL, dowSummary);
         }
       }
-      // Initialize TOD/DOW dropdowns for step add form
+      // Initialize step add form controls
       if (expandedSagaId) {
+        const stepLinksRow = document.getElementById("step-add-links-" + expandedSagaId);
+        if (stepLinksRow && !stepLinksRow.innerHTML) stepLinksRow.innerHTML = renderLinkTagsHtml("step-add", [], []);
         const todEl = document.getElementById("step-tod-" + expandedSagaId);
         const dowEl = document.getElementById("step-dow-" + expandedSagaId);
         if (todEl && !todEl.hasChildNodes()) renderCheckDropdown(todEl, 7, TOD_FULL, todSummary);
@@ -2332,8 +2368,10 @@
         </select>
         <span id="step-tod-${saga.id}" class="dow-dropdown"></span>
         <span id="step-dow-${saga.id}" class="dow-dropdown"></span>
+        <button type="button" onclick="toggleStepAddLinks('${saga.id}')">Tags</button>
         <button type="submit">Add Step</button>
-      </form>`;
+      </form>
+      <div id="step-add-links-${saga.id}" class="hidden" style="padding: 2px 0;"></div>`;
 
       if (steps.length === 0) {
         html += '<div class="empty-state" style="padding: 4px 20px; font-size: 10px;">No steps yet.</div>';
@@ -2349,8 +2387,10 @@
             const lastDone = step.last_completed ? formatTimestamp(step.last_completed) : "";
             const stepDow = dowText(step.days_of_week ?? 127);
             const stepTod = todText(step.time_of_day ?? 7);
+            const stepLinks = linkNamesText(step);
             html += `<li class="quest-item step-item ${stepClass}" data-id="${step.id}">
               <div class="quest-row-top">
+                <span class="expand-toggle" onclick="toggleDetail(this)">${stepLinks ? '▸' : ''}</span>
                 <span class="step-number">${i + 1}.</span>
                 <span class="quest-title" onclick="startStepEdit('${step.id}')">${escapeHtml(step.title)}</span>
                 <span class="quest-meta">
@@ -2359,8 +2399,10 @@
                   <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(step.difficulty)}</span>
                 </span>
                 <span class="quest-last-done">${lastDone}</span>
+                <button class="action-btn" onclick="sagaStepQuestNow('${step.id}')">⚔</button>
                 <button class="action-btn done-btn" onclick="completeSagaStep('${step.id}', '${saga.id}')">✓</button>
               </div>
+              ${stepLinks ? `<div class="quest-detail" style="display:none"><span class="quest-links">${escapeHtml(stepLinks)}</span></div>` : ''}
             </li>`;
           }
         });
@@ -2374,8 +2416,8 @@
       const diff = step.difficulty;
       return `<li class="quest-edit step-item" data-id="${step.id}">
         <input type="text" id="step-edit-title" value="${escapeAttr(step.title)}"
-               onkeydown="handleStepEditKey(event, '${step.id}')">
-        <select id="step-edit-difficulty" onkeydown="handleStepEditKey(event, '${step.id}')">
+               onkeydown="handleStepEditKey(event, '${step.id}', '${sagaId}')">
+        <select id="step-edit-difficulty" onkeydown="handleStepEditKey(event, '${step.id}', '${sagaId}')">
           <option value="trivial" ${diff === "trivial" ? "selected" : ""}>Trivial</option>
           <option value="easy" ${diff === "easy" ? "selected" : ""}>Easy</option>
           <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Fair</option>
@@ -2384,9 +2426,12 @@
         </select>
         <span id="step-edit-tod" class="dow-dropdown"></span>
         <span id="step-edit-dow" class="dow-dropdown"></span>
-        <button onclick="saveStepEdit('${step.id}')">Save</button>
+        <button onclick="saveStepEdit('${step.id}', '${sagaId}')">Save</button>
         <button class="del-btn" onclick="deleteStep('${step.id}', '${sagaId}')">Del</button>
         <span class="close-x" onclick="cancelStepEdit()">✕</span>
+      </li>
+      <li class="quest-edit-links" id="step-edit-links-container">
+        ${renderLinkTagsHtml("step-edit", step.skill_ids || [], step.attribute_ids || [])}
       </li>`;
     }
 
@@ -2400,6 +2445,24 @@
       renderSagas();
     }
 
+    async function sagaStepQuestNow(questId) {
+      // Same flow as listQuestNow — switch to quest giver, start timer
+      currentMonsterImage = randomFromExcluding(monsterImages, currentMonsterImage);
+      currentEncounterLine = randomFromExcluding(encounterLines, currentEncounterLine);
+      await invoke("start_timer", { questId, monsterImage: currentMonsterImage, encounterLine: currentEncounterLine });
+      timerStartLocal = Date.now();
+      const timerState = await invoke("get_timer_state");
+      timerTitleLocal = timerState.questTitle;
+      timerInterval = setInterval(updateTimerDisplay, 1000);
+      setTabsLocked(true);
+      showView("quest-giver");
+    }
+
+    function toggleStepAddLinks(sagaId) {
+      const row = document.getElementById("step-add-links-" + sagaId);
+      if (row) row.classList.toggle("hidden");
+    }
+
     async function addSagaStep(e, sagaId) {
       e.preventDefault();
       const titleEl = document.getElementById("step-title-" + sagaId);
@@ -2410,7 +2473,16 @@
       if (!title) return;
       const timeOfDay = todEl ? readMask(todEl) : 7;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
-      await invoke("add_saga_step", { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek });
+      const step = await invoke("add_saga_step", { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek });
+
+      const linksRow = document.getElementById("step-add-links-" + sagaId);
+      if (linksRow) {
+        const { skillIds, attributeIds } = getSelectedLinkIds(linksRow);
+        if (skillIds.length > 0 || attributeIds.length > 0) {
+          await invoke("set_quest_links", { questId: step.id, skillIds, attributeIds });
+        }
+      }
+
       titleEl.value = "";
       sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
       renderSagas();
@@ -2429,12 +2501,12 @@
       renderSagas();
     }
 
-    function handleStepEditKey(e, id) {
-      if (e.key === "Enter") { e.preventDefault(); saveStepEdit(id); }
+    function handleStepEditKey(e, id, sagaId) {
+      if (e.key === "Enter") { e.preventDefault(); saveStepEdit(id, sagaId); }
       else if (e.key === "Escape") { e.preventDefault(); cancelStepEdit(); }
     }
 
-    async function saveStepEdit(id) {
+    async function saveStepEdit(id, sagaId) {
       const title = document.getElementById("step-edit-title").value.trim();
       if (!title) return;
       const difficulty = document.getElementById("step-edit-difficulty").value;
@@ -2443,6 +2515,12 @@
       const timeOfDay = todEl ? readMask(todEl) : 7;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
       await invoke("update_quest", { questId: id, title, difficulty, timeOfDay, daysOfWeek });
+
+      const linksContainer = document.getElementById("step-edit-links-container");
+      if (linksContainer) {
+        const { skillIds, attributeIds } = getSelectedLinkIds(linksContainer);
+        await invoke("set_quest_links", { questId: id, skillIds, attributeIds });
+      }
       editingStepId = null;
       if (expandedSagaId) {
         sagaSteps[expandedSagaId] = await invoke("get_saga_steps", { sagaId: expandedSagaId });
@@ -2496,11 +2574,36 @@
 
       // Defer saga completion check and full reload
       setTimeout(async () => {
-        sagaFlashActive = false;
-        await invoke("check_saga_completion", { sagaId });
-        cachedSagas = await invoke("get_sagas_with_progress");
-        sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
-        renderSagas();
+        const result = await invoke("check_saga_completion", { sagaId });
+
+        if (result.completed) {
+          // Show saga completion celebration
+          const sagaRow = sagaList.querySelector(`[data-id="${sagaId}"]`);
+          if (sagaRow) {
+            let celebHtml = `<div class="saga-celebration pulsing">`;
+            celebHtml += `<strong>${escapeHtml(result.sagaName)} complete!</strong>`;
+            if (result.bonusXp > 0) {
+              celebHtml += ` <span class="xp-flash" style="color: #7a5500">+${result.bonusXp} bonus XP</span>`;
+            }
+            if (result.levelUps?.length > 0) {
+              celebHtml += levelUpHtml(result.levelUps);
+            }
+            celebHtml += `</div>`;
+            sagaRow.insertAdjacentHTML("afterend", celebHtml);
+          }
+          // Hold celebration then reload
+          setTimeout(async () => {
+            sagaFlashActive = false;
+            cachedSagas = await invoke("get_sagas_with_progress");
+            sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+            renderSagas();
+          }, 3000);
+        } else {
+          sagaFlashActive = false;
+          cachedSagas = await invoke("get_sagas_with_progress");
+          sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+          renderSagas();
+        }
       }, 2500);
     }
 

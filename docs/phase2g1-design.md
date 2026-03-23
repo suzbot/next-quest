@@ -167,7 +167,26 @@ Update `get_quests` to exclude saga steps (WHERE saga_id IS NULL) so the Quest L
 
 4. **2G.1-4: Completion detection + stamp + due styling + progress bar** — When all steps in a run are complete, stamp `last_run_completed_at`. Saga and step rows show due/not-due/cooldown styling. Progress bar on collapsed saga rows. Last-run date on saga row. Testing: complete all steps, verify saga shows as done/cooldown. Recurring saga resets after cycle elapses. Progress bar reflects current run.
 
-5. **2G.1-5: Skill/attribute tags + Quest Now** — Tags button on step add/edit forms, linking steps to skills and attributes. XP flows to linked skills/attributes on completion. Quest Now (⚔) button on steps starts timer flow. Testing: add a step with tags, complete it, verify skill/attribute XP. Quest Now enters timer mode. Full step UI is now complete for balance testing.
+5. **2G.1-5: Skill/attribute tags + Quest Now + completion plumbing** — Multiple changes to make saga steps fully functional:
+
+   **Tags on steps:**
+   - Tags button on step add and edit forms (same tag selector UI as quests)
+   - `add_saga_step` frontend calls `set_quest_links` after creation
+   - `get_saga_steps` batch-loads skill_ids and attribute_ids (currently returns empty arrays)
+   - Step display in saga tab shows linked skill/attribute names in detail row (same as quest list)
+
+   **Quest Now on steps:**
+   - ⚔ button on saga step rows, starts timer flow (same as `listQuestNow` on quest list — switches to quest giver tab, enters timer mode)
+   - Timer completion (`timerDone`) and cancellation (`cancelTimer`) reload saga data if a saga step was being timed
+
+   **Quest struct update:**
+   - Add `saga_id: Option<String>` to the Quest struct so the frontend can detect saga steps
+
+   **Saga completion from quest giver:**
+   - When the quest giver suggests a saga step and the user clicks Done, `qgDone` must call `check_saga_completion` after `complete_quest`. Currently only the saga tab's `completeSagaStep` checks for saga completion — without this fix, completing the final step from the quest giver would never stamp `last_run_completed_at`.
+   - The quest's `saga_id` field (now on the Quest struct) identifies which saga to check. Also applies to overlay Done/Cast Completion.
+
+   **Testing:** Add a step with tags, complete it from saga tab, verify skill/attribute XP. Quest Now on a step enters timer mode. Complete final saga step from quest giver, verify saga stamps as complete and shows cooldown.
 
 6. **2G.1-6: Completion bonus + celebration** — 20% bonus of baseline step XP awarded when final step of a run completes. Celebration notification similar to level-up. Bonus distributes to character + final step's linked skills/attributes. Testing: complete all steps, verify bonus XP and celebration.
 

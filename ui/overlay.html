@@ -276,6 +276,7 @@
       const quest = currentResult.quest;
       const difficulty = quest.difficulty;
       const completion = await invoke("complete_quest", { questId: quest.id });
+      if (quest.saga_id) await invoke("check_saga_completion", { sagaId: quest.saga_id });
       const color = diffTextColors[difficulty] || "#1a6e1a";
 
       let textHtml = `<div class="quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;

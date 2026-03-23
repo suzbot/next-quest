@@ -81,6 +81,7 @@ pub struct Quest {
     pub is_due: bool,
     pub skill_ids: Vec<String>,
     pub attribute_ids: Vec<String>,
+    pub saga_id: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -757,7 +758,7 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
         )
         .map_err(|e| e.to_string())?;
 
-    let steps = stmt
+    let mut steps = stmt
         .query_map(rusqlite::params![saga_id], |row| {
             let quest_type_str: String = row.get(2)?;
             let quest_type = QuestType::from_str(&quest_type_str);
@@ -784,11 +785,24 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
                 is_due,
                 skill_ids: Vec::new(),
                 attribute_ids: Vec::new(),
+                saga_id: Some(saga_id.to_string()),
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    // Batch-load links
+    let skill_links = load_all_quest_skills(conn)?;
+    let attr_links = load_all_quest_attributes(conn)?;
+    for s in &mut steps {
+        if let Some(sids) = skill_links.get(&s.id) {
+            s.skill_ids = sids.clone();
+        }
+        if let Some(aids) = attr_links.get(&s.id) {
+            s.attribute_ids = aids.clone();
+        }
+    }
 
     Ok(steps)
 }
@@ -847,6 +861,7 @@ pub fn add_saga_step(
         is_due: true,
         skill_ids: Vec::new(),
         attribute_ids: Vec::new(),
+        saga_id: Some(saga_id),
     })
 }
 
@@ -861,9 +876,17 @@ pub fn reorder_saga_steps(conn: &Connection, saga_id: &str, step_ids: Vec<String
     Ok(())
 }
 
-/// Check if a saga's current run is complete (all steps have a completion >= run start).
-/// If complete, stamps last_run_completed_at and returns true.
-pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<bool, String> {
+#[derive(Serialize, Debug, Clone)]
+pub struct SagaCompletionResult {
+    pub completed: bool,
+    pub saga_name: String,
+    pub bonus_xp: i64,
+    pub level_ups: Vec<LevelUp>,
+}
+
+/// Check if a saga's current run is complete (all steps have a completion > run start).
+/// If complete, stamps last_run_completed_at, awards bonus XP, and returns result.
+pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCompletionResult, String> {
     let saga = conn.query_row(
         "SELECT id, name, cycle_days, sort_order, active, created_at, last_run_completed_at FROM saga WHERE id = ?1",
         rusqlite::params![saga_id],
@@ -879,7 +902,13 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<bool, S
     ).map_err(|e| e.to_string())?;
 
     let steps = get_saga_steps(conn, saga_id)?;
-    if steps.is_empty() { return Ok(false); }
+    let empty_result = SagaCompletionResult {
+        completed: false,
+        saga_name: saga.name.clone(),
+        bonus_xp: 0,
+        level_ups: Vec::new(),
+    };
+    if steps.is_empty() { return Ok(empty_result); }
 
     let run_start = saga.last_run_completed_at.as_deref().unwrap_or(&saga.created_at).to_string();
 
@@ -889,15 +918,101 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<bool, S
             .unwrap_or(false)
     });
 
-    if all_complete {
-        let now = chrono_now();
+    if !all_complete {
+        return Ok(empty_result);
+    }
+
+    // Stamp completion
+    let now = chrono_now();
+    conn.execute(
+        "UPDATE saga SET last_run_completed_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, saga_id],
+    ).map_err(|e| e.to_string())?;
+
+    // Calculate bonus: 20% of baseline XP across all steps
+    // baseline uses saga cycle: 5 × difficulty_mult × cycle_mult (time mult = 1.0)
+    let cycle_mult: f64 = match saga.cycle_days {
+        Some(c) => (c as f64).sqrt(), // recurring: sqrt(cycle_days)
+        None => 3.0, // one-off saga: same as one-off quest
+    };
+    let total_baseline: f64 = steps.iter().map(|s| {
+        let diff_mult = match s.difficulty {
+            Difficulty::Trivial => 1.0,
+            Difficulty::Easy => 5.0,
+            Difficulty::Moderate => 10.0,
+            Difficulty::Challenging => 20.0,
+            Difficulty::Epic => 40.0,
+        };
+        5.0 * diff_mult * cycle_mult
+    }).sum();
+    let bonus_xp = (total_baseline * 0.20).round() as i64;
+
+    // Award bonus to character
+    let mut level_ups = Vec::new();
+    if bonus_xp > 0 {
+        let char_before = get_character(conn)?;
         conn.execute(
-            "UPDATE saga SET last_run_completed_at = ?1 WHERE id = ?2",
-            rusqlite::params![now, saga_id],
+            "UPDATE character SET xp = xp + ?1",
+            rusqlite::params![bonus_xp],
         ).map_err(|e| e.to_string())?;
-        Ok(true)
-    } else {
-        Ok(false)
+        let char_after = get_character(conn)?;
+        if char_after.level > char_before.level {
+            level_ups.push(LevelUp { name: char_after.name.clone(), new_level: char_after.level });
+        }
+
+        // Award to final step's linked skills/attributes
+        let last_step = &steps[steps.len() - 1];
+        for attr_id in &last_step.attribute_ids {
+            let attr_before = get_attribute_by_id(conn, attr_id)?;
+            conn.execute(
+                "UPDATE attribute SET xp = xp + ?1 WHERE id = ?2",
+                rusqlite::params![bonus_xp, attr_id],
+            ).map_err(|e| e.to_string())?;
+            let attr_after = get_attribute_by_id(conn, attr_id)?;
+            if attr_after.level > attr_before.level {
+                level_ups.push(LevelUp { name: attr_after.name.clone(), new_level: attr_after.level });
+            }
+        }
+        for skill_id in &last_step.skill_ids {
+            let skill_before = get_skill_by_id(conn, skill_id)?;
+            conn.execute(
+                "UPDATE skill SET xp = xp + ?1 WHERE id = ?2",
+                rusqlite::params![bonus_xp, skill_id],
+            ).map_err(|e| e.to_string())?;
+            let skill_after = get_skill_by_id(conn, skill_id)?;
+            if skill_after.level > skill_before.level {
+                level_ups.push(LevelUp { name: skill_after.name.clone(), new_level: skill_after.level });
+            }
+        }
+    }
+
+    Ok(SagaCompletionResult {
+        completed: true,
+        saga_name: saga.name,
+        bonus_xp,
+        level_ups,
+    })
+}
+
+/// Check saga completion for a quest that might be a saga step.
+/// Looks up the quest's saga_id and delegates to check_saga_completion.
+pub fn check_saga_completion_for_quest(conn: &Connection, quest_id: &str) -> Result<SagaCompletionResult, String> {
+    let saga_id: Option<String> = conn
+        .query_row(
+            "SELECT saga_id FROM quest WHERE id = ?1",
+            rusqlite::params![quest_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    match saga_id {
+        Some(sid) => check_saga_completion(conn, &sid),
+        None => Ok(SagaCompletionResult {
+            completed: false,
+            saga_name: String::new(),
+            bonus_xp: 0,
+            level_ups: Vec::new(),
+        }),
     }
 }
 
@@ -1042,6 +1157,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
                 is_due,
                 skill_ids: Vec::new(),
                 attribute_ids: Vec::new(),
+                saga_id: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1292,6 +1408,7 @@ pub fn add_quest(
         is_due: true,
         skill_ids: Vec::new(),
         attribute_ids: Vec::new(),
+        saga_id: None,
     })
 }
 
@@ -1408,20 +1525,35 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
 
 pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion, String> {
     // Read quest data for XP calculation
-    let (quest_title, difficulty_str, quest_type_str, cycle_days): (String, String, String, Option<i32>) = conn
+    let (quest_title, difficulty_str, quest_type_str, cycle_days, saga_id): (String, String, String, Option<i32>, Option<String>) = conn
         .query_row(
-            "SELECT title, difficulty, quest_type, cycle_days FROM quest WHERE id = ?1",
+            "SELECT title, difficulty, quest_type, cycle_days, saga_id FROM quest WHERE id = ?1",
             rusqlite::params![quest_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|_| format!("Quest not found: {}", quest_id))?;
 
     let difficulty = Difficulty::from_str(&difficulty_str);
-    let quest_type = QuestType::from_str(&quest_type_str);
-    let base_xp = calculate_xp(&difficulty, &quest_type, cycle_days);
 
-    // Apply time-elapsed multiplier for recurring quests
-    let xp_earned = match quest_type {
+    // For saga steps, use the saga's cycle to determine quest_type and cycle_days
+    let (effective_type, effective_cycle) = if let Some(ref sid) = saga_id {
+        let saga_cycle: Option<i32> = conn.query_row(
+            "SELECT cycle_days FROM saga WHERE id = ?1",
+            rusqlite::params![sid],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        match saga_cycle {
+            Some(c) => (QuestType::Recurring, Some(c)),
+            None => (QuestType::OneOff, None), // one-off saga
+        }
+    } else {
+        (QuestType::from_str(&quest_type_str), cycle_days)
+    };
+
+    let base_xp = calculate_xp(&difficulty, &effective_type, effective_cycle);
+
+    // Apply time-elapsed multiplier for recurring quests/saga steps
+    let xp_earned = match effective_type {
         QuestType::OneOff => base_xp,
         QuestType::Recurring => {
             let last_completed: Option<String> = conn.query_row(
@@ -1438,7 +1570,7 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
                         .expect("Time went backwards")
                         .as_secs() as i64;
                     let elapsed_secs = (now_secs - last_secs).max(0) as f64;
-                    let cycle_secs = (cycle_days.unwrap_or(1).max(1) as f64) * 86400.0;
+                    let cycle_secs = (effective_cycle.unwrap_or(1).max(1) as f64) * 86400.0;
                     let r = elapsed_secs / cycle_secs;
                     let multiplier = time_elapsed_multiplier(r);
                     (base_xp as f64 * multiplier).round() as i64
@@ -1875,7 +2007,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
     let (skill_ids, attribute_ids) = load_quest_link_ids(conn, quest_id)?;
     conn.query_row(
         "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                q.difficulty, q.time_of_day, q.days_of_week,
+                q.difficulty, q.time_of_day, q.days_of_week, q.saga_id,
                 (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
          FROM quest q WHERE q.id = ?1",
         rusqlite::params![quest_id],
@@ -1887,7 +2019,8 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
             let difficulty_str: String = row.get(7)?;
             let time_of_day: i32 = row.get(8)?;
             let days_of_week: i32 = row.get(9)?;
-            let last_completed: Option<String> = row.get(10)?;
+            let saga_id: Option<String> = row.get(10)?;
+            let last_completed: Option<String> = row.get(11)?;
             let last_completed_days = last_completed.as_deref().and_then(utc_iso_to_local_days);
             let is_due = compute_is_due(&quest_type, active, last_completed_days, cycle_days, today);
             Ok(Quest {
@@ -1905,6 +2038,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
                 is_due,
                 skill_ids: skill_ids.clone(),
                 attribute_ids: attribute_ids.clone(),
+                saga_id,
             })
         },
     )
@@ -1998,6 +2132,47 @@ pub fn get_attributes(conn: &Connection) -> Result<Vec<Attribute>, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(attrs)
+}
+
+fn get_attribute_by_id(conn: &Connection, attr_id: &str) -> Result<Attribute, String> {
+    conn.query_row(
+        "SELECT id, name, sort_order, xp FROM attribute WHERE id = ?1",
+        rusqlite::params![attr_id],
+        |row| {
+            let xp: i64 = row.get(3)?;
+            let info = level_from_xp(xp, &LevelScale::Attribute);
+            Ok(Attribute {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                sort_order: row.get(2)?,
+                xp,
+                level: info.level,
+                xp_for_current_level: info.xp_for_current_level,
+                xp_into_current_level: info.xp_into_current_level,
+            })
+        },
+    ).map_err(|e| e.to_string())
+}
+
+fn get_skill_by_id(conn: &Connection, skill_id: &str) -> Result<Skill, String> {
+    conn.query_row(
+        "SELECT id, name, attribute_id, sort_order, xp FROM skill WHERE id = ?1",
+        rusqlite::params![skill_id],
+        |row| {
+            let xp: i64 = row.get(4)?;
+            let info = level_from_xp(xp, &LevelScale::Skill);
+            Ok(Skill {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                attribute_id: row.get(2)?,
+                sort_order: row.get(3)?,
+                xp,
+                level: info.level,
+                xp_for_current_level: info.xp_for_current_level,
+                xp_into_current_level: info.xp_into_current_level,
+            })
+        },
+    ).map_err(|e| e.to_string())
 }
 
 pub fn get_skills(conn: &Connection) -> Result<Vec<Skill>, String> {
@@ -3023,6 +3198,37 @@ mod tests {
 
         let char = get_character(&conn).unwrap();
         assert_eq!(char.xp, c.xp_earned);
+    }
+
+    #[test]
+    fn saga_step_xp_uses_saga_cycle() {
+        let conn = test_db();
+        // Create a weekly saga
+        let saga = add_saga(&conn, "Weekly".into(), Some(7)).unwrap();
+        // Add an Easy step
+        let step = add_saga_step(&conn, saga.id.clone(), "Step 1".into(), Difficulty::Easy, 7, 127).unwrap();
+        let c = complete_quest(&conn, step.id.clone()).unwrap();
+
+        // Easy step in a weekly saga: 5 × 5 × sqrt(7) = 66 (with time mult 1.0 for first completion)
+        let expected = (5.0 * 5.0 * (7.0f64).sqrt()).round() as i64;
+        assert_eq!(c.xp_earned, expected);
+
+        // Compare: a regular one-off Easy quest would give 75
+        let oneoff = add_quest(&conn, "One-off".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        let c2 = complete_quest(&conn, oneoff.id).unwrap();
+        assert_eq!(c2.xp_earned, 75);
+        assert!(c.xp_earned < c2.xp_earned); // weekly saga step earns less than one-off
+    }
+
+    #[test]
+    fn oneoff_saga_step_xp_matches_oneoff_quest() {
+        let conn = test_db();
+        let saga = add_saga(&conn, "One-off saga".into(), None).unwrap();
+        let step = add_saga_step(&conn, saga.id.clone(), "Step".into(), Difficulty::Easy, 7, 127).unwrap();
+        let c = complete_quest(&conn, step.id).unwrap();
+
+        // One-off saga step should match one-off quest: 5 × 5 × 3 = 75
+        assert_eq!(c.xp_earned, 75);
     }
 
     #[test]
