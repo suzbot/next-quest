@@ -2388,7 +2388,9 @@
             const stepDow = dowText(step.days_of_week ?? 127);
             const stepTod = todText(step.time_of_day ?? 7);
             const stepLinks = linkNamesText(step);
-            html += `<li class="quest-item step-item ${stepClass}" data-id="${step.id}">
+            html += `<li class="quest-item step-item ${stepClass}" data-id="${step.id}" tabindex="0"
+                        onkeydown="handleStepKey(event, '${step.id}', '${saga.id}')"
+                        onpointerdown="onStepPointerDown(event, '${step.id}', '${saga.id}')">
               <div class="quest-row-top">
                 <span class="expand-toggle" onclick="toggleDetail(this)">${stepLinks ? '▸' : ''}</span>
                 <span class="step-number">${i + 1}.</span>
@@ -2456,6 +2458,139 @@
       timerInterval = setInterval(updateTimerDisplay, 1000);
       setTabsLocked(true);
       showView("quest-giver");
+    }
+
+    // --- Step resequencing ---
+
+    let stepDraggedId = null;
+    let stepDragSagaId = null;
+    let stepDragStartY = 0;
+    let stepIsDragging = false;
+
+    function handleStepKey(e, stepId, sagaId) {
+      if (e.key === "ArrowUp" && e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        moveStep(stepId, sagaId, -1);
+      } else if (e.key === "ArrowDown" && e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        moveStep(stepId, sagaId, 1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusAdjacentStep(stepId, sagaId, -1);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusAdjacentStep(stepId, sagaId, 1);
+      }
+    }
+
+    async function moveStep(stepId, sagaId, direction) {
+      const steps = sagaSteps[sagaId] || [];
+      const ids = steps.map(s => s.id);
+      const idx = ids.indexOf(stepId);
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= ids.length) return;
+
+      ids.splice(idx, 1);
+      ids.splice(newIdx, 0, stepId);
+
+      await invoke("reorder_saga_steps", { sagaId, stepIds: ids });
+      sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+      renderSagas();
+      const movedEl = sagaList.querySelector(`.step-item[data-id="${stepId}"]`);
+      if (movedEl) movedEl.focus();
+    }
+
+    function focusAdjacentStep(stepId, sagaId, direction) {
+      const stepItems = Array.from(sagaList.querySelectorAll(`.step-item[tabindex]`));
+      const idx = stepItems.findIndex(el => el.dataset.id === stepId);
+      const next = stepItems[idx + direction];
+      if (next) next.focus();
+    }
+
+    function onStepPointerDown(e, stepId, sagaId) {
+      if (e.target.closest("button")) return;
+      if (e.target.closest(".expand-toggle")) return;
+      e.stopPropagation();
+      stepDraggedId = stepId;
+      stepDragSagaId = sagaId;
+      stepDragStartY = e.clientY;
+      stepIsDragging = false;
+
+      const onMove = (me) => {
+        if (!stepIsDragging && Math.abs(me.clientY - stepDragStartY) > 5) {
+          stepIsDragging = true;
+          document.body.classList.add("is-dragging");
+          window.getSelection()?.removeAllRanges();
+          const el = sagaList.querySelector(`.step-item[data-id="${stepDraggedId}"]`);
+          if (el) el.classList.add("dragging");
+        }
+        if (!stepIsDragging) return;
+
+        clearStepDropIndicators();
+        const target = getStepDropTarget(me.clientY);
+        if (target && target.id !== stepDraggedId) {
+          const rect = target.el.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          target.el.classList.add(me.clientY < mid ? "drop-above" : "drop-below");
+        }
+      };
+
+      const onUp = async (ue) => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+
+        if (!stepIsDragging) { stepDraggedId = null; return; }
+
+        const target = getStepDropTarget(ue.clientY);
+        clearStepDropIndicators();
+        document.body.classList.remove("is-dragging");
+        sagaList.querySelectorAll(".dragging").forEach(el => el.classList.remove("dragging"));
+
+        if (!target || target.id === stepDraggedId) { stepDraggedId = null; return; }
+
+        const steps = sagaSteps[stepDragSagaId] || [];
+        const ids = steps.map(s => s.id);
+        const draggedIdx = ids.indexOf(stepDraggedId);
+        if (draggedIdx === -1) { stepDraggedId = null; return; }
+
+        const rect = target.el.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        let targetIdx = ids.indexOf(target.id);
+        if (ue.clientY >= mid && targetIdx < draggedIdx) targetIdx++;
+        if (ue.clientY < mid && targetIdx > draggedIdx) targetIdx--;
+
+        const reordered = [...ids];
+        reordered.splice(draggedIdx, 1);
+        reordered.splice(targetIdx, 0, stepDraggedId);
+
+        await invoke("reorder_saga_steps", { sagaId: stepDragSagaId, stepIds: reordered });
+        sagaSteps[stepDragSagaId] = await invoke("get_saga_steps", { sagaId: stepDragSagaId });
+        stepDraggedId = null;
+        stepIsDragging = false;
+        renderSagas();
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    }
+
+    function getStepDropTarget(clientY) {
+      const items = Array.from(sagaList.querySelectorAll(".step-item:not(.quest-edit)"));
+      for (const el of items) {
+        const rect = el.getBoundingClientRect();
+        if (clientY >= rect.top && clientY <= rect.bottom) {
+          return { el, id: el.dataset.id };
+        }
+      }
+      return null;
+    }
+
+    function clearStepDropIndicators() {
+      sagaList.querySelectorAll(".drop-above, .drop-below").forEach(el => {
+        el.classList.remove("drop-above", "drop-below");
+      });
     }
 
     function toggleStepAddLinks(sagaId) {

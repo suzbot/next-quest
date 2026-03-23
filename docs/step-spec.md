@@ -1,87 +1,60 @@
-# Step Spec: Phase 2F-4 — Scored Selector + Debug Mode
+# Step Spec: Phase 2G.1-7 — Saga Step Resequencing
 
 ## Goal
 
-Replace the current list-order quest selector with a scoring system. Quests are scored by overdue ratio, hard-filtered by time-of-day and day-of-week. Debug mode shows score breakdowns. "Something Else" still advances by index through the scored list.
+Full drag-and-drop and keyboard resequencing for saga steps. Any step can be moved to any position within its saga.
 
 ---
 
-## Substep 1: Backend — scored selector
+## Keyboard resequencing
 
-**Replace `get_next_quest`** in `db.rs`:
+**Alt+ArrowUp / Alt+ArrowDown** moves a step one position within the saga.
 
-New signature: `get_next_quest(conn, skip_count) -> Result<Option<ScoredQuest>, String>`
+Implementation:
+- `handleStepKey(event, stepId, sagaId)` on each step row
+- On Alt+Arrow: rebuild the full step ID list with the moved step shifted one position, call `reorder_saga_steps`, reload steps, re-render, re-focus the moved step
+- Uses `reorder_saga_steps` (takes full ordered list), NOT sort_order pair swaps — avoids the neighbor-swap-back bug from previous attempt
+- Repeated presses keep moving in the same direction
 
-New return struct `ScoredQuest`:
-```rust
-pub struct ScoredQuest {
-    pub quest: Quest,
-    pub score: f64,
-    pub overdue_ratio: f64,
-    pub list_order_bonus: f64,
-    pub pool: String,          // "due" or "not_due"
-    pub due_count: usize,
-    pub not_due_count: usize,
-}
-```
+**ArrowUp / ArrowDown** (without Alt) moves focus between step rows within the saga. Does not jump to saga rows or other sagas.
 
-**Candidate pool:**
-1. All active quests
-2. Hard-filter: `matches_time_of_day(q.time_of_day, local_hour())`
-3. Hard-filter: `matches_day_of_week(q.days_of_week, local_weekday())`
-4. Split into due and not-due pools
+## Drag-and-drop resequencing
 
-**Scoring (due quests):**
-- Overdue ratio:
-  - Recurring with completions: `days_elapsed / cycle_days` (min 1.0)
-  - Recurring never completed: `(days_since_created + cycle_days) / cycle_days`
-  - One-off never completed: `(days_since_created + 9) / 9`
-- List order bonus: `0.01 * (max_sort_order - sort_order + 1) / max_sort_order`
-- Score = overdue_ratio + list_order_bonus
+**PointerDown on a step row** initiates a drag (after 5px movement threshold).
 
-**Scoring (not-due fallback):**
-- Only if due pool is empty
-- Score = `days_since_completed / max_days_in_pool` + list_order_bonus
-- Never completed = max
+Implementation:
+- `onStepPointerDown(event, stepId, sagaId)` on each step row
+- Drop target finder scoped to `.step-list` within the expanded saga — only step rows are valid targets, not saga rows
+- On drop: rebuild the full step ID list with the dragged step inserted at the drop position, call `reorder_saga_steps`, reload, re-render
+- Visual feedback: reuse existing `.dragging`, `.drop-above`, `.drop-below` CSS classes
+- `stopPropagation` on the pointer event to prevent saga-level handlers from firing
 
-**`skip_count`** still used as index into scored list (same as before, but list is now score-ordered instead of sort-order)
+## Step row requirements
 
-**commands.rs:**
-- Update `get_next_quest` to return `ScoredQuest`
+- Each step `<li>` needs `tabindex="0"` for keyboard focus
+- `onkeydown` handler for keyboard resequencing
+- `onpointerdown` handler for drag initiation
+- Buttons within the row (✓, ⚔, expand toggle) must not trigger drag — check `e.target.closest("button")` same as quest list
 
-**Tests:**
-- More-overdue quest scores higher than less-overdue
-- Time-of-day filter excludes out-of-window quests
-- Day-of-week filter excludes off-day quests
-- Empty DB returns None
-- Fallback to not-due pool when no due quests
-- Update existing quest selection tests to match new behavior
+## After reorder
 
----
+- Call `reorder_saga_steps` with saga_id and the new ordered list of step IDs
+- Reload `sagaSteps[sagaId]` from backend
+- Re-render sagas (step numbers update to reflect new order)
+- Re-focus the moved step (keyboard) or clear drag state (drag)
 
-## Substep 2: Debug mode
+## Scoping
 
-**Migration:** Add `debug_scoring INTEGER NOT NULL DEFAULT 0` to settings.
+- All interactions are scoped to the expanded saga's step list
+- `getStepDropTarget(sagaId, clientY)` searches only within the step list of the specified saga
+- Keyboard focus navigation (`focusAdjacentStep`) only moves between siblings in the same step list
 
-**Settings struct update:** Add `debug_scoring: bool` to `SettingsInfo`.
+## Testing
 
-**`get_settings_db`** / **`update_settings`:** Include the new field.
-
-**Frontend — Settings tab:** New toggle for "Debug Scoring" (same style as Encounters toggle).
-
-**Frontend — Quest giver:** When debug is on, show score breakdown below quest name:
-```
-Score: 2.01  (overdue: 2.0 | order: +0.01)
-Pool: due | Candidates: 5 due, 3 not-due
-```
-
----
-
-## NOT in this step
-
-- Skip tracking / freshness penalty (2F-5)
-- Changing "Something Else" mechanism (2F-5)
-
-## Done When
-
-Quest giver suggests quests by overdue score. Time/day filters exclude ineligible quests. Debug mode shows score breakdown. `cargo test` passes.
+- Add 4+ steps to a saga
+- Alt+ArrowDown on step 1 → becomes step 2, step numbers update
+- Alt+ArrowDown again → becomes step 3
+- Alt+ArrowUp → back to step 2
+- Drag step 4 to position 1 → step numbers update, order persists after tab switch
+- Buttons (✓, ⚔) still work after reorder
+- Focus stays on the moved step after keyboard reorder
