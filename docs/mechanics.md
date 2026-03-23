@@ -175,6 +175,7 @@ The primary signal for quest priority. Higher = more urgent.
 | Recurring, has completions | `days_since_completed / cycle_days` (min 1.0) |
 | Recurring, never completed | `(days_since_created + cycle_days) / cycle_days` |
 | One-off, never completed | `(days_since_created + 9) / 9` |
+| Saga step (active) | `(days_since_activated + 9) / 9` — where days_since_activated is days since previous step completed or saga became due |
 
 ### Skip Penalty
 
@@ -215,6 +216,40 @@ score = overdue_ratio - skip_penalty + list_order_bonus
 ### Days-of-Week Bitmask
 
 Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 = every day.
+
+## Saga Step XP
+
+Saga steps use the parent saga's cycle for XP calculation, not the one-off multiplier.
+
+### Step XP Formula
+
+```
+Base XP     = 5 × difficulty_multiplier × cycle_multiplier
+cycle_mult  = sqrt(saga.cycle_days)    [recurring saga]
+cycle_mult  = 3                         [one-off saga]
+Time mult   = f(time_since_step_last_done / saga.cycle_days)
+Final XP    = round(Base XP × Time mult)
+```
+
+### Step Base XP Examples (Easy difficulty, before time modifier)
+
+| Saga cycle | Cycle mult | Base XP |
+|---|---|---|
+| One-off | 3.0 | 75 |
+| Daily (1d) | 1.0 | 25 |
+| Weekly (7d) | 2.6 | 66 |
+| Monthly (30d) | 5.5 | 137 |
+
+### Saga Completion Bonus
+
+Awarded when all steps in a run are complete. Based on baseline XP (time mult = 1.0), not actual earned XP — no procrastination reward.
+
+```
+bonus = round(0.20 × sum of all steps' baseline XP)
+baseline_per_step = 5 × difficulty_mult × cycle_mult
+```
+
+Distributed to: character + final step's linked skills/attributes.
 
 ## Default Skill-to-Attribute Mapping
 

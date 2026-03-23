@@ -208,13 +208,17 @@ Code quality pass before adding more features:
 
 ## Phase 2G: "Advanced Logic"
 
-2G.1 - Sagas:
+2G.1 - Sagas: ✓
 
-1. **Sagas** — multi-step goals with ordered sub-quests, surfaced one step at a time
-   a. Need to brainstorm ideas for how this would work. I'm thinking a new saga tab. Then, one item at a time out of each saga gets pulled in the quest pool.
-   b. Sagas can be recurring at the umbrella level (number of cycle days after last task completion before first task starts up)
-   c. Substeps can have their own attributes, skills, DOW, TOD, difficulty.
-   d. Other ideas? bonus xp for finishing a saga beyond that from its steps?
+1. **Saga tab** — create, edit, delete sagas (one-off or recurring with cycle days)
+2. **Saga steps are quests** — full quest UI (title, difficulty, TOD, DOW, skill/attribute tags) within expandable saga view
+3. **Quest selector integration** — one active step per saga in candidate pool, scored like one-offs, saga name shown in quest giver
+4. **Current run logic** — `last_run_completed_at` stamp, due/cooldown styling, progress bar, early new-run support
+5. **Step XP uses saga cycle** — recurring saga steps earn XP based on saga's cycle_days, not one-off multiplier
+6. **Saga completion bonus** — 20% of baseline step XP, gold celebration notification, distributes to character + final step's linked skills/attributes
+7. **Full resequencing** — drag-and-drop + Alt+Arrow keyboard reordering for steps, any position
+8. **Quest Now + Done on steps** — timer flow and completion with XP flash from saga tab
+9. **Saga completion from quest giver/overlay** — completing final step via quest giver or overlay stamps the saga
 
 2G.2 Second logic pass after living with 2F:
 

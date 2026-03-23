@@ -1,6 +1,6 @@
 # Phase 2G.1: Sagas — Requirements (WIP)
 
-**Status:** Draft
+**Status:** Complete
 
 **Goal:** Multi-step goals with ordered sub-quests, surfaced one step at a time through the quest giver. Sagas can be one-off or recurring.
 

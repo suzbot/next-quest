@@ -17,6 +17,8 @@ A template for something you do. Can be recurring or one-off.
 | difficulty | Enum | `trivial`, `easy`, `moderate`, `challenging`, `epic` |
 | time_of_day | Integer | Bitmask: Morning=1, Afternoon=2, Evening=4. Default 7 (all). 0 or 7 = anytime. |
 | days_of_week | Integer | Bitmask: Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 (every day). |
+| saga_id | UUID? (text) | FK to Saga. NULL for regular quests, set for saga steps. |
+| step_order | Integer? | Position within saga. NULL for regular quests. |
 
 **Derived values (computed, not stored):**
 - `last_completed` — most recent completion timestamp for this quest
@@ -31,6 +33,8 @@ A template for something you do. Can be recurring or one-off.
 - Difficulty defaults to `easy`. Display labels: Trivial, Easy, Fair, Hard, Epic.
 - Time-of-day defaults to 7 (all times). All or none selected = anytime.
 - Days-of-week defaults to 127 (every day). All or none selected = every day.
+- Saga steps (`saga_id` set) are excluded from the Quest List tab. They appear in the Saga tab and through the quest giver.
+- Saga step XP uses the parent saga's cycle_days (not the one-off multiplier). One-off saga steps use 3x.
 
 ### Completion
 A visible record that you did a quest at a specific time.
@@ -94,6 +98,26 @@ A directional goal, mapped to one attribute. Seeded on first launch with 12 skil
 - Connection: Nature, Community, Sociality, Animal Handling
 - Responsibility: Bureaucracy, Logistics
 
+### Saga
+A multi-step goal with ordered sub-quests. Can be one-off or recurring.
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID (text) | Unique identifier |
+| name | String | Saga title |
+| cycle_days | Integer? | NULL = one-off, set = recurring (days after run completion before reset) |
+| sort_order | Integer | Display order (creation order) |
+| active | Bool (int) | 1 = active |
+| created_at | Timestamp | ISO 8601 creation time |
+| last_run_completed_at | Timestamp? | Stamped when all steps complete a run. Drives recurring reset and cooldown styling. Not recomputed — permanent once stamped. |
+
+**Rules:**
+- Saga steps are quests with `saga_id` and `step_order` set.
+- A saga's "current run" starts after `last_run_completed_at` (or `created_at` for new sagas). A step is complete in the current run if its `last_completed > last_run_completed_at`.
+- A saga is due when: one-off and incomplete, or recurring and `cycle_days` have elapsed since `last_run_completed_at`, or user has started a new run early (any steps completed after stamp).
+- The quest giver surfaces one active step per saga: the first step (by step_order) not yet completed in the current run.
+- When all steps have a current-run completion, `last_run_completed_at` is stamped and a completion bonus is awarded.
+
 ### Quest-Skill Link (quest_skill)
 Many-to-many join table between quests and skills.
 
@@ -116,13 +140,14 @@ Many-to-many join table between quests and attributes.
 Quest (1) ──── has many ──── Completion
 Quest (M) ──── many-to-many ──── Skill       (via quest_skill)
 Quest (M) ──── many-to-many ──── Attribute   (via quest_attribute)
+Saga (1) ──── has many ──── Quest            (via quest.saga_id)
 Attribute (1) ──── has many ──── Skill
 Character (singleton)
 ```
 
 Completions reference quests via `quest_id`, but the FK is nullable — completions
 survive quest deletion. Deleting a quest also cleans up its link rows in quest_skill
-and quest_attribute.
+and quest_attribute. Deleting a saga deletes its steps and orphans their completions.
 
 ## XP Engine
 
