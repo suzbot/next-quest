@@ -6,7 +6,7 @@ mod tray;
 
 use commands::{AppSkipState, AppTimerState, AppTrayState, DbState, SkipStateInner, TimerStateInner, TrayStateInner};
 use std::sync::Mutex;
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 fn main() {
     // Store the database in the app's data directory
@@ -198,6 +198,7 @@ fn show_overlay(app: &tauri::AppHandle) {
 
     if let Some(overlay) = app.get_webview_window("overlay") {
         // Already exists (off-screen) — move back and force to front
+        let _ = overlay.emit("overlay-refresh", ());
         let _ = overlay.center();
         let _ = overlay.set_always_on_top(false);
         let _ = overlay.set_always_on_top(true);
