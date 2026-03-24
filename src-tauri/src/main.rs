@@ -107,6 +107,11 @@ fn main() {
             commands::create_campaign,
             commands::rename_campaign,
             commands::delete_campaign,
+            commands::check_campaign_progress,
+            commands::get_accomplishments,
+            commands::delete_accomplishment,
+            commands::set_offered_quest,
+            commands::get_offered_quest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

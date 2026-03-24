@@ -234,31 +234,37 @@ This can later be built on to do things like more complex and dynamic rewards, h
 
 2H.1 Second logic pass after living with 2F:
 
-2. **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
-3. **Attribute/skill balancing** — favor quests linked to underleveled attributes for variety
-4. **Difficulty ramping** — start day with easier quests, suggest harder ones after momentum builds
-
-2H.2 Clean up abilities and general UI improvements
-
-1. **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
+1. Check and refine how 'saga steps' are integrated into quest-giver list.
 2. **Edit last-done date** — correct mistakes in completion history
-3. Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
-4. Evaluate: adding quest timer to overlay instead of going into full app?
-5. Evaluate: having quest giver view always at the top and tabs expand bottom detail?
-6. Try again with the reseqencing of attributes and skills (don't screw it up this time)
+3. Split evening into Evening (EV) and Night (NT)
+4. Add ! -> !!!!! Importance field, incorporate into quest giver, reweight against urgency
+5. More weight to sequence (same as skip weight)
+6. More weight if its in a saga or campaign? Or just active/started ones?
+7. **Attribute/skill balancing** — favor quests linked to underleveled attributes for variety
+
+2H.3 Potential UI reorg
+
+1. Evaluate: adding quest timer to overlay instead of going into full app?
+2. Evaluate: having quest giver view always at the top and tabs expand bottom detail?
+3. Show kind of XP gained on celebration text?
+4. Show on next step whether its part of a saga, feat, or both
 
 ## Phase 2I: "Rewards"
 
 - Receive coin and items from questing
 - Rewards
 - Buy stuff with gold
+- Rotating fighting text at different skill/attribute levels
 
 ## Phase 3: "The Full Party"
 
+- **Difficulty ramping** — start day with easier quests, suggest harder ones after momentum builds
+- **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
+- Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
+- **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
 - Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
 - Seed data guard rework (seed_data() skips if character exists, needs rethinking)
 - SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
-- Character Class selection
 - Elemental Alignment Matrix: Fire (Fight, Shout, Hot and Bright) <-> Water (Follow, Attune, Adapt, Flow, Listen, Reflect), Earth (Grounded, Solidity, Present,) <-> Sky (Abstract, Future/Past, Thinking, Planning, Remembering) Centered: Green, Growth
 - Character image with visual progression
 - Novelty engine

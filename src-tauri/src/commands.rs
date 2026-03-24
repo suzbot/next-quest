@@ -49,6 +49,7 @@ pub struct AppTrayState(pub Mutex<TrayStateInner>);
 pub struct SkipStateInner {
     pub skip_counts: std::collections::HashMap<String, i32>,
     pub reset_date: String,
+    pub offered_quest_id: Option<String>,
 }
 
 pub struct AppSkipState(pub Mutex<SkipStateInner>);
@@ -198,6 +199,31 @@ pub fn delete_campaign(
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::delete_campaign(&conn, id)
+}
+
+#[tauri::command]
+pub fn check_campaign_progress(
+    state: State<DbState>,
+    target_type: String,
+    target_id: String,
+) -> Result<Vec<db::CampaignCompletionResult>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::check_campaign_progress(&conn, &target_type, &target_id)
+}
+
+#[tauri::command]
+pub fn get_accomplishments(state: State<DbState>) -> Result<Vec<db::Accomplishment>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_accomplishments(&conn)
+}
+
+#[tauri::command]
+pub fn delete_accomplishment(
+    state: State<DbState>,
+    id: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::delete_accomplishment(&conn, id)
 }
 
 // --- Completions ---
@@ -362,6 +388,24 @@ pub fn skip_quest(
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_offered_quest(
+    skip_state: State<AppSkipState>,
+    quest_id: Option<String>,
+) -> Result<(), String> {
+    let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    skips.offered_quest_id = quest_id;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_offered_quest(
+    skip_state: State<AppSkipState>,
+) -> Result<Option<String>, String> {
+    let skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    Ok(skips.offered_quest_id.clone())
+}
+
 // --- Timer ---
 
 #[tauri::command]
@@ -374,11 +418,12 @@ pub fn start_timer(
 ) -> Result<TimerInfo, String> {
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
 
-    // Look up quest title
-    let quests = db::get_quests(&conn)?;
-    let quest = quests.iter().find(|q| q.id == quest_id)
-        .ok_or_else(|| format!("Quest not found: {}", quest_id))?;
-    let title = quest.title.clone();
+    // Look up quest title directly (not via get_quests, which excludes saga steps)
+    let title: String = conn.query_row(
+        "SELECT title FROM quest WHERE id = ?1",
+        rusqlite::params![quest_id],
+        |row| row.get(0),
+    ).map_err(|_| format!("Quest not found: {}", quest_id))?;
 
     let now_millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

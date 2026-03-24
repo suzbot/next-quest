@@ -1,226 +1,203 @@
-# Step Spec: Phase 2G.2-2 — Progress Tracking
+# Step Spec: Phase 2G.2-3/4 — Completion Bonus, Celebration, Accomplishments, Duplication
 
 ## Goal
 
-Quest and saga completions increment matching campaign criteria. When all criteria are met, the campaign auto-completes (stamps `completed_at`, dims in list). Also fixes three pre-existing saga completion gaps so that all five completion paths correctly handle saga completion and can chain into campaign progress.
+When a campaign completes: calculate bonus XP, award it to character, show a gold celebration notification, and create an accomplishment record. Accomplishments appear in a new column on the Character tab. Campaigns can be duplicated to create a new version with adjusted criteria.
 
 ---
 
-## Substep 1: Backend — `check_campaign_progress` function + tests
+## Substep 1: Backend + frontend — bonus calculation, accomplishment CRUD, celebration notifications ✅
 
-**New struct** (`db.rs`):
+### Backend
+
+**Bonus calculation** — add to `check_campaign_progress` (db.rs), replacing the `bonus_xp: 0` placeholder:
+
+When all criteria are met, before returning the result:
+
+```
+per quest criterion:
+  look up quest difficulty, quest_type, cycle_days
+  calculate_xp(difficulty, quest_type, cycle_days) × target_count
+
+per saga criterion:
+  150 × target_count
+
+bonus_xp = round(0.20 × sum across all criteria)
+```
+
+If the quest has been deleted, use 0 for that criterion's contribution (can't look up difficulty). Saga criteria use a flat 150 XP per run.
+
+Award bonus XP to character only (`UPDATE character SET xp = xp + bonus_xp`). Detect character level-up (snapshot before/after, same pattern as saga completion bonus).
+
+Add `level_ups: Vec<LevelUp>` to `CampaignCompletionResult`.
+
+Create accomplishment record: `INSERT INTO accomplishment (id, campaign_id, campaign_name, completed_at, bonus_xp)` with a snapshot of the campaign name and the calculated bonus.
+
+**Accomplishment CRUD:**
+
+- `get_accomplishments(conn) -> Vec<Accomplishment>` — returns all accomplishments ordered by `completed_at` descending.
+- `delete_accomplishment(conn, id)` — deletes the record. Does NOT reduce XP.
+
+**Accomplishment struct:**
 
 ```rust
 #[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct CampaignCompletionResult {
-    pub completed: bool,
+pub struct Accomplishment {
+    pub id: String,
+    pub campaign_id: Option<String>,
     pub campaign_name: String,
-    pub bonus_xp: i64,  // always 0 in this step — wired in 2G.2-3
+    pub completed_at: String,
+    pub bonus_xp: i64,
 }
 ```
 
-**New function** (`db.rs`):
-
-`check_campaign_progress(conn, target_type: &str, target_id: &str) -> Result<Vec<CampaignCompletionResult>, String>`
-
-Logic:
-1. Find all active campaigns (`completed_at IS NULL`) that have a criterion matching `target_type` and `target_id`
-2. For each matching criterion, increment `current_count` by 1
-3. For each affected campaign, check if ALL its criteria are now met (`current_count >= target_count` for every criterion)
-4. If a campaign is fully met: stamp `completed_at` to now
-5. Return a list of campaigns that just completed (usually 0 or 1). Include `completed: true`, the campaign name, and `bonus_xp: 0` (placeholder for step 3)
-
-No bonus XP award, no accomplishment creation — those are step 2G.2-3.
-
-**New command** (`commands.rs`):
-
-```rust
-#[tauri::command]
-pub fn check_campaign_progress(
-    state: State<DbState>,
-    target_type: String,
-    target_id: String,
-) -> Result<Vec<db::CampaignCompletionResult>, String>
-```
-
-Register in `invoke_handler` in `main.rs`.
-
-**Bugfix — SagaCompletionResult serde:**
-
-Add `#[serde(rename_all = "camelCase")]` to `SagaCompletionResult` (line 1041 of `db.rs`). Without this, the frontend accesses `sagaResult.sagaName`, `sagaResult.bonusXp`, and `sagaResult.levelUps` but the struct serializes as `saga_name`, `bonus_xp`, `level_ups` — causing saga celebrations to display "undefined complete!" with no bonus XP or level-ups.
+**Commands** (commands.rs): Wrappers for `get_accomplishments` and `delete_accomplishment`. Register in `main.rs`.
 
 **Tests:**
 
-1. `check_campaign_progress_increments_quest_criterion` — Create campaign with quest criterion (target_count: 2). Call `check_campaign_progress("quest_completions", quest_id)`. Verify current_count is now 1 (via `get_campaigns`). Returns empty vec (not yet complete).
+1. `check_campaign_progress_awards_bonus_xp` — Create campaign with 2 quest criteria (easy recurring daily ×2, moderate recurring 7-day ×1). Complete to trigger campaign completion. Verify bonus_xp > 0, matches formula: `round(0.20 × (calculate_xp(easy, recurring, 1) × 2 + calculate_xp(moderate, recurring, 7) × 1))`. Verify character XP increased by bonus amount.
 
-2. `check_campaign_progress_completes_campaign` — Campaign with quest criterion (target_count: 1). Call once. Returns vec with one result: `completed: true`, correct campaign name, `bonus_xp: 0`. Verify campaign's `completed_at` is now set (via `get_campaigns`).
+2. `check_campaign_progress_creates_accomplishment` — Complete a campaign. Verify accomplishment record exists via `get_accomplishments`: correct campaign_name snapshot, bonus_xp, completed_at set.
 
-3. `check_campaign_progress_multiple_campaigns_same_quest` — Two campaigns both referencing the same quest. One call to `check_campaign_progress` increments the criterion in both campaigns.
+3. `check_campaign_progress_saga_criterion_bonus` — Campaign with saga criterion (×2). Complete twice. Verify bonus includes `150 × 2` for the saga portion.
 
-4. `check_campaign_progress_saga_criterion` — Campaign with saga criterion. Call `check_campaign_progress("saga_completions", saga_id)`. Verify saga criterion count incremented.
+4. `check_campaign_progress_deleted_quest_bonus` — Campaign with criterion for a quest that has been deleted. The deleted criterion contributes 0 to the bonus sum. Verify the campaign still completes and bonus is calculated from remaining valid criteria only.
 
-5. `check_campaign_progress_no_match` — Call with a quest_id that no campaign references. Returns empty vec. No campaigns modified.
+5. `check_campaign_progress_level_up_detection` — Set character XP just below a level threshold. Complete a campaign whose bonus pushes character over. Verify `level_ups` in the result contains the character level-up.
 
-6. `check_campaign_progress_skips_completed_campaign` — Campaign that already has `completed_at` set. New call to `check_campaign_progress` with a matching target does NOT increment its criteria.
+6. `delete_accomplishment_preserves_xp` — Complete a campaign (character gains bonus XP). Delete the accomplishment. Verify character XP is unchanged.
 
-7. `check_campaign_progress_multi_criteria_partial` — Campaign with 2 criteria (quest A ×2, quest B ×1). Complete quest A once — campaign not complete (1/2 + 0/1). Complete quest B once — campaign not complete (1/2 + 1/1). Complete quest A again — campaign completes (2/2 + 1/1).
-
-8. `check_campaign_progress_full_saga_flow` — Integration test: Create saga with 2 steps. Create campaign with quest_completions criterion for step 1 (×1) and saga_completions criterion for the saga (×1). Complete step 1 → call `check_campaign_progress("quest_completions", step1_id)` → quest criterion increments. Complete step 2 → call `check_saga_completion` → saga completes. Call `check_campaign_progress("quest_completions", step2_id)` then `check_campaign_progress("saga_completions", saga_id)` → saga criterion increments → campaign completes.
+7. `delete_campaign_orphans_accomplishment` — Complete a campaign (accomplishment created). Delete the campaign. Verify accomplishment still exists with `campaign_id: None`.
 
 **Testing checkpoint:** `cargo test` — all existing + new tests pass.
 
+### Frontend — celebration notifications at all completion paths
+
+**CampaignCompletionResult now has `bonusXp` and `levelUps`.**
+
+At each of the five completion paths, `check_campaign_progress` already returns `Vec<CampaignCompletionResult>`. When any result has `completed: true`, show a gold celebration notification (same `.saga-celebration.pulsing` style):
+
+```
+Campaign Name complete! +N bonus XP
+```
+
+Plus any level-ups from the bonus.
+
+**Where to show:**
+
+The campaign progress calls are already wired at all five paths. After each call, check the results and append celebration HTML if any campaigns completed. The celebration is appended after any saga celebration (campaigns are a higher-level grouping).
+
+Specific locations:
+- `completeQuest()` (quest list) — append to feedbackDiv, below saga celebration if present
+- `qgDone()` (quest giver) — append to textHtml, after saga celebration block
+- `timerDone()` — append to textHtml, after saga celebration block
+- `completeSagaStep()` (saga tab) — insert after saga row (same as saga celebration, but below it)
+- `questDone()` (overlay) — append to textHtml, after saga celebration block
+
+**Helper function** (both index.html and overlay.html):
+
+```javascript
+function campaignCelebrationHtml(results) {
+  return results
+    .filter(r => r.completed)
+    .map(r => {
+      let html = `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
+      html += `<strong>${escapeHtml(r.campaignName)} complete!</strong>`;
+      if (r.bonusXp > 0) {
+        html += ` <span class="xp-flash" style="color: #7a5500">+${r.bonusXp} bonus XP</span>`;
+      }
+      if (r.levelUps?.length > 0) {
+        html += levelUpHtml(r.levelUps);
+      }
+      html += `</div>`;
+      return html;
+    }).join("");
+}
+```
+
+**Change to campaign progress call pattern:** Currently each path fires `check_campaign_progress` and ignores the return value. Change to capture the results and pass them to the celebration helper. Where there are two calls (quest + saga), collect results from both.
+
+**Testing checkpoint:** Build app. Create a campaign with 1 easy quest criterion. Complete the quest. Verify gold celebration shows with bonus XP. Check that character XP increased. Navigate to Character tab — accomplishment should appear (substep 2).
+
 ---
 
-## Substep 2: Frontend — saga completion bugfixes + campaign progress hooks
+## Substep 2: Frontend — accomplishments column on Character tab
 
-### Bugfix: `completeQuest()` (quest list, `index.html` ~line 1420)
+**Layout change:**
 
-Currently does NOT check saga completion when completing a saga step. Fix:
-
-```
-After complete_quest:
-  → look up quest.saga_id from cachedQuests
-  → if saga_id: call check_saga_completion({ sagaId })
-  → if saga completed: show saga celebration below the quest row
-    (same gold-accented pulsing div as qgDone/completeSagaStep)
-```
-
-### Bugfix: `timerDone()` (`index.html` ~line 1848)
-
-Currently calls `check_saga_completion_for_quest` but discards the result. Fix:
+Wrap the existing character content in a two-column flex container. Existing content gets `flex: 2`. New accomplishments column gets `flex: 1`.
 
 ```
-Store the saga result.
-If completed: show saga celebration in the completion feedback
-  (append gold div after XP/level-up text, same pattern as qgDone)
+<div style="display: flex; gap: 16px;">
+  <div style="flex: 2;">
+    <!-- existing: char header, meter, attributes, skills -->
+  </div>
+  <div style="flex: 1;">
+    <h2>Accomplishments</h2>
+    <!-- accomplishment list -->
+  </div>
+</div>
 ```
 
-Also need to resolve saga_id for campaign progress: look up quest from `cachedQuests` using `completion.quest_id`.
+**Data loading:**
 
-### Bugfix: `questDone()` (overlay, `overlay.html` ~line 274)
+Add `invoke("get_accomplishments")` to `loadCharacterView`'s parallel fetches. Pass to `renderCharacterView`.
 
-Currently calls `check_saga_completion` but discards the result. Fix:
+**Accomplishment display:**
 
-```
-Store the saga result.
-If completed: append saga celebration to completion feedback
-  (gold div with saga name + bonus XP, same pattern as qgDone)
-```
+Each entry shows:
+- Campaign name (from snapshot)
+- Completion date (formatted same as completion dates elsewhere)
+- Bonus XP
+- Delete button (×) — same pattern as completion deletion, with confirm
 
-### Campaign progress hooks — all five completion paths
+Empty state: "No accomplishments yet."
 
-After each quest completion, call `check_campaign_progress("quest_completions", questId)`.
-If a saga also completed, additionally call `check_campaign_progress("saga_completions", sagaId)`.
+**Testing checkpoint:** Build app. Complete a campaign — verify accomplishment appears on Character tab with name, date, and bonus XP. Delete the campaign — accomplishment survives. Delete the accomplishment — it disappears, XP unchanged.
 
-The saga_id is available at each path via:
-- `completeQuest()` — `cachedQuests.find(q => q.id === id).saga_id`
-- `qgDone()` — `sagaId` parameter
-- `timerDone()` — `cachedQuests.find(q => q.id === completion.quest_id).saga_id`
-- `completeSagaStep()` — `sagaId` parameter
-- `questDone()` (overlay) — `quest.saga_id`
+---
 
-No celebration notification for campaign completion yet (that's 2G.2-3). The campaign list will show updated counts and dimmed styling on next refresh.
+## Substep 3: Frontend — campaign duplication
 
-### Add campaigns to `loadAll()`
+**Duplicate action:**
 
-Add `invoke("get_campaigns")` to the parallel fetches in `loadAll()` and store result in `cachedCampaigns`. Then call `renderCampaigns()` if the campaigns view is visible. This ensures campaign progress is reflected after every completion.
+Add a "Dup" button to the campaign edit mode row (alongside Save, Del, ✕). Available on any campaign — active or completed.
 
-### Specific changes per function
-
-**`completeQuest(id)`** (`index.html`):
-```
-const quest = cachedQuests.find(q => q.id === id);
-const completion = await invoke("complete_quest", { questId: id });
-// ... existing XP/level-up display ...
-
-// NEW: saga completion check
-let sagaResult = null;
-if (quest?.saga_id) {
-  sagaResult = await invoke("check_saga_completion", { sagaId: quest.saga_id });
-  if (sagaResult?.completed) {
-    // show saga celebration div below quest row
-  }
-}
-
-// NEW: campaign progress
-await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: id });
-if (sagaResult?.completed && quest?.saga_id) {
-  await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
+```javascript
+function renderCampaignEdit(c) {
+  return `<li class="quest-edit" data-id="${c.id}">
+    <input ... >
+    <button onclick="saveCampaignEdit('${c.id}')">Save</button>
+    <button onclick="duplicateCampaign('${c.id}')">Dup</button>
+    <button class="del-btn" onclick="deleteCampaign('${c.id}')">Del</button>
+    <span class="close-x" onclick="cancelCampaignEdit()">✕</span>
+  </li>`;
 }
 ```
 
-**`qgDone(questId, difficulty, sagaId)`** (`index.html`):
-```
-// existing code already handles saga completion + celebration
-// ADD after saga check:
-await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: questId });
-if (sagaResult?.completed && sagaId) {
-  await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: sagaId });
-}
-```
+**`duplicateCampaign(id)` function:**
 
-**`timerDone()`** (`index.html`):
-```
-const completion = await invoke("complete_timer");
-// FIX: use saga result instead of discarding
-let sagaResult = null;
-const quest = cachedQuests.find(q => q.id === completion.quest_id);
-if (completion.quest_id) {
-  sagaResult = await invoke("check_saga_completion_for_quest", { questId: completion.quest_id });
-}
-// ... existing display code ...
-// ADD saga celebration if completed (same pattern as qgDone)
+1. Find the campaign in `cachedCampaigns` by ID
+2. Pre-fill the creation form:
+   - Name: `campaign.name + " copy"`
+   - Criteria: copy each criterion's `targetType`, `targetId`, `targetName`, `targetCount` into `campaignDraftCriteria`
+3. Open the creation form (same as `showCampaignForm` but with pre-filled data)
+4. Close edit mode
 
-// NEW: campaign progress
-if (completion.quest_id) {
-  await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: completion.quest_id });
-}
-if (sagaResult?.completed && quest?.saga_id) {
-  await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
-}
-```
+The user can then rename, add/remove/adjust criteria before saving. Saving calls `create_campaign` — it's just a regular creation with a new `created_at` and all counts at 0.
 
-**`completeSagaStep(questId, sagaId)`** (`index.html`):
-```
-// existing code already handles saga completion + celebration
-// ADD in the saga completion check callback (after the setTimeout):
-await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: questId });
-if (result.completed) {
-  await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: sagaId });
-}
-```
-
-**`questDone()`** (`overlay.html`):
-```
-const completion = await invoke("complete_quest", { questId: quest.id });
-// FIX: use saga result instead of discarding
-let sagaResult = null;
-if (quest.saga_id) {
-  sagaResult = await invoke("check_saga_completion", { sagaId: quest.saga_id });
-}
-// ... existing display code ...
-// ADD saga celebration if completed
-
-// NEW: campaign progress
-await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: quest.id });
-if (sagaResult?.completed && quest.saga_id) {
-  await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
-}
-```
-
-**Testing checkpoint:** Build app. Create a campaign with "Vacuuming ×2." Complete Vacuuming — expand campaign to see 1/2. Complete again — see 2/2, campaign dims. Create two campaigns referencing the same quest — verify one completion increments both. Complete a saga step from each of the five paths — verify saga celebration shows correctly at all. Create campaign with saga criterion — complete the saga — verify saga criterion increments.
+**Testing checkpoint:** Build app. Complete a campaign. Enter edit mode, click Dup. Verify form opens with "Name copy" and same criteria pre-filled. Remove one criterion, add a new one, rename, save. New campaign appears with fresh 0/N counts. Original campaign unchanged.
 
 ---
 
 ## NOT in this step
 
-- Completion bonus XP calculation (2G.2-3)
-- Gold celebration notification for campaign completion (2G.2-3)
-- Accomplishment record creation (2G.2-3)
-- Accomplishments on Character tab (2G.2-3)
-- Duplication flow (2G.2-4)
+- Campaign nudging in quest giver (future)
+- Level/XP criterion types (future)
+- Time-bounded criteria (future)
+- Richer accomplishment display — titles, honors, badges (future)
 
 ## Done When
 
-Both substeps complete. Campaign criteria increment on qualifying completions. Campaigns auto-complete when all criteria met (completed_at stamped, dimmed in list). Saga celebration displays correctly from all five completion paths. `cargo test` passes.
+All three substeps complete. Campaigns award bonus XP on completion with gold celebration at all five paths. Accomplishments appear on Character tab and survive campaign deletion. Campaigns can be duplicated. `cargo test` passes.

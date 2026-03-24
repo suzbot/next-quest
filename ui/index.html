@@ -997,6 +997,22 @@
       ).join("");
     }
 
+    function campaignCelebrationHtml(results) {
+      if (!results) return "";
+      return results.filter(r => r.completed).map(r => {
+        let html = `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
+        html += `<strong>${escapeHtml(r.campaignName)} complete!</strong>`;
+        if (r.bonusXp > 0) {
+          html += ` <span class="xp-flash" style="color: #7a5500">+${r.bonusXp} bonus XP</span>`;
+        }
+        if (r.levelUps?.length > 0) {
+          html += levelUpHtml(r.levelUps);
+        }
+        html += `</div>`;
+        return html;
+      }).join("");
+    }
+
     // Image and flavor text pools (loaded at startup)
     let questGiverImages = [];
     let monsterImages = [];
@@ -1166,14 +1182,15 @@
     }
 
     async function loadAll() {
-      const fetches = [invoke("get_quests"), invoke("get_completions")];
+      const fetches = [invoke("get_quests"), invoke("get_completions"), invoke("get_campaigns")];
       if (cachedSkills.length === 0) {
         fetches.push(invoke("get_skills"), invoke("get_attributes"));
       }
       const results = await Promise.all(fetches);
-      if (results.length === 4) {
-        cachedSkills = results[2];
-        cachedAttributes = results[3];
+      const extraStart = 3; // index where skills/attributes start
+      if (results.length === 5) {
+        cachedSkills = results[extraStart];
+        cachedAttributes = results[extraStart + 1];
         skillNameMap = {};
         attrNameMap = {};
         cachedSkills.forEach(s => skillNameMap[s.id] = s.name);
@@ -1185,6 +1202,10 @@
       }
       renderQuests(results[0]);
       renderCompletions(results[1]);
+      cachedCampaigns = results[2];
+      if (!campaignsView.classList.contains("hidden")) {
+        renderCampaigns();
+      }
       if (!questGiverView.classList.contains("hidden")) {
         renderQuestGiver();
       }
@@ -1421,6 +1442,12 @@
       const quest = cachedQuests.find(q => q.id === id);
       const completion = await invoke("complete_quest", { questId: id });
 
+      // Check saga completion if this is a saga step
+      let sagaResult = null;
+      if (quest?.saga_id) {
+        sagaResult = await invoke("check_saga_completion", { sagaId: quest.saga_id });
+      }
+
       const row = questList.querySelector(`[data-id="${id}"]`);
       if (row) {
         const color = diffTextColors[quest?.difficulty] || "#1a6e1a";
@@ -1437,8 +1464,32 @@
         if (completion.level_ups?.length > 0) {
           feedbackHtml += levelUpHtml(completion.level_ups);
         }
+        if (sagaResult?.completed) {
+          feedbackHtml += `<div class="saga-celebration pulsing" style="margin-top: 4px;">`;
+          feedbackHtml += `<strong>${escapeHtml(sagaResult.sagaName)} complete!</strong>`;
+          if (sagaResult.bonusXp > 0) {
+            feedbackHtml += ` <span class="xp-flash" style="color: #7a5500">+${sagaResult.bonusXp} bonus XP</span>`;
+          }
+          if (sagaResult.levelUps?.length > 0) {
+            feedbackHtml += levelUpHtml(sagaResult.levelUps);
+          }
+          feedbackHtml += `</div>`;
+        }
         feedbackDiv.innerHTML = feedbackHtml;
         row.querySelector(".quest-title")?.after(feedbackDiv);
+      }
+
+      // Campaign progress
+      let campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: id });
+      if (sagaResult?.completed && quest?.saga_id) {
+        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
+        campaignResults = campaignResults.concat(sagaCampaignResults);
+      }
+      const celebHtml = campaignCelebrationHtml(campaignResults);
+      if (celebHtml && row) {
+        const celebDiv = document.createElement("div");
+        celebDiv.innerHTML = celebHtml;
+        row.querySelector(".quest-title")?.parentElement?.after(celebDiv);
       }
 
       setTimeout(() => loadAll(), 2500);
@@ -1708,6 +1759,9 @@
     }
 
     async function renderQuestGiverWith(result) {
+      // Track which quest the quest giver is offering so the overlay can exclude it
+      await invoke("set_offered_quest", { questId: result?.quest?.id || null });
+
       if (cachedQuests.filter(q => q.active).length === 0) {
         qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quest List tab.</div>';
         return;
@@ -1855,8 +1909,10 @@
       const completion = await invoke("complete_timer");
 
       // Check saga completion if this was a saga step
+      let sagaResult = null;
+      const quest = cachedQuests.find(q => q.id === completion.quest_id);
       if (completion.quest_id) {
-        await invoke("check_saga_completion_for_quest", { questId: completion.quest_id });
+        sagaResult = await invoke("check_saga_completion_for_quest", { questId: completion.quest_id });
       }
 
       let textHtml = `<div class="qg-quest-name pulsing" style="font-size: 18px;">${escapeHtml(completion.quest_title)}</div>`;
@@ -1864,6 +1920,29 @@
         textHtml += `<div class="qg-xp-flash pulsing">+${completion.xp_earned} XP</div>`;
       }
       textHtml += levelUpHtml(completion.level_ups);
+      if (sagaResult?.completed) {
+        textHtml += `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
+        textHtml += `<strong>${escapeHtml(sagaResult.sagaName)} complete!</strong>`;
+        if (sagaResult.bonusXp > 0) {
+          textHtml += ` <span class="xp-flash" style="color: #7a5500">+${sagaResult.bonusXp} bonus XP</span>`;
+        }
+        if (sagaResult.levelUps?.length > 0) {
+          textHtml += levelUpHtml(sagaResult.levelUps);
+        }
+        textHtml += `</div>`;
+      }
+
+      // Campaign progress
+      let campaignResults = [];
+      if (completion.quest_id) {
+        campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: completion.quest_id });
+      }
+      if (sagaResult?.completed && quest?.saga_id) {
+        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
+        campaignResults = campaignResults.concat(sagaCampaignResults);
+      }
+      textHtml += campaignCelebrationHtml(campaignResults);
+
       const victoryImg = randomFromExcluding(victoryImages, null) || currentMonsterImage;
       qgContent.innerHTML = `
         <div class="qg-split">
@@ -1890,6 +1969,13 @@
       if (sagaId) sagaResult = await invoke("check_saga_completion", { sagaId });
       const color = diffTextColors[difficulty] || "#1a6e1a";
 
+      // Campaign progress
+      let campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: questId });
+      if (sagaResult?.completed && sagaId) {
+        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: sagaId });
+        campaignResults = campaignResults.concat(sagaCampaignResults);
+      }
+
       // Show completion feedback with pulse in split layout
       let textHtml = `<div class="qg-quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
@@ -1907,6 +1993,7 @@
         }
         textHtml += `</div>`;
       }
+      textHtml += campaignCelebrationHtml(campaignResults);
       qgContent.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
@@ -2855,6 +2942,13 @@
       setTimeout(async () => {
         const result = await invoke("check_saga_completion", { sagaId });
 
+        // Campaign progress
+        let campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: questId });
+        if (result.completed) {
+          const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: sagaId });
+          campaignResults = campaignResults.concat(sagaCampaignResults);
+        }
+
         if (result.completed) {
           // Show saga completion celebration
           const sagaRow = sagaList.querySelector(`[data-id="${sagaId}"]`);
@@ -2868,6 +2962,7 @@
               celebHtml += levelUpHtml(result.levelUps);
             }
             celebHtml += `</div>`;
+            celebHtml += campaignCelebrationHtml(campaignResults);
             sagaRow.insertAdjacentHTML("afterend", celebHtml);
           }
           // Hold celebration then reload

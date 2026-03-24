@@ -278,6 +278,25 @@ pub struct CampaignWithCriteria {
     pub criteria: Vec<Criterion>,
 }
 
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CampaignCompletionResult {
+    pub completed: bool,
+    pub campaign_name: String,
+    pub bonus_xp: i64,
+    pub level_ups: Vec<LevelUp>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Accomplishment {
+    pub id: String,
+    pub campaign_id: Option<String>,
+    pub campaign_name: String,
+    pub completed_at: String,
+    pub bonus_xp: i64,
+}
+
 pub fn init_db(db_path: &Path) -> Connection {
     let conn = Connection::open(db_path).expect("Failed to open database");
     create_tables(&conn);
@@ -1039,6 +1058,7 @@ pub fn reorder_saga_steps(conn: &Connection, saga_id: &str, step_ids: Vec<String
 }
 
 #[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SagaCompletionResult {
     pub completed: bool,
     pub saga_name: String,
@@ -1517,6 +1537,180 @@ pub fn delete_campaign(conn: &Connection, id: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+pub fn get_accomplishments(conn: &Connection) -> Result<Vec<Accomplishment>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, campaign_id, campaign_name, completed_at, bonus_xp
+             FROM accomplishment
+             ORDER BY completed_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(Accomplishment {
+                id: row.get(0)?,
+                campaign_id: row.get(1)?,
+                campaign_name: row.get(2)?,
+                completed_at: row.get(3)?,
+                bonus_xp: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(rows)
+}
+
+pub fn delete_accomplishment(conn: &Connection, id: String) -> Result<(), String> {
+    let rows = conn
+        .execute(
+            "DELETE FROM accomplishment WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Accomplishment not found: {}", id));
+    }
+    Ok(())
+}
+
+/// Increment campaign criteria matching a completion event.
+/// Returns list of campaigns that just completed (usually 0 or 1).
+pub fn check_campaign_progress(
+    conn: &Connection,
+    target_type: &str,
+    target_id: &str,
+) -> Result<Vec<CampaignCompletionResult>, String> {
+    // Find active campaigns with a matching criterion
+    let mut stmt = conn
+        .prepare(
+            "SELECT cc.campaign_id, cc.id
+             FROM campaign_criterion cc
+             JOIN campaign c ON c.id = cc.campaign_id
+             WHERE c.completed_at IS NULL
+               AND cc.target_type = ?1
+               AND cc.target_id = ?2",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let matches: Vec<(String, String)> = stmt
+        .query_map(rusqlite::params![target_type, target_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if matches.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Increment each matching criterion
+    for (_, criterion_id) in &matches {
+        conn.execute(
+            "UPDATE campaign_criterion SET current_count = current_count + 1 WHERE id = ?1",
+            rusqlite::params![criterion_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Check each affected campaign for completion
+    let mut results = Vec::new();
+    let mut checked_campaigns = std::collections::HashSet::new();
+
+    for (campaign_id, _) in &matches {
+        if !checked_campaigns.insert(campaign_id.clone()) {
+            continue; // already checked this campaign
+        }
+
+        // Are all criteria met?
+        let all_met: bool = conn
+            .query_row(
+                "SELECT COUNT(*) = 0 FROM campaign_criterion
+                 WHERE campaign_id = ?1 AND current_count < target_count",
+                rusqlite::params![campaign_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if all_met {
+            let now = chrono_now();
+            conn.execute(
+                "UPDATE campaign SET completed_at = ?1 WHERE id = ?2",
+                rusqlite::params![now, campaign_id],
+            )
+            .map_err(|e| e.to_string())?;
+
+            let campaign_name: String = conn
+                .query_row(
+                    "SELECT name FROM campaign WHERE id = ?1",
+                    rusqlite::params![campaign_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+
+            // Calculate bonus: 20% of constituent baseline XP
+            let criteria = load_campaign_criteria(conn, campaign_id)?;
+            let total_baseline: f64 = criteria.iter().map(|c| {
+                match c.target_type.as_str() {
+                    "quest_completions" => {
+                        // Look up quest to get baseline XP
+                        let quest_data: Option<(String, String, Option<i32>)> = conn.query_row(
+                            "SELECT difficulty, quest_type, cycle_days FROM quest WHERE id = ?1",
+                            rusqlite::params![c.target_id],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        ).ok();
+                        match quest_data {
+                            Some((diff_str, type_str, cycle)) => {
+                                let diff = Difficulty::from_str(&diff_str);
+                                let qt = QuestType::from_str(&type_str);
+                                calculate_xp(&diff, &qt, cycle) as f64 * c.target_count as f64
+                            }
+                            None => 0.0, // deleted quest contributes nothing
+                        }
+                    }
+                    "saga_completions" => 150.0 * c.target_count as f64,
+                    _ => 0.0,
+                }
+            }).sum();
+            let bonus_xp = (total_baseline * 0.20).round() as i64;
+
+            // Award bonus to character
+            let mut level_ups = Vec::new();
+            if bonus_xp > 0 {
+                let char_before = get_character(conn)?;
+                conn.execute(
+                    "UPDATE character SET xp = xp + ?1",
+                    rusqlite::params![bonus_xp],
+                ).map_err(|e| e.to_string())?;
+                let char_after = get_character(conn)?;
+                if char_after.level > char_before.level {
+                    level_ups.push(LevelUp { name: char_after.name.clone(), new_level: char_after.level });
+                }
+            }
+
+            // Create accomplishment record
+            let accomplishment_id = Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO accomplishment (id, campaign_id, campaign_name, completed_at, bonus_xp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![accomplishment_id, campaign_id, campaign_name, now, bonus_xp],
+            ).map_err(|e| e.to_string())?;
+
+            results.push(CampaignCompletionResult {
+                completed: true,
+                campaign_name,
+                bonus_xp,
+                level_ups,
+            });
+        }
+    }
+
+    Ok(results)
 }
 
 // --- Quests ---
@@ -4357,5 +4551,362 @@ mod tests {
 
         assert_eq!(campaign.criteria[0].target_name, "Laundry");
         assert_eq!(campaign.criteria[0].target_type, "saga_completions");
+    }
+
+    // --- check_campaign_progress tests ---
+
+    #[test]
+    fn check_campaign_progress_increments_quest_criterion() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "Clean House".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 2 },
+        ]).unwrap();
+
+        let results = check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        assert!(results.is_empty()); // not yet complete
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].current_count, 1);
+        assert!(campaigns[0].completed_at.is_none());
+    }
+
+    #[test]
+    fn check_campaign_progress_completes_campaign() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "Quick Clean".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        let results = check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].completed);
+        assert_eq!(results[0].campaign_name, "Quick Clean");
+        // easy recurring daily: calculate_xp = 5 * 5.0 * 1.0 = 25. Bonus = round(0.20 * 25) = 5
+        assert_eq!(results[0].bonus_xp, 5);
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert!(campaigns[0].completed_at.is_some());
+    }
+
+    #[test]
+    fn check_campaign_progress_multiple_campaigns_same_quest() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "Campaign A".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+        create_campaign(&conn, "Campaign B".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 2 },
+        ]).unwrap();
+
+        let results = check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        // Campaign A completes (1/1), Campaign B does not (1/2)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].campaign_name, "Campaign A");
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        for c in &campaigns {
+            if c.name == "Campaign A" {
+                assert!(c.completed_at.is_some());
+                assert_eq!(c.criteria[0].current_count, 1);
+            } else {
+                assert!(c.completed_at.is_none());
+                assert_eq!(c.criteria[0].current_count, 1); // incremented
+            }
+        }
+    }
+
+    #[test]
+    fn check_campaign_progress_saga_criterion() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Laundry".into(), Some(7)).unwrap();
+        create_campaign(&conn, "Chore Master".into(), vec![
+            NewCriterion { target_type: "saga_completions".into(), target_id: s.id.clone(), target_count: 2 },
+        ]).unwrap();
+
+        let results = check_campaign_progress(&conn, "saga_completions", &s.id).unwrap();
+        assert!(results.is_empty());
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].current_count, 1);
+    }
+
+    #[test]
+    fn check_campaign_progress_no_match() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "Vacuuming");
+        let q2 = test_quest(&conn, "Mopping");
+        create_campaign(&conn, "Vac Only".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Complete mopping — no campaign references it
+        let results = check_campaign_progress(&conn, "quest_completions", &q2.id).unwrap();
+        assert!(results.is_empty());
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].current_count, 0); // unchanged
+    }
+
+    #[test]
+    fn check_campaign_progress_skips_completed_campaign() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "Done Already".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Complete the campaign
+        check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert!(campaigns[0].completed_at.is_some());
+        assert_eq!(campaigns[0].criteria[0].current_count, 1);
+
+        // Call again — should not increment
+        let results = check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        assert!(results.is_empty());
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].current_count, 1); // unchanged
+    }
+
+    #[test]
+    fn check_campaign_progress_multi_criteria_partial() {
+        let conn = test_db();
+        let qa = test_quest(&conn, "Quest A");
+        let qb = test_quest(&conn, "Quest B");
+        create_campaign(&conn, "Multi".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: qa.id.clone(), target_count: 2 },
+            NewCriterion { target_type: "quest_completions".into(), target_id: qb.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // A once: 1/2 + 0/1 — not complete
+        let r = check_campaign_progress(&conn, "quest_completions", &qa.id).unwrap();
+        assert!(r.is_empty());
+
+        // B once: 1/2 + 1/1 — not complete
+        let r = check_campaign_progress(&conn, "quest_completions", &qb.id).unwrap();
+        assert!(r.is_empty());
+
+        // A again: 2/2 + 1/1 — complete!
+        let r = check_campaign_progress(&conn, "quest_completions", &qa.id).unwrap();
+        assert_eq!(r.len(), 1);
+        assert!(r[0].completed);
+        assert_eq!(r[0].campaign_name, "Multi");
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert!(campaigns[0].completed_at.is_some());
+    }
+
+    #[test]
+    fn check_campaign_progress_full_saga_flow() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Morning Routine".into(), Some(1)).unwrap();
+        let step1 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Brush teeth".into(),
+            difficulty: Difficulty::Easy,
+            time_of_day: 7,
+            days_of_week: 127,
+        }).unwrap();
+        let step2 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Shower".into(),
+            difficulty: Difficulty::Easy,
+            time_of_day: 7,
+            days_of_week: 127,
+        }).unwrap();
+
+        // Backdate saga created_at so completions are strictly after it
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        // Campaign: 1 completion of step1 quest + 1 completion of saga
+        create_campaign(&conn, "Full Flow".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: step1.id.clone(), target_count: 1 },
+            NewCriterion { target_type: "saga_completions".into(), target_id: s.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Complete step 1 → quest criterion increments
+        complete_quest(&conn, step1.id.clone()).unwrap();
+        let r = check_campaign_progress(&conn, "quest_completions", &step1.id).unwrap();
+        assert!(r.is_empty()); // saga criterion not yet met
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].current_count, 1); // quest criterion
+        assert_eq!(campaigns[0].criteria[1].current_count, 0); // saga criterion
+
+        // Complete step 2 → saga completes
+        complete_quest(&conn, step2.id.clone()).unwrap();
+        let saga_result = check_saga_completion(&conn, &s.id).unwrap();
+        assert!(saga_result.completed);
+
+        // Campaign progress for step2 quest (no criterion for it, so no-op)
+        check_campaign_progress(&conn, "quest_completions", &step2.id).unwrap();
+        // Campaign progress for saga completion → saga criterion met → campaign completes
+        let r = check_campaign_progress(&conn, "saga_completions", &s.id).unwrap();
+        assert_eq!(r.len(), 1);
+        assert!(r[0].completed);
+        assert_eq!(r[0].campaign_name, "Full Flow");
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert!(campaigns[0].completed_at.is_some());
+    }
+
+    // --- Bonus XP + accomplishment tests ---
+
+    #[test]
+    fn check_campaign_progress_awards_bonus_xp() {
+        let conn = test_db();
+        // Easy recurring daily (cycle=1): calculate_xp = 5 * 5.0 * 1.0 = 25
+        let q1 = test_quest(&conn, "Daily Easy");
+        // Moderate recurring 7-day: calculate_xp = 5 * 10.0 * sqrt(7) ≈ 132
+        let q2 = test_quest_with(&conn, "Weekly Moderate", |q| {
+            q.difficulty = Difficulty::Moderate;
+            q.cycle_days = Some(7);
+        });
+
+        create_campaign(&conn, "Bonus Test".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 2 },
+            NewCriterion { target_type: "quest_completions".into(), target_id: q2.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        let char_before = get_character(&conn).unwrap();
+
+        // Complete q1 twice and q2 once
+        check_campaign_progress(&conn, "quest_completions", &q1.id).unwrap();
+        check_campaign_progress(&conn, "quest_completions", &q1.id).unwrap();
+        let results = check_campaign_progress(&conn, "quest_completions", &q2.id).unwrap();
+
+        assert_eq!(results.len(), 1);
+        // Expected: round(0.20 * (25*2 + 132*1)) = round(0.20 * 182) = round(36.4) = 36
+        let expected_bonus = (0.20 * (calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(1)) as f64 * 2.0
+            + calculate_xp(&Difficulty::Moderate, &QuestType::Recurring, Some(7)) as f64 * 1.0)).round() as i64;
+        assert_eq!(results[0].bonus_xp, expected_bonus);
+        assert!(results[0].bonus_xp > 0);
+
+        let char_after = get_character(&conn).unwrap();
+        assert_eq!(char_after.xp, char_before.xp + expected_bonus);
+    }
+
+    #[test]
+    fn check_campaign_progress_creates_accomplishment() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "Accomplishment Test".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+        assert_eq!(accomplishments[0].campaign_name, "Accomplishment Test");
+        assert_eq!(accomplishments[0].bonus_xp, 5); // easy daily: round(0.20 * 25) = 5
+        assert!(accomplishments[0].campaign_id.is_some());
+        assert!(!accomplishments[0].completed_at.is_empty());
+    }
+
+    #[test]
+    fn check_campaign_progress_saga_criterion_bonus() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Laundry".into(), Some(7)).unwrap();
+        create_campaign(&conn, "Saga Bonus".into(), vec![
+            NewCriterion { target_type: "saga_completions".into(), target_id: s.id.clone(), target_count: 2 },
+        ]).unwrap();
+
+        // Increment twice to complete
+        check_campaign_progress(&conn, "saga_completions", &s.id).unwrap();
+        let results = check_campaign_progress(&conn, "saga_completions", &s.id).unwrap();
+
+        assert_eq!(results.len(), 1);
+        // Expected: round(0.20 * (150 * 2)) = round(60) = 60
+        assert_eq!(results[0].bonus_xp, 60);
+    }
+
+    #[test]
+    fn check_campaign_progress_deleted_quest_bonus() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "Keeps");
+        let q2 = test_quest(&conn, "Gets Deleted");
+        create_campaign(&conn, "Deleted Target".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 1 },
+            NewCriterion { target_type: "quest_completions".into(), target_id: q2.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Delete q2 before completing
+        delete_quest(&conn, q2.id.clone()).unwrap();
+
+        // Complete both criteria
+        check_campaign_progress(&conn, "quest_completions", &q1.id).unwrap();
+        let results = check_campaign_progress(&conn, "quest_completions", &q2.id).unwrap();
+
+        assert_eq!(results.len(), 1);
+        // Only q1 contributes: round(0.20 * 25) = 5. q2 deleted = 0 contribution.
+        assert_eq!(results[0].bonus_xp, 5);
+    }
+
+    #[test]
+    fn check_campaign_progress_level_up_detection() {
+        let conn = test_db();
+        // Character starts at 0 XP. Level 1 costs 300 XP.
+        // Set character XP to 295 so a bonus of 5+ triggers level-up.
+        conn.execute("UPDATE character SET xp = 295", []).unwrap();
+
+        let q = test_quest(&conn, "Level Up Quest");
+        create_campaign(&conn, "Level Up".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        let results = check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].bonus_xp > 0);
+        assert!(!results[0].level_ups.is_empty());
+        assert_eq!(results[0].level_ups[0].new_level, 2);
+    }
+
+    #[test]
+    fn delete_accomplishment_preserves_xp() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "XP Test".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        let char_after_bonus = get_character(&conn).unwrap();
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+
+        delete_accomplishment(&conn, accomplishments[0].id.clone()).unwrap();
+
+        let char_after_delete = get_character(&conn).unwrap();
+        assert_eq!(char_after_delete.xp, char_after_bonus.xp); // XP unchanged
+        assert!(get_accomplishments(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_campaign_orphans_accomplishment() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        let c = create_campaign(&conn, "Orphan Test".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+        assert!(accomplishments[0].campaign_id.is_some());
+
+        delete_campaign(&conn, c.id).unwrap();
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+        assert!(accomplishments[0].campaign_id.is_none()); // orphaned
+        assert_eq!(accomplishments[0].campaign_name, "Orphan Test"); // name snapshot survives
     }
 }

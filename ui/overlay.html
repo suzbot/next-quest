@@ -142,6 +142,23 @@
     .pulsing { animation: text-highlight 1.5s ease-out; }
     .fading-in { animation: fade-in-up 1.5s ease-out; }
     #content.fading-out { animation: fade-out 0.4s ease-out forwards; }
+
+    .saga-celebration {
+      padding: 8px 12px;
+      font-size: 13px;
+      color: #7a5500;
+      background: #eea80022;
+      border-left: 3px solid #eea800;
+      margin: 4px 0;
+    }
+    .saga-celebration.pulsing {
+      animation: saga-pulse 3s ease-out;
+    }
+    @keyframes saga-pulse {
+      0% { background: #eea80044; }
+      70% { background: #eea80044; }
+      100% { background: #eea80022; }
+    }
   </style>
 </head>
 <body>
@@ -200,6 +217,22 @@
       ).join("");
     }
 
+    function campaignCelebrationHtml(results) {
+      if (!results) return "";
+      return results.filter(r => r.completed).map(r => {
+        let html = `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
+        html += `<strong>${escapeHtml(r.campaignName)} complete!</strong>`;
+        if (r.bonusXp > 0) {
+          html += ` <span class="xp-flash" style="color: #7a5500">+${r.bonusXp} bonus XP</span>`;
+        }
+        if (r.levelUps?.length > 0) {
+          html += levelUpHtml(r.levelUps);
+        }
+        html += `</div>`;
+        return html;
+      }).join("");
+    }
+
     let monsterImages = [];
 
     let encounterLines = [
@@ -234,7 +267,9 @@
     let currentEncounter = null;
 
     async function loadQuest() {
-      currentResult = await invoke("get_next_quest", {});
+      // Exclude the quest currently offered by the quest giver
+      const offeredId = await invoke("get_offered_quest");
+      currentResult = await invoke("get_next_quest", { excludeQuestId: offeredId });
       currentMonster = randomFromExcluding(monsterImages, currentMonster);
       currentEncounter = randomFromExcluding(encounterLines, currentEncounter);
       render();
@@ -276,7 +311,20 @@
       const quest = currentResult.quest;
       const difficulty = quest.difficulty;
       const completion = await invoke("complete_quest", { questId: quest.id });
-      if (quest.saga_id) await invoke("check_saga_completion", { sagaId: quest.saga_id });
+
+      // Check saga completion if this is a saga step
+      let sagaResult = null;
+      if (quest.saga_id) {
+        sagaResult = await invoke("check_saga_completion", { sagaId: quest.saga_id });
+      }
+
+      // Campaign progress
+      let campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: quest.id });
+      if (sagaResult?.completed && quest.saga_id) {
+        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
+        campaignResults = campaignResults.concat(sagaCampaignResults);
+      }
+
       const color = diffTextColors[difficulty] || "#1a6e1a";
 
       let textHtml = `<div class="quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
@@ -284,6 +332,18 @@
         textHtml += `<div class="xp-flash fading-in" style="color: ${color}">+${completion.xp_earned} XP</div>`;
       }
       textHtml += levelUpHtml(completion.level_ups);
+      if (sagaResult?.completed) {
+        textHtml += `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
+        textHtml += `<strong>${escapeHtml(sagaResult.sagaName)} complete!</strong>`;
+        if (sagaResult.bonusXp > 0) {
+          textHtml += ` <span class="xp-flash" style="color: #7a5500">+${sagaResult.bonusXp} bonus XP</span>`;
+        }
+        if (sagaResult.levelUps?.length > 0) {
+          textHtml += levelUpHtml(sagaResult.levelUps);
+        }
+        textHtml += `</div>`;
+      }
+      textHtml += campaignCelebrationHtml(campaignResults);
 
       content.innerHTML = `
         <div class="split">

@@ -118,6 +118,62 @@ A multi-step goal with ordered sub-quests. Can be one-off or recurring.
 - The quest giver surfaces one active step per saga: the first step (by step_order) not yet completed in the current run.
 - When all steps have a current-run completion, `last_run_completed_at` is stamped and a completion bonus is awarded.
 
+### Campaign
+A user-defined collection of criteria tracking progress toward a larger accomplishment.
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID (text) | Unique identifier |
+| name | String | Campaign title ("Spring Cleaning 2026") |
+| created_at | Timestamp | ISO 8601. Only completions after this count (no retroactive credit). |
+| completed_at | Timestamp? | NULL until all criteria met, then stamped. |
+
+**Rules:**
+- Campaigns are active until all criteria are met.
+- Criteria are locked after creation — edits are made by duplicating and creating a new version (duplication is Phase 2G.2-4).
+- Campaign name can be renamed at any time.
+- Deleting a campaign deletes its criteria and orphans any accomplishment.
+- One quest/saga completion can count toward multiple campaigns simultaneously.
+
+### Campaign Criterion
+A single requirement within a campaign. Tracks completions of a specific quest or saga.
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID (text) | Unique identifier |
+| campaign_id | UUID (text) | FK to Campaign |
+| target_type | String | `"quest_completions"` or `"saga_completions"` (extensible string enum) |
+| target_id | UUID (text) | FK to Quest or Saga |
+| target_count | Integer | How many completions needed |
+| current_count | Integer | Starts at 0, increments on qualifying completions |
+| sort_order | Integer | Display order within campaign |
+
+**Derived values (computed, not stored):**
+- `target_name` — looked up from quest title or saga name. "Deleted quest" / "Deleted saga" if target removed.
+
+**Constraints:** Unique on `(campaign_id, target_type, target_id)` — no duplicate criteria for same target within a campaign.
+
+**Rules:**
+- Current count only goes up — deleting a completion does not decrement.
+- An orphaned criterion (target deleted) can never be satisfied — campaign becomes stuck. User's recourse is to duplicate the campaign without that criterion.
+- Progress is tracked by `check_campaign_progress`, called from the frontend after every quest or saga completion across all five completion paths (quest list, quest giver, timer, saga tab, overlay).
+
+### Accomplishment
+A permanent record of completing a campaign. Created when a campaign completes.
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID (text) | Unique identifier |
+| campaign_id | UUID? (text) | FK to Campaign. NULL if campaign deleted. |
+| campaign_name | String | Snapshot of campaign name at completion time |
+| completed_at | Timestamp | ISO 8601 |
+| bonus_xp | Integer | XP awarded (0 until Phase 2G.2-3 wires bonus calculation) |
+
+**Rules:**
+- Parallels how completions relate to quests — the accomplishment survives campaign deletion.
+- Individually deletable. Deleting an accomplishment does NOT reduce XP.
+- Table exists but accomplishment records are not yet created (Phase 2G.2-3).
+
 ### Quest-Skill Link (quest_skill)
 Many-to-many join table between quests and skills.
 
@@ -141,6 +197,8 @@ Quest (1) ──── has many ──── Completion
 Quest (M) ──── many-to-many ──── Skill       (via quest_skill)
 Quest (M) ──── many-to-many ──── Attribute   (via quest_attribute)
 Saga (1) ──── has many ──── Quest            (via quest.saga_id)
+Campaign (1) ──── has many ──── Campaign Criterion
+Campaign (1) ──── has many ──── Accomplishment
 Attribute (1) ──── has many ──── Skill
 Character (singleton)
 ```
@@ -148,6 +206,7 @@ Character (singleton)
 Completions reference quests via `quest_id`, but the FK is nullable — completions
 survive quest deletion. Deleting a quest also cleans up its link rows in quest_skill
 and quest_attribute. Deleting a saga deletes its steps and orphans their completions.
+Deleting a campaign deletes its criteria and orphans its accomplishments.
 
 ## XP Engine
 
@@ -216,6 +275,7 @@ score = days_since_completed / max_days - skip_penalty + list_order_bonus
 - "Something Else" / "Run": records a skip, then re-scores. The just-skipped quest is excluded from the next pick (unless it's the only quest).
 - Exhaustion fallback: if all scores ≤ 0, returns the least-negative.
 - Skip counts are in-memory, reset at local midnight or app restart.
+- The Encounters overlay excludes whatever quest the quest giver is currently offering, so the two never show the same quest. The quest giver stores its current quest ID in the skip state; the overlay reads it and passes it as an exclude.
 
 ## Planned Entities (Phase 2+)
 
