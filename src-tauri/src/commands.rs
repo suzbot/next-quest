@@ -253,6 +253,16 @@ pub fn complete_quest(
 }
 
 #[tauri::command]
+pub fn set_quest_last_done(
+    state: State<DbState>,
+    quest_id: String,
+    last_done: Option<String>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::set_quest_last_done(&conn, quest_id, last_done)
+}
+
+#[tauri::command]
 pub fn update_quest(
     state: State<DbState>,
     quest_id: String,

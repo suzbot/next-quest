@@ -1,203 +1,103 @@
-# Step Spec: Phase 2G.2-3/4 — Completion Bonus, Celebration, Accomplishments, Duplication
+# Step Spec: Phase 2H.1-1 — Stored last-done date ✅
 
 ## Goal
 
-When a campaign completes: calculate bonus XP, award it to character, show a gold celebration notification, and create an accomplishment record. Accomplishments appear in a new column on the Character tab. Campaigns can be duplicated to create a new version with adjusted criteria.
+Move `last_completed` from a derived value (subquery on quest_completion) to a stored column on the quest table. Completion history becomes a read-only log. Users can manually set the last-done date via a date picker on the quest list. Deleting completions no longer affects due dates.
 
 ---
 
-## Substep 1: Backend + frontend — bonus calculation, accomplishment CRUD, celebration notifications ✅
+## Substep 1: Backend — migration, query changes, complete_quest update, set_quest_last_done
 
-### Backend
+**Migration** (`db.rs` → `migrate()`):
 
-**Bonus calculation** — add to `check_campaign_progress` (db.rs), replacing the `bonus_xp: 0` placeholder:
+Add `last_completed TEXT` column to quest. Populate from existing completions. Detection: check if quest table has `last_completed` column.
 
-When all criteria are met, before returning the result:
-
-```
-per quest criterion:
-  look up quest difficulty, quest_type, cycle_days
-  calculate_xp(difficulty, quest_type, cycle_days) × target_count
-
-per saga criterion:
-  150 × target_count
-
-bonus_xp = round(0.20 × sum across all criteria)
+```sql
+ALTER TABLE quest ADD COLUMN last_completed TEXT;
+UPDATE quest SET last_completed = (
+    SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = quest.id
+);
 ```
 
-If the quest has been deleted, use 0 for that criterion's contribution (can't look up difficulty). Saga criteria use a flat 150 XP per run.
+**Query changes — remove completion subqueries:**
 
-Award bonus XP to character only (`UPDATE character SET xp = xp + bonus_xp`). Detect character level-up (snapshot before/after, same pattern as saga completion bonus).
+Four locations currently derive `last_completed` via `(SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id)`:
 
-Add `level_ups: Vec<LevelUp>` to `CampaignCompletionResult`.
+1. `get_quests` (~line 1722) — replace subquery with `q.last_completed`
+2. `get_saga_steps` (~line 934) — replace subquery with `q.last_completed`
+3. `query_single_quest` (~line 2598) — replace subquery with `q.last_completed`
+4. `complete_quest` time-elapsed multiplier (~line 2155) — replace subquery with reading `quest.last_completed` from the initial quest data query (already fetched at top of function)
 
-Create accomplishment record: `INSERT INTO accomplishment (id, campaign_id, campaign_name, completed_at, bonus_xp)` with a snapshot of the campaign name and the calculated bonus.
+For #4: the initial query in `complete_quest` (`SELECT title, difficulty, quest_type, cycle_days, saga_id FROM quest`) needs to also select `last_completed`. Use this value for the time-elapsed multiplier instead of querying the completions table.
 
-**Accomplishment CRUD:**
+**`complete_quest` — update stored column:**
 
-- `get_accomplishments(conn) -> Vec<Accomplishment>` — returns all accomplishments ordered by `completed_at` descending.
-- `delete_accomplishment(conn, id)` — deletes the record. Does NOT reduce XP.
+After inserting the completion record and deactivating one-offs, also update the quest's `last_completed`:
 
-**Accomplishment struct:**
+```sql
+UPDATE quest SET last_completed = ?1 WHERE id = ?2
+```
+
+Using the same `completed_at` timestamp as the completion record. This goes inside the existing transaction (before `tx.commit()`).
+
+**New function: `set_quest_last_done`**
 
 ```rust
-#[derive(Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Accomplishment {
-    pub id: String,
-    pub campaign_id: Option<String>,
-    pub campaign_name: String,
-    pub completed_at: String,
-    pub bonus_xp: i64,
-}
+pub fn set_quest_last_done(conn: &Connection, quest_id: String, last_done: Option<String>) -> Result<(), String>
 ```
 
-**Commands** (commands.rs): Wrappers for `get_accomplishments` and `delete_accomplishment`. Register in `main.rs`.
+- Updates `quest.last_completed` to the given value (or NULL if None)
+- Validates the quest exists and is NOT a saga step (`saga_id IS NULL`). Returns error if it's a saga step.
+- Does not create a completion record. Does not award XP.
+
+**New command** (`commands.rs`): wrapper for `set_quest_last_done`. Register in `main.rs`.
+
+**`init_db_memory` (test helper):**
+
+The in-memory test DB creates tables directly. The quest CREATE TABLE needs to include `last_completed TEXT` so tests work without running migrations.
 
 **Tests:**
 
-1. `check_campaign_progress_awards_bonus_xp` — Create campaign with 2 quest criteria (easy recurring daily ×2, moderate recurring 7-day ×1). Complete to trigger campaign completion. Verify bonus_xp > 0, matches formula: `round(0.20 × (calculate_xp(easy, recurring, 1) × 2 + calculate_xp(moderate, recurring, 7) × 1))`. Verify character XP increased by bonus amount.
-
-2. `check_campaign_progress_creates_accomplishment` — Complete a campaign. Verify accomplishment record exists via `get_accomplishments`: correct campaign_name snapshot, bonus_xp, completed_at set.
-
-3. `check_campaign_progress_saga_criterion_bonus` — Campaign with saga criterion (×2). Complete twice. Verify bonus includes `150 × 2` for the saga portion.
-
-4. `check_campaign_progress_deleted_quest_bonus` — Campaign with criterion for a quest that has been deleted. The deleted criterion contributes 0 to the bonus sum. Verify the campaign still completes and bonus is calculated from remaining valid criteria only.
-
-5. `check_campaign_progress_level_up_detection` — Set character XP just below a level threshold. Complete a campaign whose bonus pushes character over. Verify `level_ups` in the result contains the character level-up.
-
-6. `delete_accomplishment_preserves_xp` — Complete a campaign (character gains bonus XP). Delete the accomplishment. Verify character XP is unchanged.
-
-7. `delete_campaign_orphans_accomplishment` — Complete a campaign (accomplishment created). Delete the campaign. Verify accomplishment still exists with `campaign_id: None`.
+1. `complete_quest_sets_last_completed` — Complete a quest. Verify `quest.last_completed` matches the completion timestamp (via `get_quests`).
+2. `delete_completion_preserves_last_completed` — Complete a quest, note last_completed. Delete the completion. Verify last_completed is unchanged.
+3. `set_quest_last_done_updates_due` — Create a daily quest. Set last_done to today. Verify `is_due` is false. Set last_done to 3 days ago. Verify `is_due` is true.
+4. `set_quest_last_done_clear` — Set last_done to a date, then clear it (None). Verify quest shows as never completed (last_completed is None, is_due is true for recurring).
+5. `set_quest_last_done_saga_step_rejected` — Create a saga with a step. Try to set last_done on the step. Verify it returns an error.
+6. `time_elapsed_multiplier_uses_stored_column` — Existing XP tests should continue passing (verifies the time-elapsed multiplier reads from the stored column correctly).
 
 **Testing checkpoint:** `cargo test` — all existing + new tests pass.
 
-### Frontend — celebration notifications at all completion paths
-
-**CampaignCompletionResult now has `bonusXp` and `levelUps`.**
-
-At each of the five completion paths, `check_campaign_progress` already returns `Vec<CampaignCompletionResult>`. When any result has `completed: true`, show a gold celebration notification (same `.saga-celebration.pulsing` style):
-
-```
-Campaign Name complete! +N bonus XP
-```
-
-Plus any level-ups from the bonus.
-
-**Where to show:**
-
-The campaign progress calls are already wired at all five paths. After each call, check the results and append celebration HTML if any campaigns completed. The celebration is appended after any saga celebration (campaigns are a higher-level grouping).
-
-Specific locations:
-- `completeQuest()` (quest list) — append to feedbackDiv, below saga celebration if present
-- `qgDone()` (quest giver) — append to textHtml, after saga celebration block
-- `timerDone()` — append to textHtml, after saga celebration block
-- `completeSagaStep()` (saga tab) — insert after saga row (same as saga celebration, but below it)
-- `questDone()` (overlay) — append to textHtml, after saga celebration block
-
-**Helper function** (both index.html and overlay.html):
-
-```javascript
-function campaignCelebrationHtml(results) {
-  return results
-    .filter(r => r.completed)
-    .map(r => {
-      let html = `<div class="saga-celebration pulsing" style="margin-top: 8px;">`;
-      html += `<strong>${escapeHtml(r.campaignName)} complete!</strong>`;
-      if (r.bonusXp > 0) {
-        html += ` <span class="xp-flash" style="color: #7a5500">+${r.bonusXp} bonus XP</span>`;
-      }
-      if (r.levelUps?.length > 0) {
-        html += levelUpHtml(r.levelUps);
-      }
-      html += `</div>`;
-      return html;
-    }).join("");
-}
-```
-
-**Change to campaign progress call pattern:** Currently each path fires `check_campaign_progress` and ignores the return value. Change to capture the results and pass them to the celebration helper. Where there are two calls (quest + saga), collect results from both.
-
-**Testing checkpoint:** Build app. Create a campaign with 1 easy quest criterion. Complete the quest. Verify gold celebration shows with bonus XP. Check that character XP increased. Navigate to Character tab — accomplishment should appear (substep 2).
-
 ---
 
-## Substep 2: Frontend — accomplishments column on Character tab ✅
+## Substep 2: Frontend — date picker on quest list
 
-**Layout change:**
+**Date input** next to the last-done display in the normal (non-edit) quest list row.
 
-Wrap the existing character content in a two-column flex container. Existing content gets `flex: 2`. New accomplishments column gets `flex: 1`.
+The quest list row currently shows last-done as formatted text (e.g., "03/15 09:30"). Add an `<input type="date">` next to it:
 
 ```
-<div style="display: flex; gap: 16px;">
-  <div style="flex: 2;">
-    <!-- existing: char header, meter, attributes, skills -->
-  </div>
-  <div style="flex: 1;">
-    <h2>Accomplishments</h2>
-    <!-- accomplishment list -->
-  </div>
-</div>
+  Take vitamins    MO  Easy  ↻1d   03/15 09:30  [2026-03-15]  ⚔  ✓
 ```
 
-**Data loading:**
+- The date input's value is populated from `quest.last_completed` (date portion only)
+- Changing the date calls `set_quest_last_done` with the selected date as an ISO timestamp (midnight UTC)
+- If the quest has no last_completed, the date input is empty
+- Clearing the date input calls `set_quest_last_done` with null
+- After setting, reload the quest list to reflect the updated due state
 
-Add `invoke("get_accomplishments")` to `loadCharacterView`'s parallel fetches. Pass to `renderCharacterView`.
+**Not shown on:**
+- Saga steps (they appear in the saga tab, not the quest list)
+- Inactive one-off quests (already completed, row is dimmed)
 
-**Accomplishment display:**
-
-Each entry shows:
-- Campaign name (from snapshot)
-- Completion date (formatted same as completion dates elsewhere)
-- Bonus XP
-- Delete button (×) — same pattern as completion deletion, with confirm
-
-Empty state: "No accomplishments yet."
-
-**Testing checkpoint:** Build app. Complete a campaign — verify accomplishment appears on Character tab with name, date, and bonus XP. Delete the campaign — accomplishment survives. Delete the accomplishment — it disappears, XP unchanged.
-
----
-
-## Substep 3: Frontend — campaign duplication ✅
-
-**Duplicate action:**
-
-Add a "Dup" button to the campaign edit mode row (alongside Save, Del, ✕). Available on any campaign — active or completed.
-
-```javascript
-function renderCampaignEdit(c) {
-  return `<li class="quest-edit" data-id="${c.id}">
-    <input ... >
-    <button onclick="saveCampaignEdit('${c.id}')">Save</button>
-    <button onclick="duplicateCampaign('${c.id}')">Dup</button>
-    <button class="del-btn" onclick="deleteCampaign('${c.id}')">Del</button>
-    <span class="close-x" onclick="cancelCampaignEdit()">✕</span>
-  </li>`;
-}
-```
-
-**`duplicateCampaign(id)` function:**
-
-1. Find the campaign in `cachedCampaigns` by ID
-2. Pre-fill the creation form:
-   - Name: `campaign.name + " copy"`
-   - Criteria: copy each criterion's `targetType`, `targetId`, `targetName`, `targetCount` into `campaignDraftCriteria`
-3. Open the creation form (same as `showCampaignForm` but with pre-filled data)
-4. Close edit mode
-
-The user can then rename, add/remove/adjust criteria before saving. Saving calls `create_campaign` — it's just a regular creation with a new `created_at` and all counts at 0.
-
-**Testing checkpoint:** Build app. Complete a campaign. Enter edit mode, click Dup. Verify form opens with "Name copy" and same criteria pre-filled. Remove one criterion, add a new one, rename, save. New campaign appears with fresh 0/N counts. Original campaign unchanged.
+**Testing checkpoint:** Build app. Add a new quest. Set its last-done to yesterday — it should show as not due (for a daily quest). Clear the last-done — it becomes due again. Complete a quest, then delete the completion from history — last-done stays, quest stays not-due.
 
 ---
 
 ## NOT in this step
 
-- Campaign nudging in quest giver (future)
-- Level/XP criterion types (future)
-- Time-bounded criteria (future)
-- Richer accomplishment display — titles, honors, badges (future)
+- Evening/Night time split (2H.1-2)
+- Quest selector tuning (2H.1-3 through 2H.1-7)
 
 ## Done When
 
-All three substeps complete. Campaigns award bonus XP on completion with gold celebration at all five paths. Accomplishments appear on Character tab and survive campaign deletion. Campaigns can be duplicated. `cargo test` passes.
+Both substeps complete. `last_completed` is a stored column on quest. Completions are a read-only log that don't drive due logic. Manual date picker works on quest list. Deleting completions doesn't change due dates. `cargo test` passes.

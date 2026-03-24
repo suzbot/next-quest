@@ -327,7 +327,8 @@ fn create_tables(conn: &Connection) {
             time_of_day INTEGER NOT NULL DEFAULT 7,
             days_of_week INTEGER NOT NULL DEFAULT 127,
             saga_id     TEXT REFERENCES saga(id),
-            step_order  INTEGER
+            step_order  INTEGER,
+            last_completed TEXT
         );
 
         CREATE TABLE IF NOT EXISTS quest_completion (
@@ -606,6 +607,23 @@ fn migrate(conn: &Connection) {
             "ALTER TABLE quest ADD COLUMN saga_id TEXT REFERENCES saga(id);
              ALTER TABLE quest ADD COLUMN step_order INTEGER;"
         ).expect("Failed to add saga columns to quest");
+    }
+
+    // Migration: add last_completed column to quest, populate from completions
+    let has_last_completed: bool = conn
+        .prepare("SELECT last_completed FROM quest LIMIT 0")
+        .is_ok();
+
+    if !has_last_completed {
+        conn.execute_batch(
+            "ALTER TABLE quest ADD COLUMN last_completed TEXT;"
+        ).expect("Failed to add last_completed column");
+
+        conn.execute_batch(
+            "UPDATE quest SET last_completed = (
+                SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = quest.id
+            );"
+        ).expect("Failed to populate last_completed from completions");
     }
 
     // Migration: create campaign tables if missing
@@ -932,8 +950,7 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
     let mut stmt = conn
         .prepare(
             "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                    q.difficulty, q.time_of_day, q.days_of_week, q.step_order,
-                    (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
+                    q.difficulty, q.time_of_day, q.days_of_week, q.step_order, q.last_completed
              FROM quest q
              WHERE q.saga_id = ?1
              ORDER BY q.step_order ASC",
@@ -1720,8 +1737,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                    q.difficulty, q.time_of_day, q.days_of_week,
-                    (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
+                    q.difficulty, q.time_of_day, q.days_of_week, q.last_completed
              FROM quest q
              WHERE q.saga_id IS NULL AND (q.active = 1 OR (q.active = 0 AND q.quest_type = 'one_off'))
              ORDER BY q.active DESC, q.sort_order DESC",
@@ -2121,11 +2137,11 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
 
 pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion, String> {
     // Read quest data for XP calculation
-    let (quest_title, difficulty_str, quest_type_str, cycle_days, saga_id): (String, String, String, Option<i32>, Option<String>) = conn
+    let (quest_title, difficulty_str, quest_type_str, cycle_days, saga_id, stored_last_completed): (String, String, String, Option<i32>, Option<String>, Option<String>) = conn
         .query_row(
-            "SELECT title, difficulty, quest_type, cycle_days, saga_id FROM quest WHERE id = ?1",
+            "SELECT title, difficulty, quest_type, cycle_days, saga_id, last_completed FROM quest WHERE id = ?1",
             rusqlite::params![quest_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )
         .map_err(|_| format!("Quest not found: {}", quest_id))?;
 
@@ -2152,13 +2168,7 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let xp_earned = match effective_type {
         QuestType::OneOff => base_xp,
         QuestType::Recurring => {
-            let last_completed: Option<String> = conn.query_row(
-                "SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = ?1",
-                rusqlite::params![quest_id],
-                |row| row.get(0),
-            ).map_err(|e| e.to_string())?;
-
-            match last_completed.and_then(|ts| iso_utc_to_unix_secs(&ts)) {
+            match stored_last_completed.as_deref().and_then(iso_utc_to_unix_secs) {
                 None => base_xp, // never completed → 1.0x
                 Some(last_secs) => {
                     let now_secs = std::time::SystemTime::now()
@@ -2220,6 +2230,13 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     tx.execute(
         "UPDATE quest SET active = 0 WHERE id = ?1 AND quest_type = 'one_off'",
         rusqlite::params![quest_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Update stored last_completed
+    tx.execute(
+        "UPDATE quest SET last_completed = ?1 WHERE id = ?2",
+        rusqlite::params![completed_at, quest_id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2388,6 +2405,29 @@ pub fn delete_quest(conn: &Connection, quest_id: String) -> Result<(), String> {
     conn.execute(
         "DELETE FROM quest WHERE id = ?1",
         rusqlite::params![quest_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn set_quest_last_done(conn: &Connection, quest_id: String, last_done: Option<String>) -> Result<(), String> {
+    // Verify quest exists and is not a saga step
+    let saga_id: Option<String> = conn
+        .query_row(
+            "SELECT saga_id FROM quest WHERE id = ?1",
+            rusqlite::params![quest_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("Quest not found: {}", quest_id))?;
+
+    if saga_id.is_some() {
+        return Err("Cannot manually set last-done on a saga step".to_string());
+    }
+
+    conn.execute(
+        "UPDATE quest SET last_completed = ?1 WHERE id = ?2",
+        rusqlite::params![last_done, quest_id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2596,8 +2636,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
     let (skill_ids, attribute_ids) = load_quest_link_ids(conn, quest_id)?;
     conn.query_row(
         "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                q.difficulty, q.time_of_day, q.days_of_week, q.saga_id,
-                (SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id) as last_completed
+                q.difficulty, q.time_of_day, q.days_of_week, q.saga_id, q.last_completed
          FROM quest q WHERE q.id = ?1",
         rusqlite::params![quest_id],
         |row| {
@@ -4908,5 +4947,94 @@ mod tests {
         assert_eq!(accomplishments.len(), 1);
         assert!(accomplishments[0].campaign_id.is_none()); // orphaned
         assert_eq!(accomplishments[0].campaign_name, "Orphan Test"); // name snapshot survives
+    }
+
+    // --- Stored last_completed tests ---
+
+    #[test]
+    fn complete_quest_sets_last_completed() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vitamins");
+
+        // Before completion, last_completed is None
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert!(quest.last_completed.is_none());
+
+        let completion = complete_quest(&conn, q.id.clone()).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert_eq!(quest.last_completed.as_deref(), Some(completion.completed_at.as_str()));
+    }
+
+    #[test]
+    fn delete_completion_preserves_last_completed() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vitamins");
+        let completion = complete_quest(&conn, q.id.clone()).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        let last_done_before = quests.iter().find(|x| x.id == q.id).unwrap().last_completed.clone();
+        assert!(last_done_before.is_some());
+
+        // Delete the completion
+        delete_completion(&conn, completion.id).unwrap();
+
+        // last_completed should be unchanged
+        let quests = get_quests(&conn).unwrap();
+        let last_done_after = quests.iter().find(|x| x.id == q.id).unwrap().last_completed.clone();
+        assert_eq!(last_done_before, last_done_after);
+    }
+
+    #[test]
+    fn set_quest_last_done_updates_due() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Daily Task");
+
+        // Set last-done to now — should no longer be due
+        let now = chrono_now();
+        set_quest_last_done(&conn, q.id.clone(), Some(now)).unwrap();
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert!(!quest.is_due);
+
+        // Set last-done to 3 days ago — should be due (daily quest)
+        set_quest_last_done(&conn, q.id.clone(), Some("2020-01-01T00:00:00Z".into())).unwrap();
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert!(quest.is_due);
+    }
+
+    #[test]
+    fn set_quest_last_done_clear() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Daily Task");
+
+        // Set a date, then clear it
+        set_quest_last_done(&conn, q.id.clone(), Some(chrono_now())).unwrap();
+        set_quest_last_done(&conn, q.id.clone(), None).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert!(quest.last_completed.is_none());
+        assert!(quest.is_due); // never completed = due
+    }
+
+    #[test]
+    fn set_quest_last_done_saga_step_rejected() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Test Saga".into(), Some(1)).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 1".into(),
+            difficulty: Difficulty::Easy,
+            time_of_day: 7,
+            days_of_week: 127,
+        }).unwrap();
+
+        let result = set_quest_last_done(&conn, step.id, Some(chrono_now()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("saga step"));
     }
 }

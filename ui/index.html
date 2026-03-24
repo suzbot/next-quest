@@ -137,6 +137,10 @@
       width: 75px;
       text-align: right;
     }
+    .last-done-picker-wrap { position: relative; flex-shrink: 0; }
+    .last-done-picker-icon { font-size: 11px; color: #888; cursor: pointer; }
+    .last-done-picker-icon:hover { color: #444; }
+    .last-done-picker-input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
 
     .quest-meta {
       display: flex;
@@ -1277,12 +1281,20 @@
       }
 
       const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
+      const lastDoneDate = q.last_completed ? q.last_completed.substring(0, 10) : "";
 
       const links = linkNamesText(q);
       const dowLabel = dowText(q.days_of_week ?? 127);
       const hasDetail = !!links;
 
       const diffColor = q.is_due ? (diffTextColors[q.difficulty] || '#555') : '#777';
+
+      const lastDonePicker = q.active
+        ? `<span class="last-done-picker-wrap">
+            <span class="last-done-picker-icon" onclick="this.nextElementSibling.showPicker()" title="Set last-done date">&#x270E;</span>
+            <input type="date" class="last-done-picker-input" value="${lastDoneDate}" max="${new Date().toISOString().substring(0, 10)}" onchange="setLastDone('${q.id}', this.value)">
+          </span>`
+        : "";
 
       const questNowBtn = q.active
         ? `<button class="action-btn" onclick="listQuestNow('${q.id}')">⚔</button>`
@@ -1305,6 +1317,7 @@
             <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
           </span>
           <span class="quest-last-done">${lastDone}</span>
+          ${lastDonePicker}
           ${questNowBtn}
           ${doneBtn}
         </div>
@@ -1516,6 +1529,12 @@
 
     async function deleteCompletion(id) {
       await invoke("delete_completion", { completionId: id });
+      await loadAll();
+    }
+
+    async function setLastDone(questId, dateStr) {
+      const lastDone = dateStr ? new Date(dateStr + "T00:01:00").toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+      await invoke("set_quest_last_done", { questId, lastDone });
       await loadAll();
     }
 

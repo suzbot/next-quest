@@ -70,6 +70,7 @@ fn main() {
             commands::get_completions,
             commands::add_quest,
             commands::complete_quest,
+            commands::set_quest_last_done,
             commands::update_quest,
             commands::delete_quest,
             commands::delete_completion,
