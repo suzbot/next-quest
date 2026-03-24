@@ -199,12 +199,11 @@ Smarter quest selection based on new quest attributes and offer tracking:
 7. **Debug scoring** — settings toggle shows score breakdown in quest giver
 8. **UI polish** — difficulty labels renamed (Fair/Hard), cycle abbreviated (↻ #d), meter layout (level left, XP right)
 
-## Phase 2F.5: "Cleanup"
+## Phase 2F.5: "Cleanup" ✓
 
-Code quality pass before adding more features:
-
-1. **Parameter structs** — replace positional argument sprawl in `add_quest` (7 params), `update_quest` (8 params), `get_next_quest` (3 params) with structs that have defaults. Adding a field becomes a one-place change.
-2. **Test helper** — `test_add_quest(&conn, "Title")` with sensible defaults, so new quest fields don't require updating 40+ test calls.
+1. **Parameter structs** — `NewQuest`, `QuestUpdate`, `NewSagaStep` with `Default` impls and serde. Adding a field is now a one-place change.
+2. **Test helpers** — `test_quest()` and `test_quest_with()` replace 60+ verbose test calls
+3. **Attribute/skill resequencing** — Alt+Arrow keyboard and drag-and-drop on Character tab. Full ordered list rebuild, not pair swaps.
 
 ## Phase 2G: "Advanced Logic"
 
@@ -228,7 +227,8 @@ Code quality pass before adding more features:
 
 2G.3 Clean up abilities and general UI improvements
 
-1. **Edit last-done date** — correct mistakes in completion history
+1. **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
+2. **Edit last-done date** — correct mistakes in completion history
 2. Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
 3. Evaluate: adding quest timer to overlay instead of going into full app?
 4. Evaluate: having quest giver view always at the top and tabs expand bottom detail?

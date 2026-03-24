@@ -307,10 +307,10 @@
     .hidden { display: none !important; }
 
     /* Drag and drop */
-    .quest-item.dragging { opacity: 0.3; }
-    body.is-dragging { -webkit-user-select: none; user-select: none; }
-    .quest-item.drop-above { border-top: 2px solid #444; }
-    .quest-item.drop-below { border-bottom: 2px solid #444; }
+    .quest-item.dragging, .meter-row.dragging { opacity: 0.3; }
+    body.is-dragging { -webkit-user-select: none; user-select: none; cursor: grabbing; }
+    .quest-item.drop-above, .meter-row.drop-above { border-top: 2px solid #444; }
+    .quest-item.drop-below, .meter-row.drop-below { border-bottom: 2px solid #444; }
 
     /* Link tags */
     .link-tags-row {
@@ -1378,13 +1378,13 @@
       const timeOfDay = editTod ? readMask(editTod) : 7;
       const editDow = document.getElementById("edit-dow");
       const daysOfWeek = editDow ? readMask(editDow) : 127;
-      const params = { questId: id, title, questType, difficulty, timeOfDay, daysOfWeek };
+      const update = { title, questType, difficulty, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
-        params.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
+        update.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
       }
 
-      await invoke("update_quest", params);
+      await invoke("update_quest", { questId: id, update });
 
       const linksContainer = document.getElementById("edit-links-container");
       if (linksContainer) {
@@ -1568,13 +1568,13 @@
       const difficulty = difficultySelect.value;
       const timeOfDay = readMask(addTodContainer);
       const daysOfWeek = readMask(addDowContainer);
-      const params = { title, questType, difficulty, timeOfDay, daysOfWeek };
+      const questParams = { title, questType, difficulty, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
-        params.cycleDays = parseInt(cycleInput.value, 10) || 1;
+        questParams.cycleDays = parseInt(cycleInput.value, 10) || 1;
       }
 
-      const quest = await invoke("add_quest", params);
+      const quest = await invoke("add_quest", { quest: questParams });
 
       const { skillIds, attributeIds } = getSelectedLinkIds(addLinksRow);
       if (skillIds.length > 0 || attributeIds.length > 0) {
@@ -1974,7 +1974,8 @@
           </div>`;
         }
         return `<div class="meter-row" tabindex="0" data-type="attr" data-id="${a.id}"
-                     onkeydown="handleMeterRowKey(event, 'attr', '${a.id}')">
+                     onkeydown="handleMeterRowKey(event, 'attr', '${a.id}')"
+                     onpointerdown="onMeterPointerDown(event, 'attr', '${a.id}')">
           <span class="meter-label meter-label-clickable" onclick="startAttrEdit('${a.id}')">${escapeHtml(a.name)}</span>
           <span class="meter-level">Lvl ${a.level}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
@@ -2017,7 +2018,8 @@
           </div>`;
         }
         return `<div class="meter-row" tabindex="0" data-type="skill" data-id="${s.id}"
-                     onkeydown="handleMeterRowKey(event, 'skill', '${s.id}')">
+                     onkeydown="handleMeterRowKey(event, 'skill', '${s.id}')"
+                     onpointerdown="onMeterPointerDown(event, 'skill', '${s.id}')">
           <span class="meter-label meter-label-clickable" onclick="startSkillEdit('${s.id}')">${escapeHtml(s.name)}</span>
           <span class="meter-level">Lvl ${s.level}</span>
           <div class="meter-bar-bg"><div class="meter-bar-fill" style="width: ${pct}%; background: ${color};"></div></div>
@@ -2118,6 +2120,12 @@
         e.preventDefault();
         if (type === "attr") startAttrEdit(id);
         else startSkillEdit(id);
+      } else if (e.key === "ArrowUp" && e.altKey) {
+        e.preventDefault();
+        moveMeterRow(type, id, -1);
+      } else if (e.key === "ArrowDown" && e.altKey) {
+        e.preventDefault();
+        moveMeterRow(type, id, 1);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         focusAdjacentMeterRow(e.target, -1);
@@ -2132,6 +2140,116 @@
       const idx = rows.indexOf(current);
       const target = rows[idx + direction];
       if (target) target.focus();
+    }
+
+    async function moveMeterRow(type, id, direction) {
+      const list = type === "attr" ? cachedAttributes : cachedSkills;
+      const ids = list.map(x => x.id);
+      const idx = ids.indexOf(id);
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= ids.length) return;
+
+      ids.splice(idx, 1);
+      ids.splice(newIdx, 0, id);
+
+      if (type === "attr") {
+        await invoke("reorder_attributes", { attrIds: ids });
+      } else {
+        await invoke("reorder_skills", { skillIds: ids });
+      }
+      await loadCharacterView();
+      const movedEl = charContent.querySelector(`[data-id="${id}"]`);
+      if (movedEl) movedEl.focus();
+    }
+
+    let meterDragType = null;
+    let meterDragId = null;
+    let meterDragStartY = 0;
+    let meterIsDragging = false;
+
+    function onMeterPointerDown(e, type, id) {
+      if (e.target.closest("button")) return;
+      e.stopPropagation();
+      meterDragType = type;
+      meterDragId = id;
+      meterDragStartY = e.clientY;
+      meterIsDragging = false;
+
+      const onMove = (me) => {
+        if (!meterIsDragging && Math.abs(me.clientY - meterDragStartY) > 5) {
+          meterIsDragging = true;
+          document.body.classList.add("is-dragging");
+          window.getSelection()?.removeAllRanges();
+          const el = charContent.querySelector(`[data-id="${meterDragId}"]`);
+          if (el) el.classList.add("dragging");
+        }
+        if (!meterIsDragging) return;
+
+        charContent.querySelectorAll(".drop-above, .drop-below").forEach(el => {
+          el.classList.remove("drop-above", "drop-below");
+        });
+        const target = getMeterDropTarget(meterDragType, me.clientY);
+        if (target && target.id !== meterDragId) {
+          const rect = target.el.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          target.el.classList.add(me.clientY < mid ? "drop-above" : "drop-below");
+        }
+      };
+
+      const onUp = async (ue) => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+
+        if (!meterIsDragging) { meterDragId = null; return; }
+
+        const target = getMeterDropTarget(meterDragType, ue.clientY);
+        charContent.querySelectorAll(".drop-above, .drop-below").forEach(el => {
+          el.classList.remove("drop-above", "drop-below");
+        });
+        document.body.classList.remove("is-dragging");
+        charContent.querySelectorAll(".dragging").forEach(el => el.classList.remove("dragging"));
+
+        if (!target || target.id === meterDragId) { meterDragId = null; return; }
+
+        const list = meterDragType === "attr" ? cachedAttributes : cachedSkills;
+        const ids = list.map(x => x.id);
+        const draggedIdx = ids.indexOf(meterDragId);
+        if (draggedIdx === -1) { meterDragId = null; return; }
+
+        const rect = target.el.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        let targetIdx = ids.indexOf(target.id);
+        if (ue.clientY >= mid && targetIdx < draggedIdx) targetIdx++;
+        if (ue.clientY < mid && targetIdx > draggedIdx) targetIdx--;
+
+        const reordered = [...ids];
+        reordered.splice(draggedIdx, 1);
+        reordered.splice(targetIdx, 0, meterDragId);
+
+        if (meterDragType === "attr") {
+          await invoke("reorder_attributes", { attrIds: reordered });
+        } else {
+          await invoke("reorder_skills", { skillIds: reordered });
+        }
+        meterDragId = null;
+        meterIsDragging = false;
+        await loadCharacterView();
+      };
+
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    }
+
+    function getMeterDropTarget(type, clientY) {
+      const selector = `[data-type="${type}"]`;
+      const items = Array.from(charContent.querySelectorAll(selector));
+      for (const el of items) {
+        const rect = el.getBoundingClientRect();
+        if (clientY >= rect.top && clientY <= rect.bottom) {
+          return { el, id: el.dataset.id };
+        }
+      }
+      return null;
     }
 
     // --- Attribute CRUD ---
@@ -2608,7 +2726,7 @@
       if (!title) return;
       const timeOfDay = todEl ? readMask(todEl) : 7;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
-      const step = await invoke("add_saga_step", { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek });
+      const step = await invoke("add_saga_step", { step: { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek } });
 
       const linksRow = document.getElementById("step-add-links-" + sagaId);
       if (linksRow) {
@@ -2649,7 +2767,7 @@
       const dowEl = document.getElementById("step-edit-dow");
       const timeOfDay = todEl ? readMask(todEl) : 7;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
-      await invoke("update_quest", { questId: id, title, difficulty, timeOfDay, daysOfWeek });
+      await invoke("update_quest", { questId: id, update: { title, difficulty, timeOfDay, daysOfWeek } });
 
       const linksContainer = document.getElementById("step-edit-links-container");
       if (linksContainer) {

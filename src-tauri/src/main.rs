@@ -97,6 +97,8 @@ fn main() {
             commands::add_attribute,
             commands::add_skill,
             commands::rename_attribute,
+            commands::reorder_attributes,
+            commands::reorder_skills,
             commands::rename_skill,
             commands::update_skill_attribute,
             commands::delete_attribute,

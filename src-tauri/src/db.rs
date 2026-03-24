@@ -65,6 +65,77 @@ pub enum LevelScale {
     Skill,
 }
 
+// --- Parameter structs ---
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NewQuest {
+    pub title: String,
+    #[serde(default = "default_quest_type")]
+    pub quest_type: QuestType,
+    pub cycle_days: Option<i32>,
+    #[serde(default = "default_difficulty")]
+    pub difficulty: Difficulty,
+    #[serde(default = "default_time_of_day")]
+    pub time_of_day: i32,
+    #[serde(default = "default_days_of_week")]
+    pub days_of_week: i32,
+}
+
+fn default_quest_type() -> QuestType { QuestType::Recurring }
+fn default_difficulty() -> Difficulty { Difficulty::Easy }
+fn default_time_of_day() -> i32 { 7 }
+fn default_days_of_week() -> i32 { 127 }
+
+impl Default for NewQuest {
+    fn default() -> Self {
+        NewQuest {
+            title: String::new(),
+            quest_type: QuestType::Recurring,
+            cycle_days: Some(1),
+            difficulty: Difficulty::Easy,
+            time_of_day: 7,
+            days_of_week: 127,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestUpdate {
+    pub title: Option<String>,
+    pub quest_type: Option<QuestType>,
+    pub cycle_days: Option<i32>,
+    pub difficulty: Option<Difficulty>,
+    pub time_of_day: Option<i32>,
+    pub days_of_week: Option<i32>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NewSagaStep {
+    pub saga_id: String,
+    pub title: String,
+    #[serde(default = "default_difficulty")]
+    pub difficulty: Difficulty,
+    #[serde(default = "default_time_of_day")]
+    pub time_of_day: i32,
+    #[serde(default = "default_days_of_week")]
+    pub days_of_week: i32,
+}
+
+impl Default for NewSagaStep {
+    fn default() -> Self {
+        NewSagaStep {
+            saga_id: String::new(),
+            title: String::new(),
+            difficulty: Difficulty::Easy,
+            time_of_day: 7,
+            days_of_week: 127,
+        }
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct Quest {
     pub id: String,
@@ -807,14 +878,13 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
     Ok(steps)
 }
 
-pub fn add_saga_step(
-    conn: &Connection,
-    saga_id: String,
-    title: String,
-    difficulty: Difficulty,
-    time_of_day: i32,
-    days_of_week: i32,
-) -> Result<Quest, String> {
+pub fn add_saga_step(conn: &Connection, s: NewSagaStep) -> Result<Quest, String> {
+    let saga_id = s.saga_id;
+    let title = s.title;
+    let difficulty = s.difficulty;
+    let time_of_day = s.time_of_day;
+    let days_of_week = s.days_of_week;
+
     // Verify saga exists
     let exists: bool = conn
         .query_row(
@@ -1360,17 +1430,15 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
     Ok(completions)
 }
 
-pub fn add_quest(
-    conn: &Connection,
-    title: String,
-    quest_type: QuestType,
-    cycle_days: Option<i32>,
-    difficulty: Difficulty,
-    time_of_day: i32,
-    days_of_week: i32,
-) -> Result<Quest, String> {
+pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
     let id = Uuid::new_v4().to_string();
     let created_at = chrono_now();
+    let title = q.title;
+    let quest_type = q.quest_type;
+    let cycle_days = q.cycle_days;
+    let difficulty = q.difficulty;
+    let time_of_day = q.time_of_day;
+    let days_of_week = q.days_of_week;
 
     let max_order: i32 = conn
         .query_row(
@@ -1674,12 +1742,7 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
 pub fn update_quest(
     conn: &Connection,
     quest_id: String,
-    title: Option<String>,
-    quest_type: Option<QuestType>,
-    cycle_days: Option<i32>,
-    difficulty: Option<Difficulty>,
-    time_of_day: Option<i32>,
-    days_of_week: Option<i32>,
+    u: QuestUpdate,
 ) -> Result<Quest, String> {
     let exists: bool = conn
         .query_row(
@@ -1693,7 +1756,7 @@ pub fn update_quest(
         return Err(format!("Quest not found: {}", quest_id));
     }
 
-    if let Some(ref new_title) = title {
+    if let Some(ref new_title) = u.title {
         conn.execute(
             "UPDATE quest SET title = ?1 WHERE id = ?2",
             rusqlite::params![new_title, quest_id],
@@ -1701,15 +1764,13 @@ pub fn update_quest(
         .map_err(|e| e.to_string())?;
     }
 
-    if let Some(ref new_type) = quest_type {
+    if let Some(ref new_type) = u.quest_type {
         conn.execute(
             "UPDATE quest SET quest_type = ?1 WHERE id = ?2",
             rusqlite::params![new_type.as_str(), quest_id],
         )
         .map_err(|e| e.to_string())?;
 
-        // When switching to one_off, clear cycle_days
-        // When switching to recurring, set default cycle_days if not provided
         match new_type {
             QuestType::OneOff => {
                 conn.execute(
@@ -1719,7 +1780,7 @@ pub fn update_quest(
                 .map_err(|e| e.to_string())?;
             }
             QuestType::Recurring => {
-                if cycle_days.is_none() {
+                if u.cycle_days.is_none() {
                     conn.execute(
                         "UPDATE quest SET cycle_days = 1 WHERE id = ?1 AND cycle_days IS NULL",
                         rusqlite::params![quest_id],
@@ -1730,7 +1791,7 @@ pub fn update_quest(
         }
     }
 
-    if let Some(days) = cycle_days {
+    if let Some(days) = u.cycle_days {
         conn.execute(
             "UPDATE quest SET cycle_days = ?1 WHERE id = ?2",
             rusqlite::params![days, quest_id],
@@ -1738,7 +1799,7 @@ pub fn update_quest(
         .map_err(|e| e.to_string())?;
     }
 
-    if let Some(ref diff) = difficulty {
+    if let Some(ref diff) = u.difficulty {
         conn.execute(
             "UPDATE quest SET difficulty = ?1 WHERE id = ?2",
             rusqlite::params![diff.as_str(), quest_id],
@@ -1746,7 +1807,7 @@ pub fn update_quest(
         .map_err(|e| e.to_string())?;
     }
 
-    if let Some(tod) = time_of_day {
+    if let Some(tod) = u.time_of_day {
         conn.execute(
             "UPDATE quest SET time_of_day = ?1 WHERE id = ?2",
             rusqlite::params![tod, quest_id],
@@ -1754,7 +1815,7 @@ pub fn update_quest(
         .map_err(|e| e.to_string())?;
     }
 
-    if let Some(dow) = days_of_week {
+    if let Some(dow) = u.days_of_week {
         conn.execute(
             "UPDATE quest SET days_of_week = ?1 WHERE id = ?2",
             rusqlite::params![dow, quest_id],
@@ -2267,6 +2328,26 @@ pub fn rename_skill(conn: &Connection, id: String, name: String) -> Result<(), S
     Ok(())
 }
 
+pub fn reorder_attributes(conn: &Connection, attr_ids: Vec<String>) -> Result<(), String> {
+    for (i, id) in attr_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE attribute SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![i as i32 + 1, id],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn reorder_skills(conn: &Connection, skill_ids: Vec<String>) -> Result<(), String> {
+    for (i, id) in skill_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE skill SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![i as i32 + 1, id],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn update_skill_attribute(conn: &Connection, skill_id: String, attribute_id: Option<String>) -> Result<(), String> {
     // Validate attribute_id if provided
     if let Some(ref aid) = attribute_id {
@@ -2505,6 +2586,19 @@ mod tests {
         init_db_memory()
     }
 
+    fn test_quest(conn: &Connection, title: &str) -> Quest {
+        add_quest(conn, NewQuest {
+            title: title.to_string(),
+            ..NewQuest::default()
+        }).unwrap()
+    }
+
+    fn test_quest_with(conn: &Connection, title: &str, f: impl FnOnce(&mut NewQuest)) -> Quest {
+        let mut q = NewQuest { title: title.to_string(), ..NewQuest::default() };
+        f(&mut q);
+        add_quest(conn, q).unwrap()
+    }
+
     #[test]
     fn empty_db_returns_no_quests() {
         let conn = test_db();
@@ -2520,7 +2614,7 @@ mod tests {
     #[test]
     fn add_recurring_quest() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Shower");
         assert_eq!(q.quest_type, QuestType::Recurring);
         assert_eq!(q.cycle_days, Some(1));
         assert!(q.active);
@@ -2530,14 +2624,14 @@ mod tests {
     #[test]
     fn add_recurring_quest_defaults_cycle_to_1() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, None, Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "Shower", |q| q.cycle_days = None);
         assert_eq!(q.cycle_days, Some(1));
     }
 
     #[test]
     fn add_one_off_quest() {
         let conn = test_db();
-        let q = add_quest(&conn, "File taxes".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "File taxes", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         assert_eq!(q.quest_type, QuestType::OneOff);
         assert_eq!(q.cycle_days, None);
         assert!(q.is_due);
@@ -2546,16 +2640,16 @@ mod tests {
     #[test]
     fn add_one_off_ignores_cycle_days() {
         let conn = test_db();
-        let q = add_quest(&conn, "Taxes".into(), QuestType::OneOff, Some(5), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "Taxes", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         assert_eq!(q.cycle_days, None); // ignored for one-off
     }
 
     #[test]
     fn quests_ordered_by_sort_order_descending() {
         let conn = test_db();
-        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        add_quest(&conn, "Third".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        test_quest(&conn, "First");
+        test_quest(&conn, "Second");
+        test_quest(&conn, "Third");
 
         let quests = get_quests(&conn).unwrap();
         assert_eq!(quests[0].title, "Third");
@@ -2566,8 +2660,8 @@ mod tests {
     #[test]
     fn sort_order_auto_increments() {
         let conn = test_db();
-        let q1 = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        let q2 = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q1 = test_quest(&conn, "A");
+        let q2 = test_quest(&conn, "B");
         assert_eq!(q1.sort_order, 1);
         assert_eq!(q2.sort_order, 2);
     }
@@ -2577,7 +2671,7 @@ mod tests {
     #[test]
     fn complete_quest_snapshots_title() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Shower");
         let c = complete_quest(&conn, q.id.clone()).unwrap();
         assert_eq!(c.quest_title, "Shower");
         assert_eq!(c.quest_id, Some(q.id));
@@ -2586,7 +2680,7 @@ mod tests {
     #[test]
     fn complete_recurring_stays_active() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Shower");
         complete_quest(&conn, q.id.clone()).unwrap();
 
         let quests = get_quests(&conn).unwrap();
@@ -2597,7 +2691,7 @@ mod tests {
     #[test]
     fn complete_one_off_deactivates() {
         let conn = test_db();
-        let q = add_quest(&conn, "Taxes".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "Taxes", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         complete_quest(&conn, q.id.clone()).unwrap();
 
         let quests = get_quests(&conn).unwrap();
@@ -2608,7 +2702,7 @@ mod tests {
     #[test]
     fn multiple_completions() {
         let conn = test_db();
-        let q = add_quest(&conn, "Water".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Water");
         complete_quest(&conn, q.id.clone()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
@@ -2626,7 +2720,7 @@ mod tests {
     #[test]
     fn delete_quest_preserves_completions() {
         let conn = test_db();
-        let q = add_quest(&conn, "Delete me".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Delete me");
         complete_quest(&conn, q.id.clone()).unwrap();
 
         delete_quest(&conn, q.id.clone()).unwrap();
@@ -2649,7 +2743,7 @@ mod tests {
     #[test]
     fn delete_completion_removes_one() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Shower");
         let c1 = complete_quest(&conn, q.id.clone()).unwrap();
         complete_quest(&conn, q.id.clone()).unwrap();
 
@@ -2668,8 +2762,8 @@ mod tests {
     #[test]
     fn update_quest_title() {
         let conn = test_db();
-        let q = add_quest(&conn, "Old".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        let u = update_quest(&conn, q.id, Some("New".into()), None, None, None, None, None).unwrap();
+        let q = test_quest(&conn, "Old");
+        let u = update_quest(&conn, q.id, QuestUpdate { title: Some("New".into()), ..Default::default() }).unwrap();
         assert_eq!(u.title, "New");
         assert_eq!(u.cycle_days, Some(1));
     }
@@ -2677,16 +2771,16 @@ mod tests {
     #[test]
     fn update_quest_cycle() {
         let conn = test_db();
-        let q = add_quest(&conn, "Shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        let u = update_quest(&conn, q.id, None, None, Some(3), None, None, None).unwrap();
+        let q = test_quest(&conn, "Shower");
+        let u = update_quest(&conn, q.id, QuestUpdate { cycle_days: Some(3), ..Default::default() }).unwrap();
         assert_eq!(u.cycle_days, Some(3));
     }
 
     #[test]
     fn update_quest_type_to_one_off() {
         let conn = test_db();
-        let q = add_quest(&conn, "Maybe once".into(), QuestType::Recurring, Some(7), Difficulty::Easy, 7, 127).unwrap();
-        let u = update_quest(&conn, q.id, None, Some(QuestType::OneOff), None, None, None, None).unwrap();
+        let q = test_quest_with(&conn, "Maybe once", |q| q.cycle_days = Some(7));
+        let u = update_quest(&conn, q.id, QuestUpdate { quest_type: Some(QuestType::OneOff), ..Default::default() }).unwrap();
         assert_eq!(u.quest_type, QuestType::OneOff);
         assert_eq!(u.cycle_days, None); // cleared
     }
@@ -2694,8 +2788,8 @@ mod tests {
     #[test]
     fn update_quest_type_to_recurring() {
         let conn = test_db();
-        let q = add_quest(&conn, "Now recurring".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
-        let u = update_quest(&conn, q.id, None, Some(QuestType::Recurring), Some(3), None, None, None).unwrap();
+        let q = test_quest_with(&conn, "Now recurring", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        let u = update_quest(&conn, q.id, QuestUpdate { quest_type: Some(QuestType::Recurring), cycle_days: Some(3), ..Default::default() }).unwrap();
         assert_eq!(u.quest_type, QuestType::Recurring);
         assert_eq!(u.cycle_days, Some(3));
     }
@@ -2703,8 +2797,8 @@ mod tests {
     #[test]
     fn update_quest_type_to_recurring_defaults_cycle() {
         let conn = test_db();
-        let q = add_quest(&conn, "Now recurring".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
-        let u = update_quest(&conn, q.id, None, Some(QuestType::Recurring), None, None, None, None).unwrap();
+        let q = test_quest_with(&conn, "Now recurring", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        let u = update_quest(&conn, q.id, QuestUpdate { quest_type: Some(QuestType::Recurring), ..Default::default() }).unwrap();
         assert_eq!(u.quest_type, QuestType::Recurring);
         assert_eq!(u.cycle_days, Some(1)); // default
     }
@@ -2712,7 +2806,7 @@ mod tests {
     #[test]
     fn update_nonexistent_errors() {
         let conn = test_db();
-        assert!(update_quest(&conn, "nope".into(), Some("x".into()), None, None, None, None, None).is_err());
+        assert!(update_quest(&conn, "nope".into(), QuestUpdate { title: Some("x".into()), ..Default::default() }).is_err());
     }
 
     // --- Reorder ---
@@ -2720,8 +2814,8 @@ mod tests {
     #[test]
     fn reorder_quests_swaps_order() {
         let conn = test_db();
-        let a = add_quest(&conn, "A".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        let b = add_quest(&conn, "B".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let a = test_quest(&conn, "A");
+        let b = test_quest(&conn, "B");
         // B has higher sort_order, so it's first in get_quests (DESC)
         let quests = get_quests(&conn).unwrap();
         assert_eq!(quests[0].title, "B");
@@ -2741,7 +2835,7 @@ mod tests {
     #[test]
     fn reorder_quests_invalid_id_errors() {
         let conn = test_db();
-        let q = add_quest(&conn, "Real".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Real");
         let result = reorder_quests(&conn, vec![
             QuestOrder { id: q.id, sort_order: 5 },
             QuestOrder { id: "nonexistent".into(), sort_order: 3 },
@@ -2931,7 +3025,7 @@ mod tests {
     #[test]
     fn add_quest_with_difficulty() {
         let conn = test_db();
-        let q = add_quest(&conn, "Hard task".into(), QuestType::OneOff, None, Difficulty::Epic, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "Hard task", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; q.difficulty = Difficulty::Epic; });
         assert_eq!(q.difficulty, Difficulty::Epic);
 
         let quests = get_quests(&conn).unwrap();
@@ -2941,15 +3035,15 @@ mod tests {
     #[test]
     fn quest_defaults_to_easy() {
         let conn = test_db();
-        let q = add_quest(&conn, "Simple".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Simple");
         assert_eq!(q.difficulty, Difficulty::Easy);
     }
 
     #[test]
     fn update_quest_difficulty() {
         let conn = test_db();
-        let q = add_quest(&conn, "Task".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        let u = update_quest(&conn, q.id, None, None, None, Some(Difficulty::Challenging), None, None).unwrap();
+        let q = test_quest(&conn, "Task");
+        let u = update_quest(&conn, q.id, QuestUpdate { difficulty: Some(Difficulty::Challenging), ..Default::default() }).unwrap();
         assert_eq!(u.difficulty, Difficulty::Challenging);
     }
 
@@ -2958,7 +3052,7 @@ mod tests {
     #[test]
     fn set_and_get_quest_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Linked");
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
 
@@ -2981,7 +3075,7 @@ mod tests {
     #[test]
     fn set_quest_links_replaces_previous() {
         let conn = test_db();
-        let q = add_quest(&conn, "Replace".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Replace");
         let skills = get_skills(&conn).unwrap();
 
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
@@ -2995,7 +3089,7 @@ mod tests {
     #[test]
     fn get_quests_returns_link_ids() {
         let conn = test_db();
-        let q = add_quest(&conn, "With links".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "With links");
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
 
@@ -3016,14 +3110,14 @@ mod tests {
     #[test]
     fn delete_quest_cleans_up_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Delete links".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Delete links");
         let skills = get_skills(&conn).unwrap();
 
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
         delete_quest(&conn, q.id.clone()).unwrap();
 
         // Verify link rows are gone (create another quest to reuse the skill)
-        let q2 = add_quest(&conn, "New".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q2 = test_quest(&conn, "New");
         set_quest_links(&conn, q2.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
         let links = get_quest_links(&conn, q2.id.clone()).unwrap();
         assert_eq!(links.skill_ids.len(), 1);
@@ -3039,7 +3133,7 @@ mod tests {
     #[test]
     fn set_quest_links_invalid_skill_errors() {
         let conn = test_db();
-        let q = add_quest(&conn, "Bad link".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Bad link");
         let result = set_quest_links(&conn, q.id, vec!["fake-skill".into()], vec![]);
         assert!(result.is_err());
     }
@@ -3047,7 +3141,7 @@ mod tests {
     #[test]
     fn set_quest_links_invalid_attribute_errors() {
         let conn = test_db();
-        let q = add_quest(&conn, "Bad link".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Bad link");
         let result = set_quest_links(&conn, q.id, vec![], vec!["fake-attr".into()]);
         assert!(result.is_err());
     }
@@ -3125,7 +3219,7 @@ mod tests {
     #[test]
     fn award_xp_character_only_no_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Solo".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Solo");
         award_xp(&conn, &q.id, 20).unwrap();
 
         let c = get_character(&conn).unwrap();
@@ -3139,7 +3233,7 @@ mod tests {
     #[test]
     fn award_xp_distributes_to_links() {
         let conn = test_db();
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Linked");
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
 
@@ -3161,7 +3255,7 @@ mod tests {
     #[test]
     fn skill_levelup_triggers_attribute_bump() {
         let conn = test_db();
-        let q = add_quest(&conn, "Grind".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Grind");
         let skills = get_skills(&conn).unwrap();
         // Cooking (skill[0]) maps to Health (attr[0])
         // Skill level 2 at 37 XP. Award 37 to trigger level-up.
@@ -3182,7 +3276,7 @@ mod tests {
     #[test]
     fn complete_quest_stores_xp_earned() {
         let conn = test_db();
-        let q = add_quest(&conn, "XP test".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "XP test");
         let c = complete_quest(&conn, q.id).unwrap();
 
         assert!(c.xp_earned > 0);
@@ -3193,7 +3287,7 @@ mod tests {
     #[test]
     fn complete_quest_awards_character_xp() {
         let conn = test_db();
-        let q = add_quest(&conn, "XP flow".into(), QuestType::Recurring, Some(1), Difficulty::Moderate, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "XP flow", |q| q.difficulty = Difficulty::Moderate);
         let c = complete_quest(&conn, q.id).unwrap();
 
         let char = get_character(&conn).unwrap();
@@ -3206,7 +3300,7 @@ mod tests {
         // Create a weekly saga
         let saga = add_saga(&conn, "Weekly".into(), Some(7)).unwrap();
         // Add an Easy step
-        let step = add_saga_step(&conn, saga.id.clone(), "Step 1".into(), Difficulty::Easy, 7, 127).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep { saga_id: saga.id.clone(), title: "Step 1".into(), ..NewSagaStep::default() }).unwrap();
         let c = complete_quest(&conn, step.id.clone()).unwrap();
 
         // Easy step in a weekly saga: 5 × 5 × sqrt(7) = 66 (with time mult 1.0 for first completion)
@@ -3214,7 +3308,7 @@ mod tests {
         assert_eq!(c.xp_earned, expected);
 
         // Compare: a regular one-off Easy quest would give 75
-        let oneoff = add_quest(&conn, "One-off".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        let oneoff = test_quest_with(&conn, "One-off", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         let c2 = complete_quest(&conn, oneoff.id).unwrap();
         assert_eq!(c2.xp_earned, 75);
         assert!(c.xp_earned < c2.xp_earned); // weekly saga step earns less than one-off
@@ -3224,7 +3318,7 @@ mod tests {
     fn oneoff_saga_step_xp_matches_oneoff_quest() {
         let conn = test_db();
         let saga = add_saga(&conn, "One-off saga".into(), None).unwrap();
-        let step = add_saga_step(&conn, saga.id.clone(), "Step".into(), Difficulty::Easy, 7, 127).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep { saga_id: saga.id.clone(), title: "Step".into(), ..NewSagaStep::default() }).unwrap();
         let c = complete_quest(&conn, step.id).unwrap();
 
         // One-off saga step should match one-off quest: 5 × 5 × 3 = 75
@@ -3234,7 +3328,7 @@ mod tests {
     #[test]
     fn delete_completion_does_not_reduce_xp() {
         let conn = test_db();
-        let q = add_quest(&conn, "Permanent".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Permanent");
         let c = complete_quest(&conn, q.id).unwrap();
 
         let char_before = get_character(&conn).unwrap();
@@ -3347,7 +3441,7 @@ mod tests {
         let target_attr = &attrs[0];
 
         // Create a quest linked to this attribute
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Linked");
         set_quest_links(&conn, q.id.clone(), vec![], vec![target_attr.id.clone()]).unwrap();
 
         // Find a skill mapped to this attribute
@@ -3379,7 +3473,7 @@ mod tests {
         let target_skill = &skills[0];
 
         // Create a quest linked to this skill
-        let q = add_quest(&conn, "Linked".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Linked");
         set_quest_links(&conn, q.id.clone(), vec![target_skill.id.clone()], vec![]).unwrap();
 
         delete_skill(&conn, target_skill.id.clone()).unwrap();
@@ -3410,7 +3504,7 @@ mod tests {
     #[test]
     fn reset_character_zeroes_all_xp() {
         let conn = test_db();
-        let q = add_quest(&conn, "XP".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "XP");
         let skills = get_skills(&conn).unwrap();
         let attrs = get_attributes(&conn).unwrap();
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![attrs[0].id.clone()]).unwrap();
@@ -3428,7 +3522,7 @@ mod tests {
     #[test]
     fn reset_quests_deletes_all() {
         let conn = test_db();
-        let q = add_quest(&conn, "Gone".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Gone");
         let skills = get_skills(&conn).unwrap();
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
 
@@ -3440,7 +3534,7 @@ mod tests {
     #[test]
     fn reset_completions_deletes_all() {
         let conn = test_db();
-        let q = add_quest(&conn, "Done".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Done");
         complete_quest(&conn, q.id).unwrap();
 
         reset_completions(&conn).unwrap();
@@ -3468,8 +3562,8 @@ mod tests {
     #[test]
     fn get_next_quest_returns_highest_scored() {
         let conn = test_db();
-        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        test_quest(&conn, "First");
+        test_quest(&conn, "Second");
 
         let next = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
         // Both never-completed daily quests created at same time — scores should be equal,
@@ -3481,8 +3575,8 @@ mod tests {
     #[test]
     fn get_next_quest_skip_changes_result() {
         let conn = test_db();
-        add_quest(&conn, "First".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        add_quest(&conn, "Second".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        test_quest(&conn, "First");
+        test_quest(&conn, "Second");
 
         let empty = std::collections::HashMap::new();
         let q0 = get_next_quest(&conn, &empty, None).unwrap().unwrap();
@@ -3511,7 +3605,7 @@ mod tests {
     fn get_next_quest_none_due_falls_back() {
         let conn = test_db();
         // Add a quest with a long cycle so it won't be due after completion
-        let q = add_quest(&conn, "Long cycle".into(), QuestType::Recurring, Some(999), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "Long cycle", |q| q.cycle_days = Some(999));
         complete_quest(&conn, q.id.clone()).unwrap();
 
         // Not due, but should fall back to not_due pool
@@ -3527,8 +3621,8 @@ mod tests {
         let conn = test_db();
         // Quest A: 7-day cycle, Quest B: 1-day cycle. Both never completed.
         // B should be more "overdue" relative to its cycle.
-        add_quest(&conn, "Weekly".into(), QuestType::Recurring, Some(7), Difficulty::Easy, 7, 127).unwrap();
-        add_quest(&conn, "Daily".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        test_quest_with(&conn, "Weekly", |q| q.cycle_days = Some(7));
+        test_quest(&conn, "Daily");
 
         let top = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
         // Daily quest has higher overdue ratio ((0+1)/1=1.0 vs (0+7)/7=1.0... actually equal for new quests)
@@ -3588,7 +3682,7 @@ mod tests {
         let conn = test_db();
         let s = add_saga(&conn, "Doomed".into(), None).unwrap();
         // Add a step (quest with saga_id)
-        let q = add_quest(&conn, "Step 1".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest_with(&conn, "Step 1", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         conn.execute(
             "UPDATE quest SET saga_id = ?1, step_order = 1 WHERE id = ?2",
             rusqlite::params![s.id, q.id],
@@ -3613,8 +3707,8 @@ mod tests {
     fn saga_steps_excluded_from_quest_list() {
         let conn = test_db();
         let s = add_saga(&conn, "Test Saga".into(), None).unwrap();
-        add_quest(&conn, "Regular Quest".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
-        let step = add_quest(&conn, "Saga Step".into(), QuestType::OneOff, None, Difficulty::Easy, 7, 127).unwrap();
+        test_quest(&conn, "Regular Quest");
+        let step = test_quest_with(&conn, "Saga Step", |q| { q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         conn.execute(
             "UPDATE quest SET saga_id = ?1, step_order = 1 WHERE id = ?2",
             rusqlite::params![s.id, step.id],
@@ -3672,7 +3766,7 @@ mod tests {
     #[test]
     fn add_quest_with_time_of_day() {
         let conn = test_db();
-        let q = add_quest(&conn, "Morning shower".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 1, 127).unwrap();
+        let q = test_quest_with(&conn, "Morning shower", |q| q.time_of_day = 1);
         assert_eq!(q.time_of_day, 1);
 
         let quests = get_quests(&conn).unwrap();
@@ -3683,17 +3777,17 @@ mod tests {
     #[test]
     fn update_quest_time_of_day() {
         let conn = test_db();
-        let q = add_quest(&conn, "Walk".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Walk");
         assert_eq!(q.time_of_day, 7);
 
-        let u = update_quest(&conn, q.id, None, None, None, None, Some(4), None).unwrap();
+        let u = update_quest(&conn, q.id, QuestUpdate { time_of_day: Some(4), ..Default::default() }).unwrap();
         assert_eq!(u.time_of_day, 4);
     }
 
     #[test]
     fn add_quest_default_time_of_day() {
         let conn = test_db();
-        let q = add_quest(&conn, "Default".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Default");
         assert_eq!(q.time_of_day, 7);
     }
 
@@ -3741,7 +3835,7 @@ mod tests {
     #[test]
     fn add_quest_with_days_of_week() {
         let conn = test_db();
-        let q = add_quest(&conn, "Trash day".into(), QuestType::Recurring, Some(7), Difficulty::Easy, 7, 8).unwrap(); // Thu only
+        let q = test_quest_with(&conn, "Trash day", |q| { q.cycle_days = Some(7); q.days_of_week = 8; }); // Thu only
         assert_eq!(q.days_of_week, 8);
 
         let quests = get_quests(&conn).unwrap();
@@ -3752,10 +3846,10 @@ mod tests {
     #[test]
     fn update_quest_days_of_week() {
         let conn = test_db();
-        let q = add_quest(&conn, "Walk".into(), QuestType::Recurring, Some(1), Difficulty::Easy, 7, 127).unwrap();
+        let q = test_quest(&conn, "Walk");
         assert_eq!(q.days_of_week, 127);
 
-        let u = update_quest(&conn, q.id, None, None, None, None, None, Some(96)).unwrap(); // weekends
+        let u = update_quest(&conn, q.id, QuestUpdate { days_of_week: Some(96), ..Default::default() }).unwrap(); // weekends
         assert_eq!(u.days_of_week, 96);
     }
 }

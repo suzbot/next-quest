@@ -147,16 +147,10 @@ pub fn get_saga_steps(
 #[tauri::command]
 pub fn add_saga_step(
     state: State<DbState>,
-    saga_id: String,
-    title: String,
-    difficulty: db::Difficulty,
-    time_of_day: Option<i32>,
-    days_of_week: Option<i32>,
+    step: db::NewSagaStep,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let tod = time_of_day.unwrap_or(7);
-    let dow = days_of_week.unwrap_or(127);
-    db::add_saga_step(&conn, saga_id, title, difficulty, tod, dow)
+    db::add_saga_step(&conn, step)
 }
 
 #[tauri::command]
@@ -180,17 +174,10 @@ pub fn get_completions(state: State<DbState>) -> Result<Vec<db::Completion>, Str
 #[tauri::command]
 pub fn add_quest(
     state: State<DbState>,
-    title: String,
-    quest_type: db::QuestType,
-    cycle_days: Option<i32>,
-    difficulty: db::Difficulty,
-    time_of_day: Option<i32>,
-    days_of_week: Option<i32>,
+    quest: db::NewQuest,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let tod = time_of_day.unwrap_or(7);
-    let dow = days_of_week.unwrap_or(127);
-    db::add_quest(&conn, title, quest_type, cycle_days, difficulty, tod, dow)
+    db::add_quest(&conn, quest)
 }
 
 #[tauri::command]
@@ -206,15 +193,10 @@ pub fn complete_quest(
 pub fn update_quest(
     state: State<DbState>,
     quest_id: String,
-    title: Option<String>,
-    quest_type: Option<db::QuestType>,
-    cycle_days: Option<i32>,
-    difficulty: Option<db::Difficulty>,
-    time_of_day: Option<i32>,
-    days_of_week: Option<i32>,
+    update: db::QuestUpdate,
 ) -> Result<db::Quest, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::update_quest(&conn, quest_id, title, quest_type, cycle_days, difficulty, time_of_day, days_of_week)
+    db::update_quest(&conn, quest_id, update)
 }
 
 #[tauri::command]
@@ -564,6 +546,18 @@ pub fn add_skill(state: State<DbState>, name: String, attribute_id: Option<Strin
 pub fn rename_attribute(state: State<DbState>, id: String, name: String) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::rename_attribute(&conn, id, name)
+}
+
+#[tauri::command]
+pub fn reorder_attributes(state: State<DbState>, attr_ids: Vec<String>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::reorder_attributes(&conn, attr_ids)
+}
+
+#[tauri::command]
+pub fn reorder_skills(state: State<DbState>, skill_ids: Vec<String>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::reorder_skills(&conn, skill_ids)
 }
 
 #[tauri::command]
