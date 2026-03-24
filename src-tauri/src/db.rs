@@ -84,7 +84,7 @@ pub struct NewQuest {
 
 fn default_quest_type() -> QuestType { QuestType::Recurring }
 fn default_difficulty() -> Difficulty { Difficulty::Easy }
-fn default_time_of_day() -> i32 { 7 }
+fn default_time_of_day() -> i32 { 15 }
 fn default_days_of_week() -> i32 { 127 }
 
 impl Default for NewQuest {
@@ -94,7 +94,7 @@ impl Default for NewQuest {
             quest_type: QuestType::Recurring,
             cycle_days: Some(1),
             difficulty: Difficulty::Easy,
-            time_of_day: 7,
+            time_of_day: 15,
             days_of_week: 127,
         }
     }
@@ -130,7 +130,7 @@ impl Default for NewSagaStep {
             saga_id: String::new(),
             title: String::new(),
             difficulty: Difficulty::Easy,
-            time_of_day: 7,
+            time_of_day: 15,
             days_of_week: 127,
         }
     }
@@ -324,7 +324,7 @@ fn create_tables(conn: &Connection) {
             active      INTEGER NOT NULL DEFAULT 1,
             created_at  TEXT NOT NULL,
             difficulty  TEXT NOT NULL DEFAULT 'easy',
-            time_of_day INTEGER NOT NULL DEFAULT 7,
+            time_of_day INTEGER NOT NULL DEFAULT 15,
             days_of_week INTEGER NOT NULL DEFAULT 127,
             saga_id     TEXT REFERENCES saga(id),
             step_order  INTEGER,
@@ -624,6 +624,27 @@ fn migrate(conn: &Connection) {
                 SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = quest.id
             );"
         ).expect("Failed to populate last_completed from completions");
+    }
+
+    // Migration: split evening into evening + night (3-bit → 4-bit TOD model)
+    // Detection: if no quest uses bit 8, migration hasn't run
+    let has_night_bit: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM quest WHERE (time_of_day & 8) != 0",
+            [],
+            |row| row.get::<_, i32>(0).map(|c| c > 0),
+        )
+        .unwrap_or(false);
+
+    if !has_night_bit {
+        // Quests with old evening bit (4) get night bit (8) added
+        conn.execute_batch(
+            "UPDATE quest SET time_of_day = time_of_day | 8 WHERE (time_of_day & 4) != 0;"
+        ).expect("Failed to add night bit to evening quests");
+        // Old "all times" mask 7 → new "all times" mask 15
+        conn.execute_batch(
+            "UPDATE quest SET time_of_day = 15 WHERE time_of_day = 7;"
+        ).expect("Failed to update all-times mask");
     }
 
     // Migration: create campaign tables if missing
@@ -3058,13 +3079,15 @@ pub fn local_hour() -> u32 {
 /// Morning=1 (4am-noon), Afternoon=2 (noon-5pm), Evening=4 (5pm-4am).
 /// Mask of 7 or 0 = all times.
 pub fn matches_time_of_day(mask: i32, hour: u32) -> bool {
-    if mask == 7 || mask == 0 { return true; }
+    if mask == 15 || mask == 0 { return true; }
     let current_bit = if hour >= 4 && hour < 12 {
         1 // morning
     } else if hour >= 12 && hour < 17 {
         2 // afternoon
-    } else {
+    } else if hour >= 17 && hour < 21 {
         4 // evening
+    } else {
+        8 // night (9pm-4am)
     };
     mask & current_bit != 0
 }
@@ -4290,7 +4313,7 @@ mod tests {
 
     #[test]
     fn matches_time_of_day_morning_only() {
-        assert!(!matches_time_of_day(1, 3));  // 3am = evening
+        assert!(!matches_time_of_day(1, 3));  // 3am = night
         assert!(matches_time_of_day(1, 4));   // 4am = morning start
         assert!(matches_time_of_day(1, 11));  // 11am = morning
         assert!(!matches_time_of_day(1, 12)); // noon = afternoon
@@ -4306,28 +4329,52 @@ mod tests {
 
     #[test]
     fn matches_time_of_day_evening_only() {
-        assert!(matches_time_of_day(4, 3));   // 3am is still evening
-        assert!(!matches_time_of_day(4, 4));  // 4am is morning
-        assert!(matches_time_of_day(4, 17));
-        assert!(matches_time_of_day(4, 23));
-        assert!(matches_time_of_day(4, 0));
+        assert!(!matches_time_of_day(4, 3));   // 3am = night, not evening
+        assert!(!matches_time_of_day(4, 4));   // 4am = morning
+        assert!(matches_time_of_day(4, 17));   // 5pm = evening start
+        assert!(matches_time_of_day(4, 20));   // 8pm = evening
+        assert!(!matches_time_of_day(4, 21));  // 9pm = night
+        assert!(!matches_time_of_day(4, 0));   // midnight = night
+    }
+
+    #[test]
+    fn matches_time_of_day_night_only() {
+        assert!(matches_time_of_day(8, 21));   // 9pm = night start
+        assert!(matches_time_of_day(8, 23));   // 11pm = night
+        assert!(matches_time_of_day(8, 0));    // midnight = night
+        assert!(matches_time_of_day(8, 3));    // 3am = night
+        assert!(!matches_time_of_day(8, 4));   // 4am = morning
+        assert!(!matches_time_of_day(8, 17));  // 5pm = evening
+    }
+
+    #[test]
+    fn matches_time_of_day_evening_and_night() {
+        let ev_nt = 4 | 8; // evening + night
+        assert!(matches_time_of_day(ev_nt, 17));  // evening
+        assert!(matches_time_of_day(ev_nt, 20));  // evening
+        assert!(matches_time_of_day(ev_nt, 21));  // night
+        assert!(matches_time_of_day(ev_nt, 3));   // night
+        assert!(!matches_time_of_day(ev_nt, 12)); // afternoon
     }
 
     #[test]
     fn matches_time_of_day_all() {
-        assert!(matches_time_of_day(7, 0));
-        assert!(matches_time_of_day(7, 12));
-        assert!(matches_time_of_day(7, 23));
+        assert!(matches_time_of_day(15, 0));
+        assert!(matches_time_of_day(15, 12));
+        assert!(matches_time_of_day(15, 17));
+        assert!(matches_time_of_day(15, 23));
         // 0 also means all
         assert!(matches_time_of_day(0, 12));
+        assert!(matches_time_of_day(0, 21));
     }
 
     #[test]
     fn matches_time_of_day_multi() {
         let morn_eve = 1 | 4; // morning + evening
-        assert!(matches_time_of_day(morn_eve, 4));   // morning
-        assert!(!matches_time_of_day(morn_eve, 14));  // afternoon
-        assert!(matches_time_of_day(morn_eve, 20));   // evening
+        assert!(matches_time_of_day(morn_eve, 4));    // morning
+        assert!(!matches_time_of_day(morn_eve, 14));   // afternoon
+        assert!(matches_time_of_day(morn_eve, 20));    // evening
+        assert!(!matches_time_of_day(morn_eve, 21));   // night — not selected
     }
 
     #[test]
@@ -4345,7 +4392,7 @@ mod tests {
     fn update_quest_time_of_day() {
         let conn = test_db();
         let q = test_quest(&conn, "Walk");
-        assert_eq!(q.time_of_day, 7);
+        assert_eq!(q.time_of_day, 15);
 
         let u = update_quest(&conn, q.id, QuestUpdate { time_of_day: Some(4), ..Default::default() }).unwrap();
         assert_eq!(u.time_of_day, 4);
@@ -4355,7 +4402,7 @@ mod tests {
     fn add_quest_default_time_of_day() {
         let conn = test_db();
         let q = test_quest(&conn, "Default");
-        assert_eq!(q.time_of_day, 7);
+        assert_eq!(q.time_of_day, 15);
     }
 
     // --- Day-of-week ---

@@ -1,103 +1,88 @@
-# Step Spec: Phase 2H.1-1 — Stored last-done date ✅
+# Step Spec: Phase 2H.1-2 — Evening/Night time-of-day split ✅
 
 ## Goal
 
-Move `last_completed` from a derived value (subquery on quest_completion) to a stored column on the quest table. Completion history becomes a read-only log. Users can manually set the last-done date via a date picker on the quest list. Deleting completions no longer affects due dates.
+Split the Evening time window (5pm–4am) into Evening (5pm–9pm) and Night (9pm–4am). The bitmask model goes from 3-bit to 4-bit. Existing quests with Evening set get both Evening and Night.
 
 ---
 
-## Substep 1: Backend — migration, query changes, complete_quest update, set_quest_last_done
+## Substep 1: Backend — migration, matches_time_of_day, defaults
 
 **Migration** (`db.rs` → `migrate()`):
 
-Add `last_completed TEXT` column to quest. Populate from existing completions. Detection: check if quest table has `last_completed` column.
+Detection: check if any quest has `time_of_day > 7` (new bitmask values use bit 8). If none do, run migration.
 
 ```sql
-ALTER TABLE quest ADD COLUMN last_completed TEXT;
-UPDATE quest SET last_completed = (
-    SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = quest.id
-);
+-- Quests with old evening bit (4) get night bit (8) added
+UPDATE quest SET time_of_day = time_of_day | 8 WHERE (time_of_day & 4) != 0;
+-- Old "all times" mask 7 → new "all times" mask 15
+UPDATE quest SET time_of_day = 15 WHERE time_of_day = 7;
 ```
 
-**Query changes — remove completion subqueries:**
+Note: mask 0 continues to mean "all times" — no migration needed for those.
 
-Four locations currently derive `last_completed` via `(SELECT MAX(completed_at) FROM quest_completion WHERE quest_id = q.id)`:
-
-1. `get_quests` (~line 1722) — replace subquery with `q.last_completed`
-2. `get_saga_steps` (~line 934) — replace subquery with `q.last_completed`
-3. `query_single_quest` (~line 2598) — replace subquery with `q.last_completed`
-4. `complete_quest` time-elapsed multiplier (~line 2155) — replace subquery with reading `quest.last_completed` from the initial quest data query (already fetched at top of function)
-
-For #4: the initial query in `complete_quest` (`SELECT title, difficulty, quest_type, cycle_days, saga_id FROM quest`) needs to also select `last_completed`. Use this value for the time-elapsed multiplier instead of querying the completions table.
-
-**`complete_quest` — update stored column:**
-
-After inserting the completion record and deactivating one-offs, also update the quest's `last_completed`:
-
-```sql
-UPDATE quest SET last_completed = ?1 WHERE id = ?2
-```
-
-Using the same `completed_at` timestamp as the completion record. This goes inside the existing transaction (before `tx.commit()`).
-
-**New function: `set_quest_last_done`**
+**`matches_time_of_day` update:**
 
 ```rust
-pub fn set_quest_last_done(conn: &Connection, quest_id: String, last_done: Option<String>) -> Result<(), String>
+let current_bit = if hour >= 4 && hour < 12 {
+    1  // morning
+} else if hour >= 12 && hour < 17 {
+    2  // afternoon
+} else if hour >= 17 && hour < 21 {
+    4  // evening
+} else {
+    8  // night (9pm-4am)
+};
 ```
 
-- Updates `quest.last_completed` to the given value (or NULL if None)
-- Validates the quest exists and is NOT a saga step (`saga_id IS NULL`). Returns error if it's a saga step.
-- Does not create a completion record. Does not award XP.
+Keep: mask 0 or 15 = all times.
 
-**New command** (`commands.rs`): wrapper for `set_quest_last_done`. Register in `main.rs`.
+**Default changes:**
 
-**`init_db_memory` (test helper):**
-
-The in-memory test DB creates tables directly. The quest CREATE TABLE needs to include `last_completed TEXT` so tests work without running migrations.
+- `default_time_of_day()` → return 15 (was 7)
+- `NewQuest::default()` → `time_of_day: 15`
+- `NewSagaStep` default → 15
 
 **Tests:**
 
-1. `complete_quest_sets_last_completed` — Complete a quest. Verify `quest.last_completed` matches the completion timestamp (via `get_quests`).
-2. `delete_completion_preserves_last_completed` — Complete a quest, note last_completed. Delete the completion. Verify last_completed is unchanged.
-3. `set_quest_last_done_updates_due` — Create a daily quest. Set last_done to today. Verify `is_due` is false. Set last_done to 3 days ago. Verify `is_due` is true.
-4. `set_quest_last_done_clear` — Set last_done to a date, then clear it (None). Verify quest shows as never completed (last_completed is None, is_due is true for recurring).
-5. `set_quest_last_done_saga_step_rejected` — Create a saga with a step. Try to set last_done on the step. Verify it returns an error.
-6. `time_elapsed_multiplier_uses_stored_column` — Existing XP tests should continue passing (verifies the time-elapsed multiplier reads from the stored column correctly).
+1. `matches_time_of_day` at boundary hours: 3→night(8), 4→morning(1), 11→morning(1), 12→afternoon(2), 16→afternoon(2), 17→evening(4), 20→evening(4), 21→night(8)
+2. Mask 15 matches all hours
+3. Mask 0 matches all hours
+4. Mask 4 (evening only) matches hour 17 but NOT hour 21
+5. Mask 8 (night only) matches hour 21 but NOT hour 17
+6. Mask 12 (evening+night) matches both 17 and 21
 
-**Testing checkpoint:** `cargo test` — all existing + new tests pass.
+Update existing `matches_time_of_day` tests to use the new boundaries.
+
+**Testing checkpoint:** `cargo test` — all existing + new/updated tests pass.
 
 ---
 
-## Substep 2: Frontend — date picker on quest list
+## Substep 2: Frontend — multiselect and display updates
 
-**Date input** next to the last-done display in the normal (non-edit) quest list row.
+**Time-of-day constants** — add Night option to all TOD-related arrays:
 
-The quest list row currently shows last-done as formatted text (e.g., "03/15 09:30"). Add an `<input type="date">` next to it:
+- `TOD_FULL` gains `{ value: 8, label: "NT" }` (or equivalent)
+- `todSummary` / `todText` updated for 4 values
+- "All" threshold changes from checking mask 7 to checking mask 15 (or mask 0)
 
-```
-  Take vitamins    MO  Easy  ↻1d   03/15 09:30  [2026-03-15]  ⚔  ✓
-```
+**Affected UI locations:**
 
-- The date input's value is populated from `quest.last_completed` (date portion only)
-- Changing the date calls `set_quest_last_done` with the selected date as an ISO timestamp (midnight UTC)
-- If the quest has no last_completed, the date input is empty
-- Clearing the date input calls `set_quest_last_done` with null
-- After setting, reload the quest list to reflect the updated due state
+1. Quest add form — TOD multiselect gains NT
+2. Quest edit mode — TOD multiselect gains NT
+3. Saga step add form — TOD multiselect gains NT
+4. Saga step edit mode — TOD multiselect gains NT
+5. Quest list filter bar — TOD filter gains NT
+6. Quest list display — `todText` shows EV/NT correctly
 
-**Not shown on:**
-- Saga steps (they appear in the saga tab, not the quest list)
-- Inactive one-off quests (already completed, row is dimmed)
-
-**Testing checkpoint:** Build app. Add a new quest. Set its last-done to yesterday — it should show as not due (for a daily quest). Clear the last-done — it becomes due again. Complete a quest, then delete the completion from history — last-done stays, quest stays not-due.
+**Testing checkpoint:** Build app. Verify new quests default to all 4 windows selected. Create a quest with only EV selected — verify it doesn't appear in quest giver during night hours. Edit an existing quest — verify it shows EV+NT (migrated from old Evening). Filter by NT — works correctly.
 
 ---
 
 ## NOT in this step
 
-- Evening/Night time split (2H.1-2)
 - Quest selector tuning (2H.1-3 through 2H.1-7)
 
 ## Done When
 
-Both substeps complete. `last_completed` is a stored column on quest. Completions are a read-only log that don't drive due logic. Manual date picker works on quest list. Deleting completions doesn't change due dates. `cargo test` passes.
+Both substeps complete. 4-window time model (MO/AF/EV/NT). Existing quests migrated. Quest selector hard-filters correctly. `cargo test` passes.

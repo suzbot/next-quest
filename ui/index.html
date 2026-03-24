@@ -757,6 +757,7 @@
       <option value="1">Morning</option>
       <option value="2">Afternoon</option>
       <option value="4">Evening</option>
+      <option value="8">Night</option>
     </select>
     <select id="filter-dow" onchange="applyFilters()">
       <option value="">All Days</option>
@@ -872,17 +873,17 @@
     const addDowContainer = document.getElementById("add-dow");
     const addLinksRow = document.getElementById("add-links-row");
 
-    const TOD_LABELS = ["AM", "PM", "NT"];
-    const TOD_FULL = ["Morning", "Afternoon", "Evening"];
+    const TOD_LABELS = ["AM", "PM", "EV", "NT"];
+    const TOD_FULL = ["Morning", "Afternoon", "Evening", "Night"];
 
     function todSummary(mask) {
-      if (mask === 7 || mask === 0) return "Time ▾";
+      if (mask === 15 || mask === 0) return "Time ▾";
       const times = TOD_LABELS.filter((_, i) => mask & (1 << i));
       return times.join(" ") + " ▾";
     }
 
     function todText(mask) {
-      if (mask === 7 || mask === 0) return "";
+      if (mask === 15 || mask === 0) return "";
       return TOD_LABELS.filter((_, i) => mask & (1 << i)).join(" ");
     }
 
@@ -957,7 +958,7 @@
       });
     });
 
-    renderCheckDropdown(addTodContainer, 7, TOD_FULL, todSummary);
+    renderCheckDropdown(addTodContainer, 15, TOD_FULL, todSummary);
     renderCheckDropdown(addDowContainer, 127, DOW_FULL, dowSummary);
 
     // Difficulty color maps (text variants for WCAG AA on #b4b4b4)
@@ -1124,8 +1125,8 @@
       if (filterSkill.value && !(q.skill_ids || []).includes(filterSkill.value)) return false;
       if (filterTod.value) {
         const bit = parseInt(filterTod.value, 10);
-        const mask = q.time_of_day ?? 7;
-        if (mask !== 7 && mask !== 0 && !(mask & bit)) return false;
+        const mask = q.time_of_day ?? 15;
+        if (mask !== 15 && mask !== 0 && !(mask & bit)) return false;
       }
       if (filterDow.value !== "") {
         const day = parseInt(filterDow.value, 10);
@@ -1243,7 +1244,7 @@
         const editQuest = quests.find(q => q.id === editingId);
         if (editQuest) {
           const editTod = document.getElementById("edit-tod");
-          if (editTod) renderCheckDropdown(editTod, editQuest.time_of_day ?? 7, TOD_FULL, todSummary);
+          if (editTod) renderCheckDropdown(editTod, editQuest.time_of_day ?? 15, TOD_FULL, todSummary);
           const editDow = document.getElementById("edit-dow");
           if (editDow) renderCheckDropdown(editDow, editQuest.days_of_week ?? 127, DOW_FULL, dowSummary);
         }
@@ -1269,7 +1270,7 @@
         ? `↻ ${q.cycle_days}d`
         : "One-off";
 
-      const todDisplay = todText(q.time_of_day ?? 7);
+      const todDisplay = todText(q.time_of_day ?? 15);
 
       let stateClass;
       if (!q.active) {
@@ -1436,7 +1437,7 @@
       const questType = document.getElementById("edit-type").value;
       const difficulty = document.getElementById("edit-difficulty").value;
       const editTod = document.getElementById("edit-tod");
-      const timeOfDay = editTod ? readMask(editTod) : 7;
+      const timeOfDay = editTod ? readMask(editTod) : 15;
       const editDow = document.getElementById("edit-dow");
       const daysOfWeek = editDow ? readMask(editDow) : 127;
       const update = { title, questType, difficulty, timeOfDay, daysOfWeek };
@@ -1684,7 +1685,7 @@
       }
 
       titleInput.value = "";
-      renderCheckDropdown(addTodContainer, 7, TOD_FULL, todSummary);
+      renderCheckDropdown(addTodContainer, 15, TOD_FULL, todSummary);
       renderCheckDropdown(addDowContainer, 127, DOW_FULL, dowSummary);
       addLinksRow.classList.add("hidden");
       renderAddLinkTags();
@@ -2621,7 +2622,7 @@
         if (editStep) {
           const etod = document.getElementById("step-edit-tod");
           const edow = document.getElementById("step-edit-dow");
-          if (etod) renderCheckDropdown(etod, editStep.time_of_day ?? 7, TOD_FULL, todSummary);
+          if (etod) renderCheckDropdown(etod, editStep.time_of_day ?? 15, TOD_FULL, todSummary);
           if (edow) renderCheckDropdown(edow, editStep.days_of_week ?? 127, DOW_FULL, dowSummary);
         }
       }
@@ -2631,7 +2632,7 @@
         if (stepLinksRow && !stepLinksRow.innerHTML) stepLinksRow.innerHTML = renderLinkTagsHtml("step-add", [], []);
         const todEl = document.getElementById("step-tod-" + expandedSagaId);
         const dowEl = document.getElementById("step-dow-" + expandedSagaId);
-        if (todEl && !todEl.hasChildNodes()) renderCheckDropdown(todEl, 7, TOD_FULL, todSummary);
+        if (todEl && !todEl.hasChildNodes()) renderCheckDropdown(todEl, 15, TOD_FULL, todSummary);
         if (dowEl && !dowEl.hasChildNodes()) renderCheckDropdown(dowEl, 127, DOW_FULL, dowSummary);
       }
     }
@@ -2671,7 +2672,7 @@
             const diffColor = sagaProgress.is_due && !completedThisRun ? (diffTextColors[step.difficulty] || '#555') : '#777';
             const lastDone = step.last_completed ? formatTimestamp(step.last_completed) : "";
             const stepDow = dowText(step.days_of_week ?? 127);
-            const stepTod = todText(step.time_of_day ?? 7);
+            const stepTod = todText(step.time_of_day ?? 15);
             const stepLinks = linkNamesText(step);
             html += `<li class="quest-item step-item ${stepClass}" data-id="${step.id}" tabindex="0"
                         onkeydown="handleStepKey(event, '${step.id}', '${saga.id}')"
@@ -2891,7 +2892,7 @@
       const dowEl = document.getElementById("step-dow-" + sagaId);
       const title = titleEl.value.trim();
       if (!title) return;
-      const timeOfDay = todEl ? readMask(todEl) : 7;
+      const timeOfDay = todEl ? readMask(todEl) : 15;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
       const step = await invoke("add_saga_step", { step: { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek } });
 
@@ -2932,7 +2933,7 @@
       const difficulty = document.getElementById("step-edit-difficulty").value;
       const todEl = document.getElementById("step-edit-tod");
       const dowEl = document.getElementById("step-edit-dow");
-      const timeOfDay = todEl ? readMask(todEl) : 7;
+      const timeOfDay = todEl ? readMask(todEl) : 15;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
       await invoke("update_quest", { questId: id, update: { title, difficulty, timeOfDay, daysOfWeek } });
 
