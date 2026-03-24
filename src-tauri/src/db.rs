@@ -247,6 +247,37 @@ pub struct Skill {
     pub xp_into_current_level: i64,
 }
 
+// --- Campaign structs ---
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NewCriterion {
+    pub target_type: String,
+    pub target_id: String,
+    pub target_count: i32,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Criterion {
+    pub id: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub target_name: String,
+    pub target_count: i32,
+    pub current_count: i32,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CampaignWithCriteria {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+    pub criteria: Vec<Criterion>,
+}
+
 pub fn init_db(db_path: &Path) -> Connection {
     let conn = Connection::open(db_path).expect("Failed to open database");
     create_tables(&conn);
@@ -336,6 +367,32 @@ fn create_tables(conn: &Connection) {
             cta_enabled           INTEGER NOT NULL DEFAULT 0,
             cta_interval_minutes  INTEGER NOT NULL DEFAULT 20,
             debug_scoring         INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS campaign (
+            id           TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS campaign_criterion (
+            id            TEXT PRIMARY KEY,
+            campaign_id   TEXT NOT NULL REFERENCES campaign(id),
+            target_type   TEXT NOT NULL,
+            target_id     TEXT NOT NULL,
+            target_count  INTEGER NOT NULL,
+            current_count INTEGER NOT NULL DEFAULT 0,
+            sort_order    INTEGER NOT NULL,
+            UNIQUE(campaign_id, target_type, target_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS accomplishment (
+            id             TEXT PRIMARY KEY,
+            campaign_id    TEXT,
+            campaign_name  TEXT NOT NULL,
+            completed_at   TEXT NOT NULL,
+            bonus_xp       INTEGER NOT NULL DEFAULT 0
         );",
     )
     .expect("Failed to create tables");
@@ -530,6 +587,41 @@ fn migrate(conn: &Connection) {
             "ALTER TABLE quest ADD COLUMN saga_id TEXT REFERENCES saga(id);
              ALTER TABLE quest ADD COLUMN step_order INTEGER;"
         ).expect("Failed to add saga columns to quest");
+    }
+
+    // Migration: create campaign tables if missing
+    let has_campaign: bool = conn
+        .prepare("SELECT id FROM campaign LIMIT 0")
+        .is_ok();
+
+    if !has_campaign {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS campaign (
+                id           TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                completed_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS campaign_criterion (
+                id            TEXT PRIMARY KEY,
+                campaign_id   TEXT NOT NULL REFERENCES campaign(id),
+                target_type   TEXT NOT NULL,
+                target_id     TEXT NOT NULL,
+                target_count  INTEGER NOT NULL,
+                current_count INTEGER NOT NULL DEFAULT 0,
+                sort_order    INTEGER NOT NULL,
+                UNIQUE(campaign_id, target_type, target_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS accomplishment (
+                id             TEXT PRIMARY KEY,
+                campaign_id    TEXT,
+                campaign_name  TEXT NOT NULL,
+                completed_at   TEXT NOT NULL,
+                bonus_xp       INTEGER NOT NULL DEFAULT 0
+            );"
+        ).expect("Failed to create campaign tables");
     }
 }
 
@@ -1183,6 +1275,248 @@ pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, St
     }
 
     Ok(results)
+}
+
+// --- Campaign CRUD ---
+
+fn resolve_target_name(conn: &Connection, target_type: &str, target_id: &str) -> String {
+    match target_type {
+        "quest_completions" => {
+            conn.query_row(
+                "SELECT title FROM quest WHERE id = ?1",
+                rusqlite::params![target_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "Deleted quest".to_string())
+        }
+        "saga_completions" => {
+            conn.query_row(
+                "SELECT name FROM saga WHERE id = ?1",
+                rusqlite::params![target_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "Deleted saga".to_string())
+        }
+        _ => "Unknown target".to_string(),
+    }
+}
+
+fn load_campaign_criteria(conn: &Connection, campaign_id: &str) -> Result<Vec<Criterion>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, target_type, target_id, target_count, current_count
+             FROM campaign_criterion
+             WHERE campaign_id = ?1
+             ORDER BY sort_order ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let criteria = stmt
+        .query_map(rusqlite::params![campaign_id], |row| {
+            let id: String = row.get(0)?;
+            let target_type: String = row.get(1)?;
+            let target_id: String = row.get(2)?;
+            let target_count: i32 = row.get(3)?;
+            let current_count: i32 = row.get(4)?;
+            Ok((id, target_type, target_id, target_count, current_count))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(criteria
+        .into_iter()
+        .map(|(id, target_type, target_id, target_count, current_count)| {
+            let target_name = resolve_target_name(conn, &target_type, &target_id);
+            Criterion {
+                id,
+                target_type,
+                target_id,
+                target_name,
+                target_count,
+                current_count,
+            }
+        })
+        .collect())
+}
+
+pub fn get_campaigns(conn: &Connection) -> Result<Vec<CampaignWithCriteria>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, created_at, completed_at
+             FROM campaign
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let campaigns = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    for (id, name, created_at, completed_at) in campaigns {
+        let criteria = load_campaign_criteria(conn, &id)?;
+        results.push(CampaignWithCriteria {
+            id,
+            name,
+            created_at,
+            completed_at,
+            criteria,
+        });
+    }
+
+    Ok(results)
+}
+
+pub fn create_campaign(
+    conn: &Connection,
+    name: String,
+    criteria: Vec<NewCriterion>,
+) -> Result<CampaignWithCriteria, String> {
+    if criteria.is_empty() {
+        return Err("Campaign must have at least one criterion".to_string());
+    }
+
+    // Check for duplicate target_ids within the criteria list
+    let mut seen = std::collections::HashSet::new();
+    for c in &criteria {
+        let key = format!("{}:{}", c.target_type, c.target_id);
+        if !seen.insert(key) {
+            return Err(format!("Duplicate criterion for target {}", c.target_id));
+        }
+    }
+
+    // Validate each criterion's target_type and target_id
+    for c in &criteria {
+        match c.target_type.as_str() {
+            "quest_completions" => {
+                let exists: bool = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM quest WHERE id = ?1",
+                        rusqlite::params![c.target_id],
+                        |row| row.get::<_, i32>(0).map(|n| n > 0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                if !exists {
+                    return Err(format!("Quest not found: {}", c.target_id));
+                }
+            }
+            "saga_completions" => {
+                let exists: bool = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM saga WHERE id = ?1",
+                        rusqlite::params![c.target_id],
+                        |row| row.get::<_, i32>(0).map(|n| n > 0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                if !exists {
+                    return Err(format!("Saga not found: {}", c.target_id));
+                }
+            }
+            _ => {
+                return Err(format!("Invalid target_type: {}", c.target_type));
+            }
+        }
+    }
+
+    let campaign_id = Uuid::new_v4().to_string();
+    let created_at = chrono_now();
+
+    conn.execute(
+        "INSERT INTO campaign (id, name, created_at) VALUES (?1, ?2, ?3)",
+        rusqlite::params![campaign_id, name, created_at],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut built_criteria = Vec::new();
+    for (i, c) in criteria.iter().enumerate() {
+        let criterion_id = Uuid::new_v4().to_string();
+        let sort_order = (i + 1) as i32;
+        conn.execute(
+            "INSERT INTO campaign_criterion (id, campaign_id, target_type, target_id, target_count, current_count, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+            rusqlite::params![criterion_id, campaign_id, c.target_type, c.target_id, c.target_count, sort_order],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let target_name = resolve_target_name(conn, &c.target_type, &c.target_id);
+        built_criteria.push(Criterion {
+            id: criterion_id,
+            target_type: c.target_type.clone(),
+            target_id: c.target_id.clone(),
+            target_name,
+            target_count: c.target_count,
+            current_count: 0,
+        });
+    }
+
+    Ok(CampaignWithCriteria {
+        id: campaign_id,
+        name,
+        created_at,
+        completed_at: None,
+        criteria: built_criteria,
+    })
+}
+
+pub fn rename_campaign(conn: &Connection, id: String, name: String) -> Result<(), String> {
+    let rows = conn
+        .execute(
+            "UPDATE campaign SET name = ?1 WHERE id = ?2",
+            rusqlite::params![name, id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Campaign not found: {}", id));
+    }
+    Ok(())
+}
+
+pub fn delete_campaign(conn: &Connection, id: String) -> Result<(), String> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM campaign WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get::<_, i32>(0).map(|c| c > 0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if !exists {
+        return Err(format!("Campaign not found: {}", id));
+    }
+
+    // Orphan any accomplishments
+    conn.execute(
+        "UPDATE accomplishment SET campaign_id = NULL WHERE campaign_id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Delete criteria
+    conn.execute(
+        "DELETE FROM campaign_criterion WHERE campaign_id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Delete campaign
+    conn.execute(
+        "DELETE FROM campaign WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 // --- Quests ---
@@ -2110,7 +2444,7 @@ pub fn level_from_xp(xp: i64, scale: &LevelScale) -> LevelInfo {
     let (seed1, seed2) = match scale {
         LevelScale::Character => (300i64, 500i64),
         LevelScale::Attribute => (150, 250),
-        LevelScale::Skill => (37, 62),
+        LevelScale::Skill => (75, 125),
     };
 
     let mut level = 1;
@@ -3005,19 +3339,19 @@ mod tests {
 
     #[test]
     fn level_from_xp_skill_scale() {
-        // Skill seeds: 37, 62 (1/8 character)
+        // Skill seeds: 75, 125
         let info = level_from_xp(0, &LevelScale::Skill);
         assert_eq!(info.level, 1);
-        assert_eq!(info.xp_for_current_level, 37);
+        assert_eq!(info.xp_for_current_level, 75);
 
-        let info = level_from_xp(37, &LevelScale::Skill);
+        let info = level_from_xp(75, &LevelScale::Skill);
         assert_eq!(info.level, 2);
-        assert_eq!(info.xp_for_current_level, 62);
+        assert_eq!(info.xp_for_current_level, 125);
 
-        // Level 3 at 37+62=99
-        let info = level_from_xp(99, &LevelScale::Skill);
+        // Level 3 at 75+125=200
+        let info = level_from_xp(200, &LevelScale::Skill);
         assert_eq!(info.level, 3);
-        assert_eq!(info.xp_for_current_level, 99); // 37+62
+        assert_eq!(info.xp_for_current_level, 200); // 75+125
     }
 
     // --- Difficulty ---
@@ -3258,13 +3592,13 @@ mod tests {
         let q = test_quest(&conn, "Grind");
         let skills = get_skills(&conn).unwrap();
         // Cooking (skill[0]) maps to Health (attr[0])
-        // Skill level 2 at 37 XP. Award 37 to trigger level-up.
+        // Skill level 2 at 75 XP. Award 75 to trigger level-up.
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
 
-        award_xp(&conn, &q.id, 37).unwrap();
+        award_xp(&conn, &q.id, 75).unwrap();
 
         let updated_skills = get_skills(&conn).unwrap();
-        assert_eq!(updated_skills[0].xp, 37);
+        assert_eq!(updated_skills[0].xp, 75);
         assert_eq!(updated_skills[0].level, 2);
 
         // Health should have received attribute bump = Moderate one-off base XP
@@ -3851,5 +4185,177 @@ mod tests {
 
         let u = update_quest(&conn, q.id, QuestUpdate { days_of_week: Some(96), ..Default::default() }).unwrap(); // weekends
         assert_eq!(u.days_of_week, 96);
+    }
+
+    // --- Campaign tests ---
+
+    #[test]
+    fn create_campaign_with_criteria() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "Vacuuming");
+        let q2 = test_quest(&conn, "Mopping");
+
+        let campaign = create_campaign(&conn, "Spring Cleaning".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 4 },
+            NewCriterion { target_type: "quest_completions".into(), target_id: q2.id.clone(), target_count: 2 },
+        ]).unwrap();
+
+        assert_eq!(campaign.name, "Spring Cleaning");
+        assert_eq!(campaign.criteria.len(), 2);
+        assert_eq!(campaign.criteria[0].current_count, 0);
+        assert_eq!(campaign.criteria[1].current_count, 0);
+        assert_eq!(campaign.criteria[0].target_count, 4);
+        assert_eq!(campaign.criteria[1].target_count, 2);
+        assert!(campaign.completed_at.is_none());
+    }
+
+    #[test]
+    fn create_campaign_no_criteria_errors() {
+        let conn = test_db();
+        let result = create_campaign(&conn, "Empty".into(), vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least one criterion"));
+    }
+
+    #[test]
+    fn create_campaign_duplicate_target_errors() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+
+        let result = create_campaign(&conn, "Dupe".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 2 },
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 3 },
+        ]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate"));
+    }
+
+    #[test]
+    fn create_campaign_mismatched_target_type_errors() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+
+        // Try to use a quest id with saga_completions type
+        let result = create_campaign(&conn, "Bad".into(), vec![
+            NewCriterion { target_type: "saga_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Saga not found"));
+    }
+
+    #[test]
+    fn create_campaign_invalid_target_type_errors() {
+        let conn = test_db();
+        let result = create_campaign(&conn, "Bad".into(), vec![
+            NewCriterion { target_type: "bogus".into(), target_id: "fake".into(), target_count: 1 },
+        ]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid target_type"));
+    }
+
+    #[test]
+    fn get_campaigns_returns_all_with_criteria() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "Vacuuming");
+        let q2 = test_quest(&conn, "Mopping");
+
+        create_campaign(&conn, "Campaign A".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 1 },
+        ]).unwrap();
+        create_campaign(&conn, "Campaign B".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q2.id.clone(), target_count: 3 },
+        ]).unwrap();
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns.len(), 2);
+        let names: Vec<&str> = campaigns.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"Campaign A"));
+        assert!(names.contains(&"Campaign B"));
+        for c in &campaigns {
+            assert_eq!(c.criteria.len(), 1);
+        }
+    }
+
+    #[test]
+    fn rename_campaign_works() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        let c = create_campaign(&conn, "Old Name".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        rename_campaign(&conn, c.id.clone(), "New Name".into()).unwrap();
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].name, "New Name");
+    }
+
+    #[test]
+    fn delete_campaign_removes_campaign_and_criteria() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        let c = create_campaign(&conn, "Doomed".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        delete_campaign(&conn, c.id.clone()).unwrap();
+
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert!(campaigns.is_empty());
+
+        // Verify criteria are gone too
+        let count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM campaign_criterion WHERE campaign_id = ?1",
+            rusqlite::params![c.id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn campaign_target_name_resolution() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+
+        let campaign = create_campaign(&conn, "Test".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        assert_eq!(campaign.criteria[0].target_name, "Vacuuming");
+
+        // Also verify via get_campaigns
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].target_name, "Vacuuming");
+    }
+
+    #[test]
+    fn campaign_target_name_deleted_quest() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        let campaign = create_campaign(&conn, "Test".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Delete the quest
+        delete_quest(&conn, q.id).unwrap();
+
+        // Target name should now be "Deleted quest"
+        let campaigns = get_campaigns(&conn).unwrap();
+        assert_eq!(campaigns[0].criteria[0].target_name, "Deleted quest");
+        // But the campaign_id field in criteria still exists
+        assert_eq!(campaigns[0].id, campaign.id);
+    }
+
+    #[test]
+    fn campaign_with_saga_criterion() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Laundry".into(), None).unwrap();
+
+        let campaign = create_campaign(&conn, "Chores".into(), vec![
+            NewCriterion { target_type: "saga_completions".into(), target_id: s.id.clone(), target_count: 4 },
+        ]).unwrap();
+
+        assert_eq!(campaign.criteria[0].target_name, "Laundry");
+        assert_eq!(campaign.criteria[0].target_type, "saga_completions");
     }
 }

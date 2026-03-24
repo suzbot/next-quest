@@ -103,6 +103,10 @@ fn main() {
             commands::update_skill_attribute,
             commands::delete_attribute,
             commands::delete_skill,
+            commands::get_campaigns,
+            commands::create_campaign,
+            commands::rename_campaign,
+            commands::delete_campaign,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

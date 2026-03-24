@@ -94,7 +94,8 @@
       cursor: pointer;
     }
 
-    button:hover { background: #ccc; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button:hover:not(:disabled) { background: #ccc; }
     button:active { border-style: inset; }
     button:focus { outline: 1px solid #444; outline-offset: 1px; }
 
@@ -701,6 +702,7 @@
     <button id="nav-quest-giver" class="active" onclick="showView('quest-giver')"> Next Quest </button>
     <button id="nav-quests" onclick="showView('quests')">Quest List</button>
     <button id="nav-sagas" onclick="showView('sagas')">Sagas</button>
+    <button id="nav-campaigns" onclick="showView('campaigns')">Campaigns</button>
     <button id="nav-character" onclick="showView('character')">Character</button>
     <button id="nav-settings" onclick="showView('settings')">Settings</button>
   </div>
@@ -777,6 +779,25 @@
     <button type="submit">Add</button>
   </form>
   <ul id="saga-list"></ul>
+  </div>
+
+  <div id="campaigns-view" class="hidden">
+  <button id="campaign-add-btn" onclick="showCampaignForm()">Add Campaign</button>
+  <div id="campaign-form" class="hidden" style="margin-bottom: 8px;">
+    <input type="text" id="campaign-name" placeholder="Campaign name...">
+    <div id="campaign-criteria-list" style="margin: 4px 0;"></div>
+    <div style="display: flex; gap: 4px; align-items: center; margin: 4px 0;">
+      <select id="campaign-target-select"><option value="">-- Select --</option></select>
+      <input type="number" id="campaign-target-count" value="1" min="1" style="width: 50px;">
+      <button type="button" onclick="addCampaignCriterion()">Add</button>
+    </div>
+    <div id="campaign-form-error" style="color: #c44; font-size: 10px; display: none;"></div>
+    <div style="margin-top: 4px;">
+      <button type="button" id="campaign-save-btn" onclick="saveCampaign()" disabled>Save</button>
+      <button type="button" onclick="cancelCampaignForm()">Cancel</button>
+    </div>
+  </div>
+  <ul id="campaign-list"></ul>
   </div>
 
   <div id="character-view" class="hidden">
@@ -1619,6 +1640,8 @@
     const sagaAddForm = document.getElementById("saga-add-form");
     const sagaNameInput = document.getElementById("saga-name");
     const sagaCycleInput = document.getElementById("saga-cycle");
+    const campaignsView = document.getElementById("campaigns-view");
+    const campaignList = document.getElementById("campaign-list");
     const characterView = document.getElementById("character-view");
     const charContent = document.getElementById("char-content");
     let renamingChar = false;
@@ -1637,22 +1660,25 @@
       document.getElementById("nav-quest-giver").classList.toggle("active", view === "quest-giver");
       document.getElementById("nav-quests").classList.toggle("active", view === "quests");
       document.getElementById("nav-sagas").classList.toggle("active", view === "sagas");
+      document.getElementById("nav-campaigns").classList.toggle("active", view === "campaigns");
       document.getElementById("nav-character").classList.toggle("active", view === "character");
       document.getElementById("nav-settings").classList.toggle("active", view === "settings");
       questGiverView.classList.toggle("hidden", view !== "quest-giver");
       questsView.classList.toggle("hidden", view !== "quests");
       sagasView.classList.toggle("hidden", view !== "sagas");
+      campaignsView.classList.toggle("hidden", view !== "campaigns");
       characterView.classList.toggle("hidden", view !== "character");
       settingsView.classList.toggle("hidden", view !== "settings");
       if (view === "quests") loadAll();
       if (view === "sagas") loadSagas();
+      if (view === "campaigns") loadCampaigns();
       if (view === "character") loadCharacterView();
       if (view === "quest-giver") renderQuestGiver();
       if (view === "settings") loadSettings();
     }
 
     function setTabsLocked(locked) {
-      ["nav-quests", "nav-sagas", "nav-character", "nav-settings"].forEach(id => {
+      ["nav-quests", "nav-sagas", "nav-campaigns", "nav-character", "nav-settings"].forEach(id => {
         document.getElementById(id).classList.toggle("locked", locked);
       });
     }
@@ -2941,6 +2967,270 @@
       sagaNameInput.focus();
       await loadSagas();
     });
+
+    // --- Campaigns ---
+
+    let cachedCampaigns = [];
+    let expandedCampaignId = null;
+    let editingCampaignId = null;
+    let campaignDraftCriteria = []; // [{targetType, targetId, targetName, targetCount}]
+
+    async function loadCampaigns() {
+      cachedCampaigns = await invoke("get_campaigns");
+      renderCampaigns();
+    }
+
+    function renderCampaigns() {
+      if (cachedCampaigns.length === 0) {
+        campaignList.innerHTML = '';
+        return;
+      }
+      campaignList.innerHTML = cachedCampaigns.map(c => {
+        if (editingCampaignId === c.id) return renderCampaignEdit(c);
+        const isExpanded = expandedCampaignId === c.id;
+        const toggle = `<span class="expand-toggle" onclick="toggleCampaignExpand('${c.id}')">${isExpanded ? '▾' : '▸'}</span>`;
+        const isCompleted = !!c.completedAt;
+        const stateClass = isCompleted ? "quest-cooldown" : "quest-due";
+        const metCount = c.criteria.filter(cr => cr.currentCount >= cr.targetCount).length;
+        const totalCount = c.criteria.length;
+        const pct = totalCount > 0 ? Math.round((metCount / totalCount) * 100) : 0;
+        const progressText = isCompleted ? "Done" : `${metCount}/${totalCount}`;
+        let html = `<li class="quest-item ${stateClass}" data-id="${c.id}" tabindex="0"
+                        onkeydown="handleCampaignKey(event, '${c.id}')">
+          <div class="quest-row-top">
+            ${toggle}
+            <span class="quest-title" onclick="startCampaignEdit('${c.id}')">${escapeHtml(c.name)}</span>
+            <span class="saga-progress">
+              <span class="saga-progress-bar"><span class="saga-progress-fill" style="width: ${pct}%"></span></span>
+              <span class="saga-progress-text">(${progressText})</span>
+            </span>
+          </div>`;
+        if (isExpanded) {
+          html += renderCampaignCriteria(c);
+        }
+        html += `</li>`;
+        return html;
+      }).join("");
+
+      if (editingCampaignId) {
+        const el = document.getElementById("campaign-edit-name");
+        if (el) el.focus();
+      }
+    }
+
+    function renderCampaignCriteria(campaign) {
+      const criteria = campaign.criteria || [];
+      if (criteria.length === 0) return '<div class="saga-steps"><div class="empty-state" style="padding: 4px 20px; font-size: 10px;">No criteria.</div></div>';
+      let html = '<div class="saga-steps"><ul class="step-list">';
+      criteria.forEach(cr => {
+        const met = cr.currentCount >= cr.targetCount;
+        const check = met ? '✓' : '○';
+        const checkClass = met ? 'style="color: #4a4"' : 'style="color: #777"';
+        html += `<li class="quest-item step-item ${met ? 'quest-cooldown' : 'quest-due'}" style="cursor: default;">
+          <div class="quest-row-top">
+            <span ${checkClass}>${check}</span>
+            <span class="quest-title" style="cursor: default;">${escapeHtml(cr.targetName)}</span>
+            <span class="saga-progress-text" style="margin-left: auto;">${cr.currentCount}/${cr.targetCount}</span>
+          </div>
+        </li>`;
+      });
+      html += '</ul></div>';
+      return html;
+    }
+
+    function toggleCampaignExpand(campaignId) {
+      expandedCampaignId = expandedCampaignId === campaignId ? null : campaignId;
+      renderCampaigns();
+    }
+
+    function renderCampaignEdit(c) {
+      return `<li class="quest-edit" data-id="${c.id}">
+        <input type="text" id="campaign-edit-name" value="${escapeAttr(c.name)}"
+               onkeydown="handleCampaignEditKey(event, '${c.id}')">
+        <button onclick="saveCampaignEdit('${c.id}')">Save</button>
+        <button class="del-btn" onclick="deleteCampaign('${c.id}')">Del</button>
+        <span class="close-x" onclick="cancelCampaignEdit()">✕</span>
+      </li>`;
+    }
+
+    function startCampaignEdit(id) {
+      editingCampaignId = id;
+      renderCampaigns();
+    }
+
+    function cancelCampaignEdit() {
+      editingCampaignId = null;
+      renderCampaigns();
+    }
+
+    function handleCampaignEditKey(e, id) {
+      if (e.key === "Enter") { e.preventDefault(); saveCampaignEdit(id); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelCampaignEdit(); }
+    }
+
+    async function saveCampaignEdit(id) {
+      const name = document.getElementById("campaign-edit-name").value.trim();
+      if (!name) return;
+      await invoke("rename_campaign", { id, name });
+      editingCampaignId = null;
+      await loadCampaigns();
+    }
+
+    async function deleteCampaign(id) {
+      await invoke("delete_campaign", { id });
+      editingCampaignId = null;
+      if (expandedCampaignId === id) expandedCampaignId = null;
+      await loadCampaigns();
+    }
+
+    function handleCampaignKey(e, campaignId) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusAdjacentCampaign(campaignId, -1);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusAdjacentCampaign(campaignId, 1);
+      } else if (e.key === "Enter" || e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        startCampaignEdit(campaignId);
+      } else if (e.key === " ") {
+        e.preventDefault();
+        toggleCampaignExpand(campaignId);
+      }
+    }
+
+    function focusAdjacentCampaign(campaignId, direction) {
+      const items = Array.from(campaignList.querySelectorAll('.quest-item[tabindex]'));
+      const idx = items.findIndex(el => el.dataset.id === campaignId);
+      const next = items[idx + direction];
+      if (next) next.focus();
+    }
+
+    // --- Campaign creation form ---
+
+    async function showCampaignForm() {
+      campaignDraftCriteria = [];
+      document.getElementById("campaign-form").classList.remove("hidden");
+      document.getElementById("campaign-add-btn").classList.add("hidden");
+      document.getElementById("campaign-name").value = "";
+      document.getElementById("campaign-form-error").style.display = "none";
+      document.getElementById("campaign-save-btn").disabled = true;
+      // Populate target dropdown with quests and sagas
+      await populateCampaignTargets();
+      renderCampaignDraftCriteria();
+      document.getElementById("campaign-name").focus();
+    }
+
+    function cancelCampaignForm() {
+      campaignDraftCriteria = [];
+      document.getElementById("campaign-form").classList.add("hidden");
+      document.getElementById("campaign-add-btn").classList.remove("hidden");
+    }
+
+    async function populateCampaignTargets() {
+      // Fetch fresh quest and saga lists
+      const [quests, sagas] = await Promise.all([
+        invoke("get_quests"),
+        invoke("get_sagas"),
+      ]);
+      const select = document.getElementById("campaign-target-select");
+      let html = '<option value="">-- Select --</option>';
+
+      // Active quests (recurring + one-off that are still active)
+      const activeQuests = quests.filter(q => q.active && !q.sagaId);
+      if (activeQuests.length > 0) {
+        html += '<optgroup label="Quests">';
+        activeQuests.forEach(q => {
+          html += `<option value="quest_completions:${q.id}">${escapeHtml(q.title)} (quest)</option>`;
+        });
+        html += '</optgroup>';
+      }
+
+      // Sagas
+      if (sagas.length > 0) {
+        html += '<optgroup label="Sagas">';
+        sagas.forEach(s => {
+          html += `<option value="saga_completions:${s.id}">${escapeHtml(s.name)} (saga)</option>`;
+        });
+        html += '</optgroup>';
+      }
+
+      select.innerHTML = html;
+    }
+
+    function addCampaignCriterion() {
+      const select = document.getElementById("campaign-target-select");
+      const countInput = document.getElementById("campaign-target-count");
+      const errorEl = document.getElementById("campaign-form-error");
+      const val = select.value;
+      if (!val) return;
+
+      const [targetType, targetId] = val.split(":");
+      const targetName = select.options[select.selectedIndex].text.replace(/ \((quest|saga)\)$/, "");
+      const targetCount = parseInt(countInput.value, 10) || 1;
+
+      // Check for duplicate
+      if (campaignDraftCriteria.some(c => c.targetType === targetType && c.targetId === targetId)) {
+        errorEl.textContent = "That target is already added.";
+        errorEl.style.display = "block";
+        return;
+      }
+
+      errorEl.style.display = "none";
+      campaignDraftCriteria.push({ targetType, targetId, targetName, targetCount });
+      select.value = "";
+      countInput.value = "1";
+      renderCampaignDraftCriteria();
+    }
+
+    function removeCampaignCriterion(index) {
+      campaignDraftCriteria.splice(index, 1);
+      renderCampaignDraftCriteria();
+    }
+
+    function renderCampaignDraftCriteria() {
+      const container = document.getElementById("campaign-criteria-list");
+      const saveBtn = document.getElementById("campaign-save-btn");
+      saveBtn.disabled = campaignDraftCriteria.length === 0;
+
+      if (campaignDraftCriteria.length === 0) {
+        container.innerHTML = '';
+        return;
+      }
+      container.innerHTML = campaignDraftCriteria.map((c, i) =>
+        `<div style="display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 11px;">
+          <span>${escapeHtml(c.targetName)}</span>
+          <span style="color: #888;">×${c.targetCount}</span>
+          <span class="close-x" onclick="removeCampaignCriterion(${i})" style="cursor: pointer; color: #c44;">✕</span>
+        </div>`
+      ).join("");
+    }
+
+    async function saveCampaign() {
+      const name = document.getElementById("campaign-name").value.trim();
+      const errorEl = document.getElementById("campaign-form-error");
+      if (!name) {
+        errorEl.textContent = "Campaign name is required.";
+        errorEl.style.display = "block";
+        return;
+      }
+      if (campaignDraftCriteria.length === 0) return;
+
+      const criteria = campaignDraftCriteria.map(c => ({
+        targetType: c.targetType,
+        targetId: c.targetId,
+        targetCount: c.targetCount,
+      }));
+
+      try {
+        await invoke("create_campaign", { name, criteria });
+        cancelCampaignForm();
+        await loadCampaigns();
+      } catch (e) {
+        errorEl.textContent = String(e);
+        errorEl.style.display = "block";
+      }
+    }
 
     // --- Settings ---
 

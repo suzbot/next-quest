@@ -15,7 +15,7 @@ Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a 
 Build (debug):
 cargo tauri build --debug
 
-Run the built app:
+Run the built app (user launches manually — don't run `open` or launch it automatically):
 ./src-tauri/target/debug/next-quest
 
 Tests:
@@ -54,14 +54,21 @@ See [DATA_MODEL.md](DATA_MODEL.md) for entities, relationships, and quest select
 
 1. **Requirements Discussion** — Talk through what we're building. Ask questions, surface ambiguities, explore edge cases. No docs yet — just conversation.
 2. **Requirements Doc** — Claude drafts, user refines. Lives in `docs/`. This is what we're building and why.
-3. **Tech Design Discussion** — Talk through how to build it. Entities, relationships, data flow, trade-offs.
-4. **Design Doc** — Claude drafts, user refines. Lives in `docs/`. This is how we're building it.
+3. **Tech Design Discussion** — Talk through how to build it. Entities, relationships, data flow, trade-offs. Think in vertical slices: each implementation step should deliver something the user can functionally test.
+4. **Design Doc** — Claude drafts, user refines. Lives in `docs/`. This is how we're building it. Implementation steps must be vertical slices, not "backend then frontend."
 5. **Step Spec** — Small implementation spec for the current slice of work. Scoped to what can be built, tested, and committed in one session.
 6. **Implementation** — Code to the step spec. Tests where appropriate.
 7. **Human Testing** — User runs the app and verifies.
 8. **Documentation** — Update data model, CLAUDE.md, and any other docs to reflect what was built.
 
 Do NOT skip steps or combine them without discussing it first. Do NOT draft docs that introduce decisions we haven't discussed.
+
+### Doc & Commit Discipline
+
+- **Don't commit docs without code.** Design docs, requirements, and step specs should only be committed alongside implementation code, or when the user explicitly asks for a doc-only commit.
+- **Design docs must implement the requirements, not reinterpret them.** If a design decision would differ from what was agreed in requirements, flag it BEFORE writing the doc. Don't introduce deviations silently.
+- **Actually think about gaps before saying there aren't any.** When asked "do you have questions before drafting," genuinely analyze the requirements for edge cases and uncertainties. Don't default to confidence.
+- **Summarize after every design doc.** End with a conversational summary of the approach and implementation steps. Each step should be a vertical slice — something the user can functionally test, not just "wrote backend code."
 
 ### Communication Style
 
@@ -70,6 +77,7 @@ Do NOT skip steps or combine them without discussing it first. Do NOT draft docs
 - **Help realize the vision.** If you don't understand the intent, ask for context. Don't ask "are you sure?" — if there are substantive concerns, present trade-offs.
 - **Trust user observations as evidence.** Verify where they point, don't reason about why they can't be true.
 - **When things go wrong**: Gather evidence first before reasoning about causes. Don't speculate. Surface when stuck.
+- **Always use numbered lists.** The user responds by number. Any time you present items, questions, options, or notes, number them.
 
 ## Dependencies & Security
 

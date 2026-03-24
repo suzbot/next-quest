@@ -163,6 +163,43 @@ pub fn reorder_saga_steps(
     db::reorder_saga_steps(&conn, &saga_id, step_ids)
 }
 
+// --- Campaign commands ---
+
+#[tauri::command]
+pub fn get_campaigns(state: State<DbState>) -> Result<Vec<db::CampaignWithCriteria>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_campaigns(&conn)
+}
+
+#[tauri::command]
+pub fn create_campaign(
+    state: State<DbState>,
+    name: String,
+    criteria: Vec<db::NewCriterion>,
+) -> Result<db::CampaignWithCriteria, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::create_campaign(&conn, name, criteria)
+}
+
+#[tauri::command]
+pub fn rename_campaign(
+    state: State<DbState>,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::rename_campaign(&conn, id, name)
+}
+
+#[tauri::command]
+pub fn delete_campaign(
+    state: State<DbState>,
+    id: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::delete_campaign(&conn, id)
+}
+
 // --- Completions ---
 
 #[tauri::command]
