@@ -3178,6 +3178,7 @@
         <input type="text" id="campaign-edit-name" value="${escapeAttr(c.name)}"
                onkeydown="handleCampaignEditKey(event, '${c.id}')">
         <button onclick="saveCampaignEdit('${c.id}')">Save</button>
+        <button onclick="duplicateCampaign('${c.id}')">Dup</button>
         <button class="del-btn" onclick="deleteCampaign('${c.id}')">Del</button>
         <span class="close-x" onclick="cancelCampaignEdit()">✕</span>
       </li>`;
@@ -3211,6 +3212,28 @@
       editingCampaignId = null;
       if (expandedCampaignId === id) expandedCampaignId = null;
       await loadCampaigns();
+    }
+
+    async function duplicateCampaign(id) {
+      const campaign = cachedCampaigns.find(c => c.id === id);
+      if (!campaign) return;
+      editingCampaignId = null;
+      // Pre-fill criteria from the source campaign
+      campaignDraftCriteria = campaign.criteria.map(cr => ({
+        targetType: cr.targetType,
+        targetId: cr.targetId,
+        targetName: cr.targetName,
+        targetCount: cr.targetCount,
+      }));
+      document.getElementById("campaign-form").classList.remove("hidden");
+      document.getElementById("campaign-add-btn").classList.add("hidden");
+      document.getElementById("campaign-name").value = campaign.name + " copy";
+      document.getElementById("campaign-form-error").style.display = "none";
+      document.getElementById("campaign-save-btn").disabled = false;
+      await populateCampaignTargets();
+      renderCampaignDraftCriteria();
+      renderCampaigns();
+      document.getElementById("campaign-name").focus();
     }
 
     function handleCampaignKey(e, campaignId) {

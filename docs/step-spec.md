@@ -158,7 +158,7 @@ Empty state: "No accomplishments yet."
 
 ---
 
-## Substep 3: Frontend — campaign duplication
+## Substep 3: Frontend — campaign duplication ✅
 
 **Duplicate action:**
 
