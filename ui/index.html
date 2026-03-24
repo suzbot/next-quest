@@ -472,6 +472,12 @@
     .char-row-xp { width: 110px; color: #666; font-size: 10px; }
     .char-row-attr { color: #666; font-size: 10px; }
 
+    .accomplishment-row { padding: 4px 0; border-bottom: 1px solid #ccc; }
+    .accomplishment-name { font-size: 11px; color: #111; }
+    .accomplishment-detail { font-size: 9px; color: #666; display: flex; gap: 8px; align-items: center; }
+    .accomplishment-detail .del-x { font-size: 9px; color: #999; cursor: pointer; background: none; border: none; padding: 0 2px; }
+    .accomplishment-detail .del-x:hover { color: #c00; }
+
     /* Reset / Settings sections */
     .reset-section {
       margin-top: 24px;
@@ -1513,6 +1519,11 @@
       await loadAll();
     }
 
+    async function deleteAccomplishment(id) {
+      await invoke("delete_accomplishment", { id });
+      await loadCharacterView();
+    }
+
     function focusAdjacentQuest(id, direction) {
       const items = Array.from(questList.querySelectorAll(".quest-item"));
       const idx = items.findIndex(el => el.dataset.id === id);
@@ -2032,17 +2043,18 @@
     }
 
     async function loadCharacterView() {
-      const [character, attributes, skills] = await Promise.all([
+      const [character, attributes, skills, accomplishments] = await Promise.all([
         invoke("get_character"),
         invoke("get_attributes"),
         invoke("get_skills"),
+        invoke("get_accomplishments"),
       ]);
       cachedAttributes = attributes;
       cachedSkills = skills;
       attrIndexById = {};
       cachedAttributes.forEach((a, i) => { attrIndexById[a.id] = i; });
       populateFilterDropdowns();
-      renderCharacterView(character, attributes, skills);
+      renderCharacterView(character, attributes, skills, accomplishments);
     }
 
     // Attribute fill colors (bright variants for meter bars)
@@ -2051,7 +2063,7 @@
       return Math.min(100, Math.round((into / total) * 100));
     }
 
-    function renderCharacterView(character, attributes, skills) {
+    function renderCharacterView(character, attributes, skills, accomplishments) {
       const nameHtml = renamingChar
         ? `<input type="text" class="char-rename-input" id="char-name-input"
                   value="${escapeAttr(character.name)}"
@@ -2151,20 +2163,43 @@
           </div>`
         : '';
 
+      const accomplishmentRows = (!accomplishments || accomplishments.length === 0)
+        ? '<div class="empty-state" style="font-size: 10px; color: #777;">No accomplishments yet.</div>'
+        : accomplishments.map(a => `
+          <div class="accomplishment-row">
+            <div class="accomplishment-name">${escapeHtml(a.campaignName)}</div>
+            <div class="accomplishment-detail">
+              <span>${formatTimestamp(a.completedAt)}</span>
+              ${a.bonusXp > 0 ? `<span style="color: #7a5500">+${a.bonusXp} XP</span>` : ''}
+              <button class="del-x" onclick="deleteAccomplishment('${a.id}')">✕</button>
+            </div>
+          </div>
+        `).join("");
+
       charContent.innerHTML = `
-        <div class="char-header">
-          ${nameHtml}
-        </div>
-        ${charMeter}
-        <div class="char-section">
-          <h2>Attributes <span class="add-x" tabindex="0" onclick="startAttrAdd()" onkeydown="if(event.key==='Enter'){event.preventDefault();startAttrAdd()}" style="font-size:11px">+</span></h2>
-          ${attrRows}
-          ${addAttrRow}
-        </div>
-        <div class="char-section">
-          <h2>Skills <span class="add-x" tabindex="0" onclick="startSkillAdd()" onkeydown="if(event.key==='Enter'){event.preventDefault();startSkillAdd()}" style="font-size:11px">+</span></h2>
-          ${skillRows}
-          ${addSkillRow}
+        <div style="display: flex; gap: 16px;">
+          <div style="flex: 2;">
+            <div class="char-header">
+              ${nameHtml}
+            </div>
+            ${charMeter}
+            <div class="char-section">
+              <h2>Attributes <span class="add-x" tabindex="0" onclick="startAttrAdd()" onkeydown="if(event.key==='Enter'){event.preventDefault();startAttrAdd()}" style="font-size:11px">+</span></h2>
+              ${attrRows}
+              ${addAttrRow}
+            </div>
+            <div class="char-section">
+              <h2>Skills <span class="add-x" tabindex="0" onclick="startSkillAdd()" onkeydown="if(event.key==='Enter'){event.preventDefault();startSkillAdd()}" style="font-size:11px">+</span></h2>
+              ${skillRows}
+              ${addSkillRow}
+            </div>
+          </div>
+          <div style="flex: 1;">
+            <div class="char-section">
+              <h2>Accomplishments</h2>
+              ${accomplishmentRows}
+            </div>
+          </div>
         </div>
       `;
 

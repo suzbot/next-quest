@@ -122,7 +122,7 @@ function campaignCelebrationHtml(results) {
 
 ---
 
-## Substep 2: Frontend — accomplishments column on Character tab
+## Substep 2: Frontend — accomplishments column on Character tab ✅
 
 **Layout change:**
 
