@@ -219,25 +219,38 @@ Smarter quest selection based on new quest attributes and offer tracking:
 8. **Quest Now + Done on steps** — timer flow and completion with XP flash from saga tab
 9. **Saga completion from quest giver/overlay** — completing final step via quest giver or overlay stamps the saga
 
-2G.2 Second logic pass after living with 2F:
+2G.2 - Campaigns and Honors:
+
+Story:
+I want to accomplish 'Spring Cleaning 2026'.
+This is a way to track and reward accomplishing a series of related, already existing, quests (or sagas).
+For example the 'Spring Cleaning' campaign may consist of "4 completions of Laundry saga, 4 instances of vaccuming, and 2 instances of mopping floors"
+Completing the 'Spring Cleaning' campagin gives me an xp bonus.
+On the character tab, in a second column i see a section called 'Accomplishments'
+I see 'Completed Spring Cleaning 2026' in the Accomplishments
+This can later be built on to do things like more complex and dynamic rewards, honors, titles, etc.
+
+## Phase 2H: "Polish"
+
+2H.1 Second logic pass after living with 2F:
 
 2. **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
 3. **Attribute/skill balancing** — favor quests linked to underleveled attributes for variety
 4. **Difficulty ramping** — start day with easier quests, suggest harder ones after momentum builds
 
-2G.3 Clean up abilities and general UI improvements
+2H.2 Clean up abilities and general UI improvements
 
 1. **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
 2. **Edit last-done date** — correct mistakes in completion history
-2. Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
-3. Evaluate: adding quest timer to overlay instead of going into full app?
-4. Evaluate: having quest giver view always at the top and tabs expand bottom detail?
-5. Try again with the reseqencing of attributes and skills (don't screw it up this time)
+3. Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
+4. Evaluate: adding quest timer to overlay instead of going into full app?
+5. Evaluate: having quest giver view always at the top and tabs expand bottom detail?
+6. Try again with the reseqencing of attributes and skills (don't screw it up this time)
 
-## Phase 2H: "Rewards"
+## Phase 2I: "Rewards"
 
 - Receive coin and items from questing
-- Badges, Rewards
+- Rewards
 - Buy stuff with gold
 
 ## Phase 3: "The Full Party"
