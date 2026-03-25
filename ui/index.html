@@ -137,6 +137,7 @@
       width: 75px;
       text-align: right;
     }
+    .quest-importance { color: #a85; font-size: 10px; margin-left: 2px; }
     .last-done-picker-wrap { position: relative; flex-shrink: 0; }
     .last-done-picker-icon { font-size: 11px; color: #888; cursor: pointer; }
     .last-done-picker-icon:hover { color: #444; }
@@ -741,6 +742,14 @@
       <option value="challenging">Hard</option>
       <option value="epic">Epic</option>
     </select>
+    <select id="quest-importance" title="Importance">
+      <option value="0" selected>—</option>
+      <option value="1">!</option>
+      <option value="2">!!</option>
+      <option value="3">!!!</option>
+      <option value="4">!!!!</option>
+      <option value="5">!!!!!</option>
+    </select>
     <span id="add-tod" class="dow-dropdown"></span>
     <span id="add-dow" class="dow-dropdown"></span>
     <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
@@ -869,6 +878,7 @@
     const cycleInput = document.getElementById("quest-cycle");
     const cycleLabel = document.getElementById("cycle-label");
     const difficultySelect = document.getElementById("quest-difficulty");
+    const importanceSelect = document.getElementById("quest-importance");
     const addTodContainer = document.getElementById("add-tod");
     const addDowContainer = document.getElementById("add-dow");
     const addLinksRow = document.getElementById("add-links-row");
@@ -1310,10 +1320,10 @@
                   onpointerdown="${q.active ? `onPointerDown(event, '${q.id}')` : ''}">
         <div class="quest-row-top">
           <span class="expand-toggle" onclick="toggleDetail(this)">${hasDetail ? '▸' : ''}</span>
-          <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>
+          <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
           <span class="quest-meta">
-            ${dowLabel ? `<span class="meta-dow">${dowLabel}</span>` : ''}
-            ${todDisplay ? `<span class="meta-tod">${todDisplay}</span>` : ''}
+            <span class="meta-dow">${dowLabel}</span>
+            <span class="meta-tod">${todDisplay}</span>
             <span class="meta-cycle">${cycleText}</span>
             <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
           </span>
@@ -1348,6 +1358,14 @@
           <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Fair</option>
           <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Hard</option>
           <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
+        </select>
+        <select id="edit-importance" onkeydown="handleEditKey(event, '${q.id}')">
+          <option value="0" ${q.importance === 0 ? "selected" : ""}>—</option>
+          <option value="1" ${q.importance === 1 ? "selected" : ""}>!</option>
+          <option value="2" ${q.importance === 2 ? "selected" : ""}>!!</option>
+          <option value="3" ${q.importance === 3 ? "selected" : ""}>!!!</option>
+          <option value="4" ${q.importance === 4 ? "selected" : ""}>!!!!</option>
+          <option value="5" ${q.importance === 5 ? "selected" : ""}>!!!!!</option>
         </select>
         <span id="edit-tod" class="dow-dropdown"></span>
         <span id="edit-dow" class="dow-dropdown"></span>
@@ -1440,7 +1458,8 @@
       const timeOfDay = editTod ? readMask(editTod) : 15;
       const editDow = document.getElementById("edit-dow");
       const daysOfWeek = editDow ? readMask(editDow) : 127;
-      const update = { title, questType, difficulty, timeOfDay, daysOfWeek };
+      const importance = parseInt(document.getElementById("edit-importance")?.value, 10) || 0;
+      const update = { title, questType, difficulty, importance, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
         update.cycleDays = parseInt(document.getElementById("edit-cycle").value, 10) || 1;
@@ -1669,9 +1688,10 @@
 
       const questType = typeSelect.value;
       const difficulty = difficultySelect.value;
+      const importance = parseInt(importanceSelect.value, 10) || 0;
       const timeOfDay = readMask(addTodContainer);
       const daysOfWeek = readMask(addDowContainer);
-      const questParams = { title, questType, difficulty, timeOfDay, daysOfWeek };
+      const questParams = { title, questType, difficulty, importance, timeOfDay, daysOfWeek };
 
       if (questType === "recurring") {
         questParams.cycleDays = parseInt(cycleInput.value, 10) || 1;
@@ -1685,6 +1705,7 @@
       }
 
       titleInput.value = "";
+      importanceSelect.value = "0";
       renderCheckDropdown(addTodContainer, 15, TOD_FULL, todSummary);
       renderCheckDropdown(addDowContainer, 127, DOW_FULL, dowSummary);
       addLinksRow.classList.add("hidden");
@@ -1806,7 +1827,7 @@
       const quest = result.quest;
       const debugHtml = debugScoring ? `
         <div class="qg-debug">
-          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | skips: -${result.skip_penalty.toFixed(1)} | order: +${result.list_order_bonus.toFixed(3)})
+          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | importance: +${result.importance_boost.toFixed(1)} | skips: -${result.skip_penalty.toFixed(1)} | order: +${result.list_order_bonus.toFixed(3)})
           <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
         </div>` : "";
 
@@ -2652,6 +2673,14 @@
           <option value="challenging">Hard</option>
           <option value="epic">Epic</option>
         </select>
+        <select id="step-imp-${saga.id}" title="Importance">
+          <option value="0" selected>—</option>
+          <option value="1">!</option>
+          <option value="2">!!</option>
+          <option value="3">!!!</option>
+          <option value="4">!!!!</option>
+          <option value="5">!!!!!</option>
+        </select>
         <span id="step-tod-${saga.id}" class="dow-dropdown"></span>
         <span id="step-dow-${saga.id}" class="dow-dropdown"></span>
         <button type="button" onclick="toggleStepAddLinks('${saga.id}')">Tags</button>
@@ -2680,10 +2709,10 @@
               <div class="quest-row-top">
                 <span class="expand-toggle" onclick="toggleDetail(this)">${stepLinks ? '▸' : ''}</span>
                 <span class="step-number">${i + 1}.</span>
-                <span class="quest-title" onclick="startStepEdit('${step.id}')">${escapeHtml(step.title)}</span>
+                <span class="quest-title" onclick="startStepEdit('${step.id}')">${escapeHtml(step.title)}</span>${step.importance > 0 ? `<span class="quest-importance">${"!".repeat(step.importance)}</span>` : ''}
                 <span class="quest-meta">
-                  ${stepDow ? `<span class="meta-dow">${stepDow}</span>` : ''}
-                  ${stepTod ? `<span class="meta-tod">${stepTod}</span>` : ''}
+                  <span class="meta-dow">${stepDow}</span>
+                  <span class="meta-tod">${stepTod}</span>
                   <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(step.difficulty)}</span>
                 </span>
                 <span class="quest-last-done">${lastDone}</span>
@@ -2711,6 +2740,14 @@
           <option value="moderate" ${diff === "moderate" ? "selected" : ""}>Fair</option>
           <option value="challenging" ${diff === "challenging" ? "selected" : ""}>Hard</option>
           <option value="epic" ${diff === "epic" ? "selected" : ""}>Epic</option>
+        </select>
+        <select id="step-edit-importance" onkeydown="handleStepEditKey(event, '${step.id}', '${sagaId}')">
+          <option value="0" ${step.importance === 0 ? "selected" : ""}>—</option>
+          <option value="1" ${step.importance === 1 ? "selected" : ""}>!</option>
+          <option value="2" ${step.importance === 2 ? "selected" : ""}>!!</option>
+          <option value="3" ${step.importance === 3 ? "selected" : ""}>!!!</option>
+          <option value="4" ${step.importance === 4 ? "selected" : ""}>!!!!</option>
+          <option value="5" ${step.importance === 5 ? "selected" : ""}>!!!!!</option>
         </select>
         <span id="step-edit-tod" class="dow-dropdown"></span>
         <span id="step-edit-dow" class="dow-dropdown"></span>
@@ -2888,13 +2925,15 @@
       e.preventDefault();
       const titleEl = document.getElementById("step-title-" + sagaId);
       const diffEl = document.getElementById("step-diff-" + sagaId);
+      const impEl = document.getElementById("step-imp-" + sagaId);
       const todEl = document.getElementById("step-tod-" + sagaId);
       const dowEl = document.getElementById("step-dow-" + sagaId);
       const title = titleEl.value.trim();
       if (!title) return;
+      const importance = parseInt(impEl?.value, 10) || 0;
       const timeOfDay = todEl ? readMask(todEl) : 15;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
-      const step = await invoke("add_saga_step", { step: { sagaId, title, difficulty: diffEl.value, timeOfDay, daysOfWeek } });
+      const step = await invoke("add_saga_step", { step: { sagaId, title, difficulty: diffEl.value, importance, timeOfDay, daysOfWeek } });
 
       const linksRow = document.getElementById("step-add-links-" + sagaId);
       if (linksRow) {
@@ -2935,7 +2974,8 @@
       const dowEl = document.getElementById("step-edit-dow");
       const timeOfDay = todEl ? readMask(todEl) : 15;
       const daysOfWeek = dowEl ? readMask(dowEl) : 127;
-      await invoke("update_quest", { questId: id, update: { title, difficulty, timeOfDay, daysOfWeek } });
+      const importance = parseInt(document.getElementById("step-edit-importance")?.value, 10) || 0;
+      await invoke("update_quest", { questId: id, update: { title, difficulty, importance, timeOfDay, daysOfWeek } });
 
       const linksContainer = document.getElementById("step-edit-links-container");
       if (linksContainer) {

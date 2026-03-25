@@ -80,6 +80,8 @@ pub struct NewQuest {
     pub time_of_day: i32,
     #[serde(default = "default_days_of_week")]
     pub days_of_week: i32,
+    #[serde(default)]
+    pub importance: i32,
 }
 
 fn default_quest_type() -> QuestType { QuestType::Recurring }
@@ -96,6 +98,7 @@ impl Default for NewQuest {
             difficulty: Difficulty::Easy,
             time_of_day: 15,
             days_of_week: 127,
+            importance: 0,
         }
     }
 }
@@ -109,6 +112,7 @@ pub struct QuestUpdate {
     pub difficulty: Option<Difficulty>,
     pub time_of_day: Option<i32>,
     pub days_of_week: Option<i32>,
+    pub importance: Option<i32>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -122,6 +126,8 @@ pub struct NewSagaStep {
     pub time_of_day: i32,
     #[serde(default = "default_days_of_week")]
     pub days_of_week: i32,
+    #[serde(default)]
+    pub importance: i32,
 }
 
 impl Default for NewSagaStep {
@@ -132,6 +138,7 @@ impl Default for NewSagaStep {
             difficulty: Difficulty::Easy,
             time_of_day: 15,
             days_of_week: 127,
+            importance: 0,
         }
     }
 }
@@ -153,6 +160,7 @@ pub struct Quest {
     pub skill_ids: Vec<String>,
     pub attribute_ids: Vec<String>,
     pub saga_id: Option<String>,
+    pub importance: i32,
 }
 
 #[derive(Serialize, Debug)]
@@ -183,6 +191,7 @@ pub struct ScoredQuest {
     pub quest: Quest,
     pub score: f64,
     pub overdue_ratio: f64,
+    pub importance_boost: f64,
     pub skip_penalty: f64,
     pub list_order_bonus: f64,
     pub pool: String,
@@ -328,7 +337,8 @@ fn create_tables(conn: &Connection) {
             days_of_week INTEGER NOT NULL DEFAULT 127,
             saga_id     TEXT REFERENCES saga(id),
             step_order  INTEGER,
-            last_completed TEXT
+            last_completed TEXT,
+            importance  INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS quest_completion (
@@ -645,6 +655,17 @@ fn migrate(conn: &Connection) {
         conn.execute_batch(
             "UPDATE quest SET time_of_day = 15 WHERE time_of_day = 7;"
         ).expect("Failed to update all-times mask");
+    }
+
+    // Migration: add importance column to quest
+    let has_importance: bool = conn
+        .prepare("SELECT importance FROM quest LIMIT 0")
+        .is_ok();
+
+    if !has_importance {
+        conn.execute_batch(
+            "ALTER TABLE quest ADD COLUMN importance INTEGER NOT NULL DEFAULT 0;"
+        ).expect("Failed to add importance column");
     }
 
     // Migration: create campaign tables if missing
@@ -971,7 +992,7 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
     let mut stmt = conn
         .prepare(
             "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                    q.difficulty, q.time_of_day, q.days_of_week, q.step_order, q.last_completed
+                    q.difficulty, q.time_of_day, q.days_of_week, q.step_order, q.last_completed, q.importance
              FROM quest q
              WHERE q.saga_id = ?1
              ORDER BY q.step_order ASC",
@@ -1006,6 +1027,7 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
                 skill_ids: Vec::new(),
                 attribute_ids: Vec::new(),
                 saga_id: Some(saga_id.to_string()),
+                importance: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1033,6 +1055,7 @@ pub fn add_saga_step(conn: &Connection, s: NewSagaStep) -> Result<Quest, String>
     let difficulty = s.difficulty;
     let time_of_day = s.time_of_day;
     let days_of_week = s.days_of_week;
+    let importance = s.importance;
 
     // Verify saga exists
     let exists: bool = conn
@@ -1059,9 +1082,9 @@ pub fn add_saga_step(conn: &Connection, s: NewSagaStep) -> Result<Quest, String>
     let step_order = max_step + 1;
 
     conn.execute(
-        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty, time_of_day, days_of_week, saga_id, step_order)
-         VALUES (?1, ?2, 'one_off', NULL, 0, 1, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![id, title, created_at, difficulty.as_str(), time_of_day, days_of_week, saga_id, step_order],
+        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty, time_of_day, days_of_week, saga_id, step_order, importance)
+         VALUES (?1, ?2, 'one_off', NULL, 0, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![id, title, created_at, difficulty.as_str(), time_of_day, days_of_week, saga_id, step_order, importance],
     )
     .map_err(|e| e.to_string())?;
 
@@ -1081,6 +1104,7 @@ pub fn add_saga_step(conn: &Connection, s: NewSagaStep) -> Result<Quest, String>
         skill_ids: Vec::new(),
         attribute_ids: Vec::new(),
         saga_id: Some(saga_id),
+        importance,
     })
 }
 
@@ -1758,7 +1782,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                    q.difficulty, q.time_of_day, q.days_of_week, q.last_completed
+                    q.difficulty, q.time_of_day, q.days_of_week, q.last_completed, q.importance
              FROM quest q
              WHERE q.saga_id IS NULL AND (q.active = 1 OR (q.active = 0 AND q.quest_type = 'one_off'))
              ORDER BY q.active DESC, q.sort_order DESC",
@@ -1793,6 +1817,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
                 skill_ids: Vec::new(),
                 attribute_ids: Vec::new(),
                 saga_id: None,
+                importance: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1847,14 +1872,14 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     let not_due_count = not_due.len();
 
     // Score due pool (regular + saga steps)
-    // type: (score, overdue_ratio, skip_penalty, list_order_bonus, quest, saga_name)
-    let mut scored: Vec<(f64, f64, f64, f64, Quest, Option<String>)> = Vec::new();
+    // type: (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, quest, saga_name)
+    let mut scored: Vec<(f64, f64, f64, f64, f64, Quest, Option<String>)> = Vec::new();
     let mut pool_name = "due";
 
     if !due.is_empty() || !eligible_saga.is_empty() {
         // Score regular due quests
-        for (score, overdue, skip, order, quest) in score_quests_due(&due, today, skip_counts) {
-            scored.push((score, overdue, skip, order, quest, None));
+        for (score, overdue, importance, skip, order, quest) in score_quests_due(&due, today, skip_counts) {
+            scored.push((score, overdue, importance, skip, order, quest, None));
         }
         // Score saga steps
         for (quest, saga_name, activated_at, saga_cycle_days) in &eligible_saga {
@@ -1862,11 +1887,12 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
             let days_since = (today - activated_days) as f64;
             let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
             let overdue_ratio = (days_since + saga_cycle) / saga_cycle;
+            let importance_boost = quest.importance as f64 * 30.0;
             let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
             let skip_penalty = skips * 0.5;
             let list_order_bonus = 0.001; // saga steps get minimal order bonus
-            let score = overdue_ratio - skip_penalty + list_order_bonus;
-            scored.push((score, overdue_ratio, skip_penalty, list_order_bonus, (*quest).clone(), Some(saga_name.clone())));
+            let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
+            scored.push((score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, (*quest).clone(), Some(saga_name.clone())));
         }
     }
 
@@ -1874,8 +1900,8 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     let all_skipped = !scored.is_empty() && scored.iter().all(|s| s.0 <= 0.0);
     if scored.is_empty() || all_skipped {
         let not_due_scored = score_quests_not_due(&not_due, today, skip_counts);
-        for (score, overdue, skip, order, quest) in not_due_scored {
-            scored.push((score, overdue, skip, order, quest, None));
+        for (score, overdue, importance, skip, order, quest) in not_due_scored {
+            scored.push((score, overdue, importance, skip, order, quest, None));
         }
         if due_count == 0 {
             pool_name = "not_due";
@@ -1894,18 +1920,19 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     // Skip excluded quest if possible (fall back to it if it's the only one)
     let top = if let Some(exc_id) = exclude_quest_id {
         scored.iter()
-            .find(|(_, _, _, _, q, _)| q.id != exc_id)
+            .find(|(_, _, _, _, _, q, _)| q.id != exc_id)
             .cloned()
             .unwrap_or_else(|| scored.into_iter().next().unwrap())
     } else {
         scored.into_iter().next().unwrap()
     };
-    let (score, overdue_ratio, skip_penalty, list_order_bonus, quest, saga_name) = top;
+    let (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, quest, saga_name) = top;
 
     Ok(Some(ScoredQuest {
         quest,
         score,
         overdue_ratio,
+        importance_boost,
         skip_penalty,
         list_order_bonus,
         pool: pool_name.to_string(),
@@ -1915,20 +1942,21 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     }))
 }
 
-fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, Quest)> {
+fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
     let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
     quests.iter().map(|q| {
         let overdue_ratio = compute_overdue_ratio(q, today);
+        let importance_boost = q.importance as f64 * 30.0;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
         let skip_penalty = skips * 0.5;
         let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
-        let score = overdue_ratio - skip_penalty + list_order_bonus;
-        (score, overdue_ratio, skip_penalty, list_order_bonus, (*q).clone())
+        let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
+        (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, (*q).clone())
     }).collect()
 }
 
-fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, Quest)> {
+fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
     let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
     let days_since: Vec<f64> = quests.iter().map(|q| {
@@ -1941,11 +1969,12 @@ fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collec
 
     quests.iter().enumerate().map(|(i, q)| {
         let normalized = if days_since[i] == f64::MAX { 1.0 } else { days_since[i] / max_days };
+        let importance_boost = q.importance as f64 * 30.0;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
         let skip_penalty = skips * 0.5;
         let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
-        let score = normalized - skip_penalty + list_order_bonus;
-        (score, normalized, skip_penalty, list_order_bonus, (*q).clone())
+        let score = normalized + importance_boost - skip_penalty + list_order_bonus;
+        (score, normalized, importance_boost, skip_penalty, list_order_bonus, (*q).clone())
     }).collect()
 }
 
@@ -2005,6 +2034,7 @@ pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
     let difficulty = q.difficulty;
     let time_of_day = q.time_of_day;
     let days_of_week = q.days_of_week;
+    let importance = q.importance;
 
     let max_order: i32 = conn
         .query_row(
@@ -2021,9 +2051,9 @@ pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
     };
 
     conn.execute(
-        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty, time_of_day, days_of_week)
-         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9)",
-        rusqlite::params![id, title, quest_type.as_str(), effective_cycle, sort_order, created_at, difficulty.as_str(), time_of_day, days_of_week],
+        "INSERT INTO quest (id, title, quest_type, cycle_days, sort_order, active, created_at, difficulty, time_of_day, days_of_week, importance)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![id, title, quest_type.as_str(), effective_cycle, sort_order, created_at, difficulty.as_str(), time_of_day, days_of_week, importance],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2043,6 +2073,7 @@ pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
         skill_ids: Vec::new(),
         attribute_ids: Vec::new(),
         saga_id: None,
+        importance,
     })
 }
 
@@ -2390,6 +2421,14 @@ pub fn update_quest(
         .map_err(|e| e.to_string())?;
     }
 
+    if let Some(imp) = u.importance {
+        conn.execute(
+            "UPDATE quest SET importance = ?1 WHERE id = ?2",
+            rusqlite::params![imp, quest_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     query_single_quest(conn, &quest_id)
 }
 
@@ -2658,7 +2697,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
     let (skill_ids, attribute_ids) = load_quest_link_ids(conn, quest_id)?;
     conn.query_row(
         "SELECT q.id, q.title, q.quest_type, q.cycle_days, q.sort_order, q.active, q.created_at,
-                q.difficulty, q.time_of_day, q.days_of_week, q.saga_id, q.last_completed
+                q.difficulty, q.time_of_day, q.days_of_week, q.saga_id, q.last_completed, q.importance
          FROM quest q WHERE q.id = ?1",
         rusqlite::params![quest_id],
         |row| {
@@ -2689,6 +2728,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
                 skill_ids: skill_ids.clone(),
                 attribute_ids: attribute_ids.clone(),
                 saga_id,
+                importance: row.get(12)?,
             })
         },
     )
@@ -4794,16 +4834,12 @@ mod tests {
         let step1 = add_saga_step(&conn, NewSagaStep {
             saga_id: s.id.clone(),
             title: "Brush teeth".into(),
-            difficulty: Difficulty::Easy,
-            time_of_day: 7,
-            days_of_week: 127,
+            ..NewSagaStep::default()
         }).unwrap();
         let step2 = add_saga_step(&conn, NewSagaStep {
             saga_id: s.id.clone(),
             title: "Shower".into(),
-            difficulty: Difficulty::Easy,
-            time_of_day: 7,
-            days_of_week: 127,
+            ..NewSagaStep::default()
         }).unwrap();
 
         // Backdate saga created_at so completions are strictly after it
@@ -5076,9 +5112,7 @@ mod tests {
         let step = add_saga_step(&conn, NewSagaStep {
             saga_id: s.id.clone(),
             title: "Step 1".into(),
-            difficulty: Difficulty::Easy,
-            time_of_day: 7,
-            days_of_week: 127,
+            ..NewSagaStep::default()
         }).unwrap();
 
         let result = set_quest_last_done(&conn, step.id, Some(chrono_now()));
@@ -5152,5 +5186,53 @@ mod tests {
         assert_eq!(result.saga_name.as_deref(), Some("One-off Saga"));
         // (days + 9) / 9 — one-off uses 9-day base
         assert!(result.overdue_ratio > 1.0);
+    }
+
+    // --- Importance tests ---
+
+    #[test]
+    fn importance_boosts_score() {
+        let conn = test_db();
+        let q1 = test_quest_with(&conn, "Important", |q| q.importance = 3);
+        let _q2 = test_quest(&conn, "Normal");
+
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        // Both are daily, never completed, same overdue. Importance 3 = +1.2 boost.
+        assert_eq!(result.quest.id, q1.id);
+        // importance 3 × 30.0 = 90.0
+        assert!((result.importance_boost - 90.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn default_importance_is_zero() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Default");
+        assert_eq!(q.importance, 0);
+    }
+
+    #[test]
+    fn update_quest_importance() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Test");
+        assert_eq!(q.importance, 0);
+
+        let updated = update_quest(&conn, q.id, QuestUpdate { importance: Some(4), ..Default::default() }).unwrap();
+        assert_eq!(updated.importance, 4);
+    }
+
+    #[test]
+    fn saga_step_importance() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Test".into(), Some(1)).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Urgent Step".into(),
+            importance: 5,
+            ..NewSagaStep::default()
+        }).unwrap();
+        assert_eq!(step.importance, 5);
+
+        let steps = get_saga_steps(&conn, &s.id).unwrap();
+        assert_eq!(steps[0].importance, 5);
     }
 }

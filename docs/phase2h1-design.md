@@ -177,9 +177,9 @@ Values 0–5. Default 0.
 
 **Structs:** Add `importance: i32` to `Quest`, `NewQuest`, `QuestUpdate`, and `NewSagaStep`. Update `add_quest`, `update_quest`, `add_saga_step`, and all query functions that build Quest structs to include the field.
 
-**Scoring:** `importance_boost = importance × 0.4`
+**Scoring:** `importance_boost = importance × 30.0`
 
-At importance 5: +2.0 (equivalent to being 2 extra cycles overdue).
+At importance 5: +150.0. Each importance level is ~30 days of overdue on a daily quest. A 0! quest needs ~150 days overdue to tie with a just-due 5!.
 
 Applies to both due and not-due pools — a high-importance quest should surface even in the not-due fallback.
 
@@ -298,7 +298,7 @@ score = overdue_ratio - skip_penalty + list_order_bonus
 To:
 
 ```
-score = overdue_ratio + (importance × 0.4) + (sort_order/global_max) + membership_bonus + balance_bonus - (skips × 0.5)
+score = overdue_ratio + (importance × 30.0) + (sort_order/global_max) + membership_bonus + balance_bonus - (skips × 0.5)
 ```
 
 With typical ranges:
