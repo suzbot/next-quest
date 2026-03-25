@@ -158,7 +158,7 @@ let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
 let overdue_ratio = (days_since + saga_cycle) / saga_cycle;
 ```
 
-The saga cycle is already available — each saga step tuple includes the saga's cycle_days via `get_active_saga_steps`.
+`get_active_saga_steps` currently returns `(Quest, saga_name, activated_at)`. Add `saga_cycle_days: Option<i32>` to the tuple so the scoring code can use it.
 
 **Tests:**
 1. Daily saga step scores 2.0 after 1 day (was 1.11)
@@ -175,21 +175,23 @@ ALTER TABLE quest ADD COLUMN importance INTEGER NOT NULL DEFAULT 0;
 
 Values 0–5. Default 0.
 
-**Structs:** Add `importance: i32` to `Quest`, `NewQuest`, `QuestUpdate`.
+**Structs:** Add `importance: i32` to `Quest`, `NewQuest`, `QuestUpdate`, and `NewSagaStep`. Update `add_quest`, `update_quest`, `add_saga_step`, and all query functions that build Quest structs to include the field.
 
 **Scoring:** `importance_boost = importance × 0.4`
 
 At importance 5: +2.0 (equivalent to being 2 extra cycles overdue).
 
-**Display:** Quest list shows importance as exclamation marks after the title:
+Applies to both due and not-due pools — a high-importance quest should surface even in the not-due fallback.
+
+**Display:** Quest list and saga step list show importance as exclamation marks after the title:
 - 0: nothing
 - 1–5: "!" through "!!!!!"
 
-Styled in a muted color so it's visible but not distracting.
+Styled in a muted color so it's visible but not distracting. Not shown in the quest giver — only in the list/step views.
 
 **Quest add/edit:** Importance selector (0–5) in the add form and edit mode.
 
-**Saga steps:** Also get the importance field (same column, same UI in the step add/edit form).
+**Saga steps:** Also get the importance field via `NewSagaStep` and the step add/edit form.
 
 **Tests:**
 1. Quest with importance 3 scores 1.2 higher than importance 0 at same overdue
@@ -208,6 +210,8 @@ let list_order_bonus = 1.0 * q.sort_order as f64 / global_max_sort;
 ```
 
 Top-of-list quest gets +1.0, bottom gets ~0. This reflects the user's intended priority.
+
+Applies to both due and not-due pools (same global max, same weight).
 
 **Saga steps:** Continue using a fixed small bonus (0.1) since they don't participate in the quest list ordering.
 
@@ -229,7 +233,9 @@ This ties with a 3-day-overdue daily at importance 0, bottom of list. A 4+ day o
 
 These don't stack — it's +0.2 if either condition is true.
 
-For regular quests (not saga steps), the campaign check requires a query. To avoid N+1 queries, precompute the set of quest IDs referenced by active campaigns before scoring.
+Applies to both due and not-due pools.
+
+For regular quests (not saga steps), the campaign check requires a query. To avoid N+1 queries, precompute the set of quest IDs referenced by active campaigns (`target_type = 'quest_completions'`, `completed_at IS NULL`) before scoring.
 
 **Tests:**
 1. Quest in active campaign scores 0.2 higher than equivalent quest not in any campaign
@@ -252,12 +258,22 @@ For regular quests (not saga steps), the campaign check requires a query. To avo
 - Attribute bonus: (3 - 2) × 0.1 = 0.1
 - Quest gets max: 0.2
 
+Applies to both due and not-due pools.
+
 **Performance:** Attribute/skill levels need to be loaded once per `get_next_quest` call. Quest links are already loaded in the Quest struct (`skill_ids`, `attribute_ids`). The level lookup is a small additional query at the start of scoring.
 
 **Tests:**
 1. Quest linked to underleveled skill scores higher than quest linked to average-level skill
 2. Quest with no links gets 0 balance bonus
 3. Quest linked to overleveled attribute gets 0 balance bonus
+
+### Debug scoring display
+
+Add new scoring components to `ScoredQuest` struct: `importance_boost`, `membership_bonus`, `balance_bonus`. Update the debug scoring display in the quest giver to show all components:
+
+```
+Score: 3.60 (overdue: 2.00 | importance: +1.20 | order: +0.80 | member: +0.20 | balance: +0.10 | skips: -0.70)
+```
 
 ## Implementation Order
 
