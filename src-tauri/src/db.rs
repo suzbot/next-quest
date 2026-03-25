@@ -1839,11 +1839,14 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     Ok(quests)
 }
 
+const IMPORTANCE_WEIGHT: f64 = 30.0;
+
 pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, exclude_quest_id: Option<&str>) -> Result<Option<ScoredQuest>, String> {
     let quests = get_quests(conn)?;
     let today = local_today_days();
     let hour = local_hour();
     let weekday = local_weekday();
+    let global_max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
     // Hard-filter: active, time-of-day, day-of-week
     let eligible: Vec<&Quest> = quests.iter()
@@ -1878,7 +1881,7 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
 
     if !due.is_empty() || !eligible_saga.is_empty() {
         // Score regular due quests
-        for (score, overdue, importance, skip, order, quest) in score_quests_due(&due, today, skip_counts) {
+        for (score, overdue, importance, skip, order, quest) in score_quests_due(&due, today, skip_counts, global_max_sort) {
             scored.push((score, overdue, importance, skip, order, quest, None));
         }
         // Score saga steps
@@ -1887,10 +1890,10 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
             let days_since = (today - activated_days) as f64;
             let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
             let overdue_ratio = (days_since + saga_cycle) / saga_cycle;
-            let importance_boost = quest.importance as f64 * 30.0;
+            let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT;
             let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
-            let skip_penalty = skips * 0.5;
-            let list_order_bonus = 0.001; // saga steps get minimal order bonus
+            let skip_penalty = skips * (0.5 + quest.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
+            let list_order_bonus = 1.0; // saga steps treated as top-of-list priority
             let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
             scored.push((score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, (*quest).clone(), Some(saga_name.clone())));
         }
@@ -1899,7 +1902,7 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     // If due pool is empty or all scores <= 0, include not-due pool
     let all_skipped = !scored.is_empty() && scored.iter().all(|s| s.0 <= 0.0);
     if scored.is_empty() || all_skipped {
-        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts);
+        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort);
         for (score, overdue, importance, skip, order, quest) in not_due_scored {
             scored.push((score, overdue, importance, skip, order, quest, None));
         }
@@ -1942,23 +1945,19 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     }))
 }
 
-fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
-    let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
-
+fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
     quests.iter().map(|q| {
         let overdue_ratio = compute_overdue_ratio(q, today);
-        let importance_boost = q.importance as f64 * 30.0;
+        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
-        let skip_penalty = skips * 0.5;
-        let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
+        let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
+        let list_order_bonus = q.sort_order as f64 / global_max_sort;
         let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
         (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, (*q).clone())
     }).collect()
 }
 
-fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
-    let max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
-
+fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
     let days_since: Vec<f64> = quests.iter().map(|q| {
         match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
             Some(d) => (today - d) as f64,
@@ -1969,10 +1968,10 @@ fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collec
 
     quests.iter().enumerate().map(|(i, q)| {
         let normalized = if days_since[i] == f64::MAX { 1.0 } else { days_since[i] / max_days };
-        let importance_boost = q.importance as f64 * 30.0;
+        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
-        let skip_penalty = skips * 0.5;
-        let list_order_bonus = 0.01 * q.sort_order as f64 / max_sort;
+        let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
+        let list_order_bonus = q.sort_order as f64 / global_max_sort;
         let score = normalized + importance_boost - skip_penalty + list_order_bonus;
         (score, normalized, importance_boost, skip_penalty, list_order_bonus, (*q).clone())
     }).collect()
@@ -5234,5 +5233,71 @@ mod tests {
 
         let steps = get_saga_steps(&conn, &s.id).unwrap();
         assert_eq!(steps[0].importance, 5);
+    }
+
+    // --- List-order weight + skip penalty tests ---
+
+    #[test]
+    fn list_order_bonus_uses_global_max() {
+        let conn = test_db();
+        // Create 3 quests — sort_order 1, 2, 3 (auto-incremented)
+        let q1 = test_quest(&conn, "First");   // sort_order 1
+        let q2 = test_quest(&conn, "Second");  // sort_order 2
+        let q3 = test_quest(&conn, "Third");   // sort_order 3
+        let _ = &q2; // used for global_max_sort calculation
+
+        // Complete q1 so only q2 and q3 are due
+        complete_quest(&conn, q1.id.clone()).unwrap();
+
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        // q3 should win (highest sort_order). Its bonus should be 3/3 = 1.0
+        assert_eq!(result.quest.id, q3.id);
+        assert!((result.list_order_bonus - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn top_of_list_gets_max_bonus() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Only Quest");
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        assert_eq!(result.quest.id, q.id);
+        // Only quest: sort_order/max = 1/1 = 1.0
+        assert!((result.list_order_bonus - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn skip_penalty_scales_with_importance() {
+        let conn = test_db();
+        let q = test_quest_with(&conn, "Important", |q| q.importance = 2);
+        let _q2 = test_quest(&conn, "Filler"); // need another quest so skip doesn't return the same one
+
+        let mut skips = std::collections::HashMap::new();
+        skips.insert(q.id.clone(), 1);
+
+        let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        // The skipped quest might not be returned — check via the filler or by finding q in scored
+        // Instead, let's check that the non-skipped quest wins
+        // Important quest: overdue ~1 + importance 60 - skip (0.5 + 2*15) = 61 - 30.5 = 30.5
+        // Filler quest: overdue ~1 + importance 0 - skip 0 + order bonus ≈ 2.0
+        // Important should still win despite skip
+        assert_eq!(result.quest.id, q.id);
+        // skip_penalty = 1 × (0.5 + 2 × 30/2) = 30.5
+        assert!((result.skip_penalty - 30.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn skip_penalty_zero_importance() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Normal");
+        let _q2 = test_quest(&conn, "Filler");
+
+        let mut skips = std::collections::HashMap::new();
+        skips.insert(q.id.clone(), 1);
+
+        // Get result — q might or might not be the winner, but we can check its penalty
+        // With 0 importance: penalty = 1 × (0.5 + 0) = 0.5
+        // Both quests are equal overdue, so filler (not skipped) should win
+        let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        assert_eq!(result.quest.id, _q2.id); // filler wins since q is penalized
     }
 }

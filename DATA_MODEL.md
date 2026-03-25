@@ -15,13 +15,14 @@ A template for something you do. Can be recurring or one-off.
 | active | Bool (int) | 1 = active, 0 = deactivated (completed one-off) |
 | created_at | Timestamp | ISO 8601 creation time |
 | difficulty | Enum | `trivial`, `easy`, `moderate`, `challenging`, `epic` |
-| time_of_day | Integer | Bitmask: Morning=1, Afternoon=2, Evening=4. Default 7 (all). 0 or 7 = anytime. |
+| time_of_day | Integer | Bitmask: Morning=1, Afternoon=2, Evening=4, Night=8. Default 15 (all). 0 or 15 = anytime. |
 | days_of_week | Integer | Bitmask: Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 (every day). |
 | saga_id | UUID? (text) | FK to Saga. NULL for regular quests, set for saga steps. |
 | step_order | Integer? | Position within saga. NULL for regular quests. |
+| last_completed | Timestamp? | Stored on the quest. Updated by `complete_quest`, editable via date picker. Not derived from completions — completion history is a read-only log. |
+| importance | Integer | 0–5. Default 0. Dominant scoring signal (importance × 30.0). Displayed as "!" marks. |
 
 **Derived values (computed, not stored):**
-- `last_completed` — most recent completion timestamp for this quest
 - `is_due` — whether the quest's cycle has elapsed since last completion
 - `skill_ids` — IDs of linked skills (from quest_skill join table)
 - `attribute_ids` — IDs of linked attributes (from quest_attribute join table)
@@ -252,24 +253,22 @@ App configuration. Single row, seeded on first launch.
 The quest giver picks quests using a scoring system with hard filters and soft ranking.
 
 ### Candidate Pool
-1. All active quests
-2. Hard-filter: time-of-day bitmask matches current local hour (Morning 4am–noon, Afternoon noon–5pm, Evening 5pm–4am)
+1. All active quests + active saga steps (first incomplete step per active saga)
+2. Hard-filter: time-of-day bitmask matches current local hour (Morning 4am–noon, Afternoon noon–5pm, Evening 5pm–9pm, Night 9pm–4am)
 3. Hard-filter: days-of-week bitmask includes today
-4. Split into **due** and **not-due** pools; due always preferred
+4. Split into **due** and **not-due** pools; due always preferred. Saga steps are always in the due pool.
 
-### Scoring (due quests)
+### Scoring
 ```
-score = overdue_ratio - skip_penalty + list_order_bonus
+score = overdue_ratio + importance_boost + list_order_bonus - skip_penalty
 ```
-- **Overdue ratio**: `days_since_completed / cycle_days` (min 1.0). Never-completed recurring: `(days_since_created + cycle) / cycle`. One-off: `(days_since_created + 9) / 9`.
-- **Skip penalty**: `skip_count × 0.5`. Resets daily. Recorded on "Something Else" (main) and "Run" (overlay). "Hide in the Shadows" does not count.
-- **List order bonus**: `0.01 × sort_order / max_sort_order`. Top-of-list quests score slightly higher.
 
-### Scoring (not-due fallback)
-Only reached when due pool is empty or all due scores ≤ 0.
-```
-score = days_since_completed / max_days - skip_penalty + list_order_bonus
-```
+All factors apply to both due and not-due pools (not-due uses normalized days_since instead of overdue_ratio).
+
+- **Overdue ratio**: `(days_overdue + cycle) / cycle` for recurring, `(days + 9) / 9` for one-off. Saga steps use their saga's cycle_days (one-off sagas fall back to 9).
+- **Importance boost**: `importance × 30.0`. Importance (0–5) is the dominant scoring signal. Each level ≈ 30 days of daily overdue.
+- **List order bonus**: `sort_order / global_max_sort_order` (max 1.0). Uses the full quest list's max, not the candidate pool. Saga steps get 1.0 (treated as top-of-list priority).
+- **Skip penalty**: `skip_count × (0.5 + importance × 15.0)`. Scales with importance — skipping a high-importance quest has proportional teeth. Resets daily. Recorded on "Something Else" (main) and "Run" (overlay). "Hide in the Shadows" does not count.
 
 ### Behavior
 - "Something Else" / "Run": records a skip, then re-scores. The just-skipped quest is excluded from the next pick (unless it's the only quest).

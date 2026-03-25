@@ -1,116 +1,64 @@
-# Step Spec: Phase 2H.1-3b — Importance field ✅
+# Step Spec: Phase 2H.1-3c — List-order weight increase + importance-scaled skip penalty ✅
 
 ## Goal
 
-Quests and saga steps gain a persistent importance field (0–5). Importance boosts scoring by `importance × 0.4`, making important quests surface more reliably. Displayed as "!" marks in the quest list and saga step list.
+List-order bonus increases from negligible (0.01 max) to meaningful (1.0 max), using the full quest list's max sort_order. Skip penalty scales with importance so skipping high-importance quests has proportional teeth.
 
 ---
 
-## Substep 1: Backend — migration, structs, scoring
+## Substep 1: Backend — list-order weight + skip penalty
 
-**Migration:**
+**List-order weight:**
 
-```sql
-ALTER TABLE quest ADD COLUMN importance INTEGER NOT NULL DEFAULT 0;
-```
+`score_quests_due` and `score_quests_not_due` currently compute `max_sort` from their input slice (candidate pool). Change to accept a `global_max_sort: f64` parameter.
 
-Detection: check if quest table has `importance` column. Add `importance INTEGER NOT NULL DEFAULT 0` to `create_tables` quest schema.
-
-**Struct changes:**
-
-- `Quest` — add `importance: i32`
-- `NewQuest` — add `importance: i32` with `#[serde(default)]`, default 0
-- `QuestUpdate` — add `importance: Option<i32>`
-- `NewSagaStep` — add `importance: i32` with `#[serde(default)]`, default 0
-- `Default` impls — set `importance: 0`
-
-**Query changes** — add `q.importance` to the **end** of each SELECT list to avoid shifting existing column indices:
-- `get_quests` — append after `last_completed`, read as index 11
-- `get_saga_steps` — append after `last_completed` (index 12 after step_order), read as index 13
-- `query_single_quest` — append after `last_completed` (index 12 after saga_id), read as index 13
-
-**Write changes:**
-- `add_quest` — include `importance` in INSERT
-- `update_quest` — include `importance` in conditional UPDATE SET clauses
-- `add_saga_step` — include `importance` in INSERT
-
-**Scoring — due pool (`score_quests_due`):**
-
+In `get_next_quest`, before scoring:
 ```rust
-let importance_boost = q.importance as f64 * 0.4;
-let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
+let global_max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 ```
 
-Return tuple grows to include `importance_boost`. Update the tuple type throughout `get_next_quest`.
-
-**Scoring — not-due pool (`score_quests_not_due`):** Same addition.
-
-**Scoring — saga steps in `get_next_quest`:**
-
+Pass to both scoring functions. Update the formula:
 ```rust
-let importance_boost = quest.importance as f64 * 0.4;
-let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
+let list_order_bonus = q.sort_order as f64 / global_max_sort;
 ```
 
-**`ScoredQuest` struct:** Add `importance_boost: f64`. Update construction in `get_next_quest`.
+Max bonus is now 1.0 (was 0.01). Saga steps continue using a fixed 0.1.
 
-**Debug display** (frontend, quest giver): Update debug HTML to show importance component:
+**Skip penalty:**
+
+Currently `skips × 0.5`. Change to scale with importance:
+```rust
+const IMPORTANCE_WEIGHT: f64 = 30.0;
+let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
 ```
-Score: 3.60 (overdue: 2.00 | importance: +1.20 | skips: -0.60 | order: +0.01)
-```
+
+- 0! quest: 0.5 per skip (unchanged)
+- 1! quest: 15.5 per skip
+- 2! quest: 30.5 per skip
+- 5! quest: 75.5 per skip
+
+Apply in all three scoring paths: `score_quests_due`, `score_quests_not_due`, and saga step scoring in `get_next_quest`.
+
+Extract `IMPORTANCE_WEIGHT` as a constant at the top of the scoring section so both importance_boost and skip_penalty reference it.
+
+**Debug display:** Already shows `list_order_bonus` and `skip_penalty` — values will just change. No struct changes needed.
 
 **Tests:**
 
-1. `importance_boosts_score` — Create two quests with same overdue. Set one to importance 3. Call `get_next_quest`. Verify the importance-3 quest is selected and its score is higher by ~1.2 (3 × 0.4).
-2. `default_importance_is_zero` — Create a quest with defaults. Verify `importance` is 0.
-3. `update_quest_importance` — Create a quest, update importance to 4, verify it persists.
-4. `saga_step_importance` — Create a saga step with importance 2. Verify it's stored and returned correctly.
+1. `list_order_bonus_uses_global_max` — Create 3 quests (sort_order 1, 2, 3). Make only the bottom two due. Verify the list_order_bonus for sort_order 2 is `2/3 ≈ 0.67`, not `2/2 = 1.0`.
+2. `top_of_list_gets_max_bonus` — Quest at max sort_order gets list_order_bonus ≈ 1.0.
+3. `skip_penalty_scales_with_importance` — Create a quest with importance 2. Skip it once. Verify skip_penalty is `0.5 + 2 × 15.0 = 30.5`.
+4. `skip_penalty_zero_importance` — Create a 0! quest. Skip once. Verify skip_penalty is 0.5 (unchanged behavior).
 
 **Testing checkpoint:** `cargo test` — all existing + new tests pass.
 
 ---
 
-## Substep 2: Frontend — display and editing
-
-**Quest list display:** After the title in `renderQuestRow`, show importance as exclamation marks:
-
-```javascript
-const importanceDisplay = q.importance > 0
-  ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>`
-  : "";
-```
-
-Insert after the title span.
-
-**Saga step display:** Same pattern in the saga step row rendering.
-
-**CSS:** `.quest-importance { color: #a85; font-size: 10px; margin-left: 2px; }`
-
-**Quest add form:** Add importance selector — `<select>` with options:
-- 0: "—" (default)
-- 1–5: "!" through "!!!!!"
-
-**Quest edit mode:** Add importance selector (same options), populated from current value.
-
-**Saga step add form:** Same importance selector.
-
-**Saga step edit mode:** Same importance selector.
-
-**Debug scoring display:** Update the debug HTML in `renderQuestGiverWith` to include importance:
-```javascript
-Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | importance: +${result.importance_boost.toFixed(1)} | skips: -${result.skip_penalty.toFixed(1)} | order: +${result.list_order_bonus.toFixed(3)})
-```
-
-**Testing checkpoint:** Build app. Create a quest with importance 3 — see "!!!" next to title. Edit to importance 0 — marks disappear. Create saga step with importance — shows in step list. Toggle debug scoring — importance component visible.
-
----
-
 ## NOT in this step
 
-- List-order weight increase (3c)
 - Saga/campaign membership bonus (3d)
 - Attribute/skill balancing (3e)
 
 ## Done When
 
-Both substeps complete. Importance field (0–5) on quests and saga steps. Scoring includes `importance × 0.4`. Displayed as "!" marks. Editable in add/edit forms. Debug scoring shows the component. `cargo test` passes.
+List-order bonus uses global max sort_order with max 1.0. Skip penalty scales with importance (0.5 base + importance × IMPORTANCE_WEIGHT/2 per skip). `cargo test` passes.

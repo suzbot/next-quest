@@ -132,7 +132,7 @@ score = overdue_ratio - skip_penalty + list_order_bonus
 
 Where:
 - `overdue_ratio`: `(days_overdue + cycle) / cycle` for recurring, `(days + 9) / 9` for one-off
-- `skip_penalty`: `skip_count × 0.5`
+- `skip_penalty`: `skip_count × (0.5 + importance × IMPORTANCE_WEIGHT / 2)`
 - `list_order_bonus`: `0.01 × sort_order / max_sort_order` (negligible)
 
 ### New scoring formula (after all 5 changes)
@@ -213,7 +213,7 @@ Top-of-list quest gets +1.0, bottom gets ~0. This reflects the user's intended p
 
 Applies to both due and not-due pools (same global max, same weight).
 
-**Saga steps:** Continue using a fixed small bonus (0.1) since they don't participate in the quest list ordering.
+**Saga steps:** Get the full 1.0 bonus (treated as top-of-list priority — they're active work the user has committed to). This replaces the need for a separate membership bonus on saga steps in 3d.
 
 **Combined max check:** A just-due quest at top of list, importance 5:
 ```
@@ -227,11 +227,7 @@ This ties with a 3-day-overdue daily at importance 0, bottom of list. A 4+ day o
 
 ### 3d. Saga/campaign membership bonus
 
-**Change:** +0.2 for quests that are:
-- Active saga steps (quest has `saga_id` set and saga is active), OR
-- Referenced as a criterion in any active campaign (`completed_at IS NULL`)
-
-These don't stack — it's +0.2 if either condition is true.
+**Change:** +0.2 for regular quests that are referenced as a criterion in any active campaign (`completed_at IS NULL`). Saga steps do not get this bonus — they already get the full 1.0 list-order bonus as top-of-list priority.
 
 Applies to both due and not-due pools.
 
@@ -298,13 +294,17 @@ score = overdue_ratio - skip_penalty + list_order_bonus
 To:
 
 ```
-score = overdue_ratio + (importance × 30.0) + (sort_order/global_max) + membership_bonus + balance_bonus - (skips × 0.5)
+score = overdue_ratio + importance_boost + (sort_order/global_max) + membership_bonus + balance_bonus - skip_penalty
 ```
 
+Where:
+- `importance_boost = importance × IMPORTANCE_WEIGHT` (currently 30.0)
+- `skip_penalty = skips × (0.5 + importance × IMPORTANCE_WEIGHT / 2)` — base 0.5 for 0! quests, plus half the importance modifier per skip. Skipping a high-importance quest has proportional teeth.
+
 With typical ranges:
-- overdue_ratio: 1.0 – 5.0+ (primary signal)
-- importance: 0 – 2.0 (strong secondary)
+- overdue_ratio: 1.0 – 30.0+ (secondary signal)
+- importance_boost: 0 – 150.0 (dominant signal, importance × 30.0)
 - list_order: 0 – 1.0 (meaningful nudge)
 - membership: 0 or 0.2 (tiebreaker)
 - balance: 0 – ~0.3 (gentle nudge)
-- skip_penalty: 0 – 2.0+ (session escape valve)
+- skip_penalty: 0.5 – 75.5 per skip (scales with importance)
