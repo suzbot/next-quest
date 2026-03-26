@@ -194,6 +194,7 @@ pub struct ScoredQuest {
     pub importance_boost: f64,
     pub skip_penalty: f64,
     pub list_order_bonus: f64,
+    pub membership_bonus: f64,
     pub pool: String,
     pub due_count: usize,
     pub not_due_count: usize,
@@ -1848,6 +1849,20 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     let weekday = local_weekday();
     let global_max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
+    // Precompute quest IDs referenced by active campaigns
+    let campaign_quest_ids: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT cc.target_id FROM campaign_criterion cc
+             JOIN campaign c ON c.id = cc.campaign_id
+             WHERE c.completed_at IS NULL AND cc.target_type = 'quest_completions'"
+        ).map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt.query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        ids.into_iter().collect()
+    };
+
     // Hard-filter: active, time-of-day, day-of-week
     let eligible: Vec<&Quest> = quests.iter()
         .filter(|q| q.active)
@@ -1875,14 +1890,14 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     let not_due_count = not_due.len();
 
     // Score due pool (regular + saga steps)
-    // type: (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, quest, saga_name)
-    let mut scored: Vec<(f64, f64, f64, f64, f64, Quest, Option<String>)> = Vec::new();
+    // type: (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, quest, saga_name)
+    let mut scored: Vec<(f64, f64, f64, f64, f64, f64, Quest, Option<String>)> = Vec::new();
     let mut pool_name = "due";
 
     if !due.is_empty() || !eligible_saga.is_empty() {
         // Score regular due quests
-        for (score, overdue, importance, skip, order, quest) in score_quests_due(&due, today, skip_counts, global_max_sort) {
-            scored.push((score, overdue, importance, skip, order, quest, None));
+        for (score, overdue, importance, skip, order, membership, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids) {
+            scored.push((score, overdue, importance, skip, order, membership, quest, None));
         }
         // Score saga steps
         for (quest, saga_name, activated_at, saga_cycle_days) in &eligible_saga {
@@ -1894,17 +1909,18 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
             let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
             let skip_penalty = skips * (0.5 + quest.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
             let list_order_bonus = 1.0; // saga steps treated as top-of-list priority
-            let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
-            scored.push((score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, (*quest).clone(), Some(saga_name.clone())));
+            let membership_bonus = 0.0; // saga steps get priority from list_order, not membership
+            let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
+            scored.push((score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, (*quest).clone(), Some(saga_name.clone())));
         }
     }
 
     // If due pool is empty or all scores <= 0, include not-due pool
     let all_skipped = !scored.is_empty() && scored.iter().all(|s| s.0 <= 0.0);
     if scored.is_empty() || all_skipped {
-        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort);
-        for (score, overdue, importance, skip, order, quest) in not_due_scored {
-            scored.push((score, overdue, importance, skip, order, quest, None));
+        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort, &campaign_quest_ids);
+        for (score, overdue, importance, skip, order, membership, quest) in not_due_scored {
+            scored.push((score, overdue, importance, skip, order, membership, quest, None));
         }
         if due_count == 0 {
             pool_name = "not_due";
@@ -1923,13 +1939,13 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     // Skip excluded quest if possible (fall back to it if it's the only one)
     let top = if let Some(exc_id) = exclude_quest_id {
         scored.iter()
-            .find(|(_, _, _, _, _, q, _)| q.id != exc_id)
+            .find(|(_, _, _, _, _, _, q, _)| q.id != exc_id)
             .cloned()
             .unwrap_or_else(|| scored.into_iter().next().unwrap())
     } else {
         scored.into_iter().next().unwrap()
     };
-    let (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, quest, saga_name) = top;
+    let (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, quest, saga_name) = top;
 
     Ok(Some(ScoredQuest {
         quest,
@@ -1938,6 +1954,7 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
         importance_boost,
         skip_penalty,
         list_order_bonus,
+        membership_bonus,
         pool: pool_name.to_string(),
         due_count,
         not_due_count,
@@ -1945,19 +1962,20 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     }))
 }
 
-fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
+fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>) -> Vec<(f64, f64, f64, f64, f64, f64, Quest)> {
     quests.iter().map(|q| {
         let overdue_ratio = compute_overdue_ratio(q, today);
         let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
         let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
         let list_order_bonus = q.sort_order as f64 / global_max_sort;
-        let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus;
-        (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, (*q).clone())
+        let membership_bonus = if campaign_quest_ids.contains(&q.id) { 1.0 } else { 0.0 };
+        let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
+        (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, (*q).clone())
     }).collect()
 }
 
-fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64) -> Vec<(f64, f64, f64, f64, f64, Quest)> {
+fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>) -> Vec<(f64, f64, f64, f64, f64, f64, Quest)> {
     let days_since: Vec<f64> = quests.iter().map(|q| {
         match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
             Some(d) => (today - d) as f64,
@@ -1972,8 +1990,9 @@ fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collec
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
         let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
         let list_order_bonus = q.sort_order as f64 / global_max_sort;
-        let score = normalized + importance_boost - skip_penalty + list_order_bonus;
-        (score, normalized, importance_boost, skip_penalty, list_order_bonus, (*q).clone())
+        let membership_bonus = if campaign_quest_ids.contains(&q.id) { 1.0 } else { 0.0 };
+        let score = normalized + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
+        (score, normalized, importance_boost, skip_penalty, list_order_bonus, membership_bonus, (*q).clone())
     }).collect()
 }
 
@@ -5299,5 +5318,87 @@ mod tests {
         // Both quests are equal overdue, so filler (not skipped) should win
         let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
         assert_eq!(result.quest.id, _q2.id); // filler wins since q is penalized
+    }
+
+    // --- Campaign membership bonus tests ---
+
+    #[test]
+    fn campaign_membership_boosts_score() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "In Campaign");
+        let _q2 = test_quest(&conn, "Not In Campaign");
+
+        create_campaign(&conn, "Active".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 5 },
+        ]).unwrap();
+
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        // q1 should win due to +1.0 membership bonus
+        assert_eq!(result.quest.id, q1.id);
+        assert!((result.membership_bonus - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn campaign_membership_no_stacking() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Multi Campaign");
+
+        create_campaign(&conn, "Campaign A".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 5 },
+        ]).unwrap();
+        create_campaign(&conn, "Campaign B".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 3 },
+        ]).unwrap();
+
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        assert_eq!(result.quest.id, q.id);
+        // Should be 1.0, not 2.0
+        assert!((result.membership_bonus - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn completed_campaign_no_membership_bonus() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "Was In Campaign");
+        let _q2 = test_quest(&conn, "Never In Campaign");
+
+        create_campaign(&conn, "Done".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Complete the campaign
+        check_campaign_progress(&conn, "quest_completions", &q1.id).unwrap();
+
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        // q1 has higher sort_order so it still wins, but no membership bonus
+        assert_eq!(result.membership_bonus, 0.0);
+    }
+
+    #[test]
+    fn saga_step_no_membership_bonus() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Test Saga".into(), Some(1)).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        // Put the saga step in a campaign
+        create_campaign(&conn, "Saga Campaign".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: step.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        // Backdate so step is active
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        assert_eq!(result.saga_name.as_deref(), Some("Test Saga"));
+        // Saga step gets 0 membership bonus (gets 1.0 from list_order instead)
+        assert_eq!(result.membership_bonus, 0.0);
+        assert!((result.list_order_bonus - 1.0).abs() < 0.01);
     }
 }

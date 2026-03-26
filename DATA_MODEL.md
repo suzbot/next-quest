@@ -260,7 +260,7 @@ The quest giver picks quests using a scoring system with hard filters and soft r
 
 ### Scoring
 ```
-score = overdue_ratio + importance_boost + list_order_bonus - skip_penalty
+score = overdue_ratio + importance_boost + list_order_bonus + membership_bonus - skip_penalty
 ```
 
 All factors apply to both due and not-due pools (not-due uses normalized days_since instead of overdue_ratio).
@@ -268,6 +268,7 @@ All factors apply to both due and not-due pools (not-due uses normalized days_si
 - **Overdue ratio**: `(days_overdue + cycle) / cycle` for recurring, `(days + 9) / 9` for one-off. Saga steps use their saga's cycle_days (one-off sagas fall back to 9).
 - **Importance boost**: `importance × 30.0`. Importance (0–5) is the dominant scoring signal. Each level ≈ 30 days of daily overdue.
 - **List order bonus**: `sort_order / global_max_sort_order` (max 1.0). Uses the full quest list's max, not the candidate pool. Saga steps get 1.0 (treated as top-of-list priority).
+- **Membership bonus**: +1.0 for regular quests referenced as a criterion in any active campaign. Boolean — does not stack across multiple campaigns. Saga steps do not get this bonus (they already have 1.0 from list-order).
 - **Skip penalty**: `skip_count × (0.5 + importance × 15.0)`. Scales with importance — skipping a high-importance quest has proportional teeth. Resets daily. Recorded on "Something Else" (main) and "Run" (overlay). "Hide in the Shadows" does not count.
 
 ### Behavior

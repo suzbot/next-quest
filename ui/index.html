@@ -1827,7 +1827,7 @@
       const quest = result.quest;
       const debugHtml = debugScoring ? `
         <div class="qg-debug">
-          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | importance: +${result.importance_boost.toFixed(1)} | skips: -${result.skip_penalty.toFixed(1)} | order: +${result.list_order_bonus.toFixed(3)})
+          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | importance: +${result.importance_boost.toFixed(1)} | order: +${result.list_order_bonus.toFixed(2)} | member: +${result.membership_bonus.toFixed(1)} | skips: -${result.skip_penalty.toFixed(1)})
           <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
         </div>` : "";
 

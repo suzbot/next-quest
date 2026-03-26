@@ -227,16 +227,17 @@ This ties with a 3-day-overdue daily at importance 0, bottom of list. A 4+ day o
 
 ### 3d. Saga/campaign membership bonus
 
-**Change:** +0.2 for regular quests that are referenced as a criterion in any active campaign (`completed_at IS NULL`). Saga steps do not get this bonus — they already get the full 1.0 list-order bonus as top-of-list priority.
+**Change:** +1.0 for regular quests that are referenced as a criterion in any active campaign (`completed_at IS NULL`). Boolean — does not stack across multiple campaigns. Saga steps do not get this bonus — they already get the full 1.0 list-order bonus as top-of-list priority.
 
 Applies to both due and not-due pools.
 
 For regular quests (not saga steps), the campaign check requires a query. To avoid N+1 queries, precompute the set of quest IDs referenced by active campaigns (`target_type = 'quest_completions'`, `completed_at IS NULL`) before scoring.
 
 **Tests:**
-1. Quest in active campaign scores 0.2 higher than equivalent quest not in any campaign
-2. Saga step already gets the bonus (it's always an active saga step)
-3. Quest in completed campaign does not get the bonus
+1. Quest in active campaign scores 1.0 higher than equivalent quest not in any campaign
+2. Quest in multiple active campaigns still gets only 1.0 (no stacking)
+3. Saga step does not get campaign bonus (already has 1.0 list-order)
+4. Quest in completed campaign does not get the bonus
 
 ### 3e. Attribute/skill balancing
 
@@ -305,6 +306,6 @@ With typical ranges:
 - overdue_ratio: 1.0 – 30.0+ (secondary signal)
 - importance_boost: 0 – 150.0 (dominant signal, importance × 30.0)
 - list_order: 0 – 1.0 (meaningful nudge)
-- membership: 0 or 0.2 (tiebreaker)
+- membership: 0 or 1.0 (campaign quest tiebreaker, boolean)
 - balance: 0 – ~0.3 (gentle nudge)
 - skip_penalty: 0.5 – 75.5 per skip (scales with importance)
