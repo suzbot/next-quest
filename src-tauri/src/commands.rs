@@ -370,6 +370,7 @@ pub fn reset_completions(state: State<DbState>) -> Result<(), String> {
 pub fn get_quest_scores(
     state: State<DbState>,
     skip_state: State<AppSkipState>,
+    lane: db::Lane,
 ) -> Result<Vec<db::ScoredQuest>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
@@ -378,7 +379,7 @@ pub fn get_quest_scores(
         skips.skip_counts.clear();
         skips.reset_date = today;
     }
-    db::get_quest_scores(&conn, &skips.skip_counts)
+    db::get_quest_scores(&conn, &skips.skip_counts, &lane)
 }
 
 #[tauri::command]
@@ -386,6 +387,7 @@ pub fn get_next_quest(
     state: State<DbState>,
     skip_state: State<AppSkipState>,
     exclude_quest_id: Option<String>,
+    lane: db::Lane,
 ) -> Result<Option<db::ScoredQuest>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
@@ -395,7 +397,7 @@ pub fn get_next_quest(
         skips.skip_counts.clear();
         skips.reset_date = today;
     }
-    db::get_next_quest(&conn, &skips.skip_counts, exclude_quest_id.as_deref())
+    db::get_next_quest(&conn, &skips.skip_counts, exclude_quest_id.as_deref(), &lane)
 }
 
 #[tauri::command]

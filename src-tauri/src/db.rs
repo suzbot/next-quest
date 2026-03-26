@@ -59,6 +59,42 @@ impl Difficulty {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Lane {
+    CastleDuties,
+    Adventures,
+    RoyalQuests,
+}
+
+impl Lane {
+    fn includes_difficulty(&self, d: &Difficulty) -> bool {
+        match self {
+            Lane::CastleDuties => matches!(d, Difficulty::Trivial),
+            Lane::Adventures => matches!(d, Difficulty::Easy | Difficulty::Moderate),
+            Lane::RoyalQuests => matches!(d, Difficulty::Challenging | Difficulty::Epic),
+        }
+    }
+}
+
+fn difficulty_rank(d: &Difficulty) -> u8 {
+    match d {
+        Difficulty::Trivial => 1,
+        Difficulty::Easy => 2,
+        Difficulty::Moderate => 3,
+        Difficulty::Challenging => 4,
+        Difficulty::Epic => 5,
+    }
+}
+
+fn lane_for_difficulty_rank(rank: u8) -> Lane {
+    match rank {
+        4 | 5 => Lane::RoyalQuests,
+        2 | 3 => Lane::Adventures,
+        _ => Lane::CastleDuties,
+    }
+}
+
 pub enum LevelScale {
     Character,
     Attribute,
@@ -1321,8 +1357,8 @@ pub fn get_sagas_with_progress(conn: &Connection) -> Result<Vec<SagaWithProgress
 }
 
 /// Returns one active step per saga (the first due step), along with saga name and activation time.
-pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, String, Option<i32>)>, String> {
-    // (quest, saga_name, activated_at ISO timestamp, saga_cycle_days)
+pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, String, Option<i32>, Lane)>, String> {
+    // (quest, saga_name, activated_at ISO timestamp, saga_cycle_days, saga_lane)
     let sagas = get_sagas(conn)?;
     let mut results = Vec::new();
 
@@ -1331,6 +1367,10 @@ pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, St
 
         let steps = get_saga_steps(conn, &saga.id)?;
         if steps.is_empty() { continue; }
+
+        // Infer saga lane from hardest step
+        let max_rank = steps.iter().map(|s| difficulty_rank(&s.difficulty)).max().unwrap_or(1);
+        let saga_lane = lane_for_difficulty_rank(max_rank);
 
         // Compute current run start
         let run_start_str = saga.last_run_completed_at.as_deref()
@@ -1346,7 +1386,7 @@ pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, St
 
             if !completed_this_run {
                 // This is the active step
-                results.push((step.clone(), saga.name.clone(), prev_completed_at.clone(), saga.cycle_days));
+                results.push((step.clone(), saga.name.clone(), prev_completed_at.clone(), saga.cycle_days, saga_lane.clone()));
                 break;
             }
 
@@ -1843,7 +1883,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
 
 const IMPORTANCE_WEIGHT: f64 = 30.0;
 
-pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>) -> Result<Vec<ScoredQuest>, String> {
+pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, lane: &Lane) -> Result<Vec<ScoredQuest>, String> {
     let quests = get_quests(conn)?;
     let today = local_today_days();
     let hour = local_hour();
@@ -1876,18 +1916,20 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
         ids.into_iter().collect()
     };
 
-    // Hard-filter: active, time-of-day, day-of-week
+    // Hard-filter: active, time-of-day, day-of-week, lane difficulty
     let eligible: Vec<&Quest> = quests.iter()
         .filter(|q| q.active)
+        .filter(|q| lane.includes_difficulty(&q.difficulty))
         .filter(|q| matches_time_of_day(q.time_of_day, hour))
         .filter(|q| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
-    // Get active saga steps and apply same hard filters
+    // Get active saga steps and apply same hard filters + lane filter
     let saga_steps = get_active_saga_steps(conn).unwrap_or_default();
-    let eligible_saga: Vec<&(Quest, String, String, Option<i32>)> = saga_steps.iter()
-        .filter(|(q, _, _, _)| matches_time_of_day(q.time_of_day, hour))
-        .filter(|(q, _, _, _)| matches_day_of_week(q.days_of_week, weekday))
+    let eligible_saga: Vec<&(Quest, String, String, Option<i32>, Lane)> = saga_steps.iter()
+        .filter(|(_, _, _, _, saga_lane)| saga_lane == lane)
+        .filter(|(q, _, _, _, _)| matches_time_of_day(q.time_of_day, hour))
+        .filter(|(q, _, _, _, _)| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
     let due: Vec<&Quest> = eligible.iter().filter(|q| q.is_due).copied().collect();
@@ -1903,7 +1945,7 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
         for (score, overdue, importance, skip, order, membership, balance, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map) {
             results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, pool: "due".to_string(), due_count, not_due_count, saga_name: None });
         }
-        for (quest, saga_name, activated_at, saga_cycle_days) in &eligible_saga {
+        for (quest, saga_name, activated_at, saga_cycle_days, _saga_lane) in &eligible_saga {
             let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
             let days_since = (today - activated_days) as f64;
             let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
@@ -1931,8 +1973,8 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
     Ok(results)
 }
 
-pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, exclude_quest_id: Option<&str>) -> Result<Option<ScoredQuest>, String> {
-    let scored = get_quest_scores(conn, skip_counts)?;
+pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, exclude_quest_id: Option<&str>, lane: &Lane) -> Result<Option<ScoredQuest>, String> {
+    let scored = get_quest_scores(conn, skip_counts, lane)?;
     if scored.is_empty() {
         return Ok(None);
     }
@@ -4220,7 +4262,7 @@ mod tests {
         test_quest(&conn, "First");
         test_quest(&conn, "Second");
 
-        let next = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let next = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         // Both never-completed daily quests created at same time — scores should be equal,
         // so list_order_bonus breaks tie (higher sort_order = lower bonus = sorted later)
         assert!(next.score > 0.0);
@@ -4234,26 +4276,26 @@ mod tests {
         test_quest(&conn, "Second");
 
         let empty = std::collections::HashMap::new();
-        let q0 = get_next_quest(&conn, &empty, None).unwrap().unwrap();
+        let q0 = get_next_quest(&conn, &empty, None, &Lane::Adventures).unwrap().unwrap();
         let top_id = q0.quest.id.clone();
 
         // Skip the top quest — the other one should surface
         let mut skips = std::collections::HashMap::new();
         skips.insert(top_id.clone(), 10); // heavy skip
-        let q1 = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        let q1 = get_next_quest(&conn, &skips, None, &Lane::Adventures).unwrap().unwrap();
         assert_ne!(q1.quest.id, top_id);
 
         // Skip both heavily — exhaustion fallback returns the least-negative
         let other_id = q1.quest.id.clone();
         skips.insert(other_id.clone(), 10);
-        let q2 = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        let q2 = get_next_quest(&conn, &skips, None, &Lane::Adventures).unwrap().unwrap();
         assert!(q2.score <= 0.0); // both heavily penalized
     }
 
     #[test]
     fn get_next_quest_empty_db() {
         let conn = test_db();
-        assert!(get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().is_none());
+        assert!(get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().is_none());
     }
 
     #[test]
@@ -4264,7 +4306,7 @@ mod tests {
         complete_quest(&conn, q.id.clone()).unwrap();
 
         // Not due, but should fall back to not_due pool
-        let next = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap();
+        let next = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap();
         assert!(next.is_some());
         let scored = next.unwrap();
         assert_eq!(scored.quest.id, q.id);
@@ -4279,7 +4321,7 @@ mod tests {
         test_quest_with(&conn, "Weekly", |q| q.cycle_days = Some(7));
         test_quest(&conn, "Daily");
 
-        let top = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let top = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         // Daily quest has higher overdue ratio ((0+1)/1=1.0 vs (0+7)/7=1.0... actually equal for new quests)
         // Both are due, both have same overdue ratio for never-completed. list_order_bonus breaks tie.
         assert!(top.score > 0.0);
@@ -5161,7 +5203,7 @@ mod tests {
             rusqlite::params![s.id],
         ).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.saga_name.as_deref(), Some("Daily Saga"));
         // (days + 1) / 1 — days_since is large, so ratio should be >> 2.0
         assert!(result.overdue_ratio > 2.0);
@@ -5182,7 +5224,7 @@ mod tests {
             rusqlite::params![s.id],
         ).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.saga_name.as_deref(), Some("Weekly Saga"));
         // (days + 7) / 7 — with many days since 2020, ratio is large but scaled by 7
         // Key: the ratio should be smaller than daily (scaled by 7 not 1)
@@ -5206,7 +5248,7 @@ mod tests {
             rusqlite::params![s.id],
         ).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.saga_name.as_deref(), Some("One-off Saga"));
         // (days + 9) / 9 — one-off uses 9-day base
         assert!(result.overdue_ratio > 1.0);
@@ -5220,7 +5262,7 @@ mod tests {
         let q1 = test_quest_with(&conn, "Important", |q| q.importance = 3);
         let _q2 = test_quest(&conn, "Normal");
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         // Both are daily, never completed, same overdue. Importance 3 = +1.2 boost.
         assert_eq!(result.quest.id, q1.id);
         // importance 3 × 30.0 = 90.0
@@ -5274,7 +5316,7 @@ mod tests {
         // Complete q1 so only q2 and q3 are due
         complete_quest(&conn, q1.id.clone()).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         // q3 should win (highest sort_order). Its bonus should be 3/3 = 1.0
         assert_eq!(result.quest.id, q3.id);
         assert!((result.list_order_bonus - 1.0).abs() < 0.01);
@@ -5284,7 +5326,7 @@ mod tests {
     fn top_of_list_gets_max_bonus() {
         let conn = test_db();
         let q = test_quest(&conn, "Only Quest");
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.quest.id, q.id);
         // Only quest: sort_order/max = 1/1 = 1.0
         assert!((result.list_order_bonus - 1.0).abs() < 0.01);
@@ -5299,7 +5341,7 @@ mod tests {
         let mut skips = std::collections::HashMap::new();
         skips.insert(q.id.clone(), 1);
 
-        let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &skips, None, &Lane::Adventures).unwrap().unwrap();
         // Important quest still wins despite skip (importance 60/2 = 30 >> filler's ~2)
         assert_eq!(result.quest.id, q.id);
         // importance_boost = 2 × 30 / (1 + 1) = 30.0 (halved)
@@ -5320,7 +5362,7 @@ mod tests {
         // Get result — q might or might not be the winner, but we can check its penalty
         // With 0 importance: penalty = 1 × (0.5 + 0) = 0.5
         // Both quests are equal overdue, so filler (not skipped) should win
-        let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &skips, None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.quest.id, _q2.id); // filler wins since q is penalized
     }
 
@@ -5333,7 +5375,7 @@ mod tests {
         let mut skips = std::collections::HashMap::new();
         skips.insert(q.id.clone(), 3);
 
-        let scores = get_quest_scores(&conn, &skips).unwrap();
+        let scores = get_quest_scores(&conn, &skips, &Lane::Adventures).unwrap();
         let score = scores.iter().find(|s| s.quest.id == q.id).unwrap();
 
         // importance_boost = 5 × 30 / (1 + 3) = 37.5
@@ -5356,7 +5398,7 @@ mod tests {
             NewCriterion { target_type: "quest_completions".into(), target_id: q1.id.clone(), target_count: 5 },
         ]).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         // q1 should win due to +1.0 membership bonus
         assert_eq!(result.quest.id, q1.id);
         assert!((result.membership_bonus - 1.0).abs() < 0.01);
@@ -5374,7 +5416,7 @@ mod tests {
             NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 3 },
         ]).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.quest.id, q.id);
         // Should be 1.0, not 2.0
         assert!((result.membership_bonus - 1.0).abs() < 0.01);
@@ -5393,7 +5435,7 @@ mod tests {
         // Complete the campaign
         check_campaign_progress(&conn, "quest_completions", &q1.id).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         // q1 has higher sort_order so it still wins, but no membership bonus
         assert_eq!(result.membership_bonus, 0.0);
     }
@@ -5419,7 +5461,7 @@ mod tests {
             rusqlite::params![s.id],
         ).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None).unwrap().unwrap();
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
         assert_eq!(result.saga_name.as_deref(), Some("Test Saga"));
         // Saga step gets 0 membership bonus (gets 1.0 from list_order instead)
         assert_eq!(result.membership_bonus, 0.0);
@@ -5445,7 +5487,7 @@ mod tests {
         set_quest_links(&conn, q_high.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
         set_quest_links(&conn, q_low.id.clone(), vec![skills[1].id.clone()], vec![]).unwrap();
 
-        let scores = get_quest_scores(&conn, &std::collections::HashMap::new()).unwrap();
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
         let high_score = scores.iter().find(|s| s.quest.id == q_high.id).unwrap();
         let low_score = scores.iter().find(|s| s.quest.id == q_low.id).unwrap();
 
@@ -5460,7 +5502,7 @@ mod tests {
         let q = test_quest(&conn, "No Links");
         // Don't set any links
 
-        let scores = get_quest_scores(&conn, &std::collections::HashMap::new()).unwrap();
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
         let score = scores.iter().find(|s| s.quest.id == q.id).unwrap();
         assert_eq!(score.balance_bonus, 0.0);
     }
@@ -5479,9 +5521,107 @@ mod tests {
         let q = test_quest(&conn, "Over Leveled");
         set_quest_links(&conn, q.id.clone(), vec![], vec![attrs[0].id.clone()]).unwrap();
 
-        let scores = get_quest_scores(&conn, &std::collections::HashMap::new()).unwrap();
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
         let score = scores.iter().find(|s| s.quest.id == q.id).unwrap();
         // Overleveled = above average, so no balance bonus
         assert_eq!(score.balance_bonus, 0.0);
+    }
+
+    // --- Lane filter tests ---
+
+    #[test]
+    fn lane_filter_trivial_only() {
+        let conn = test_db();
+        test_quest_with(&conn, "Trivial Quest", |q| q.difficulty = Difficulty::Trivial);
+        test_quest(&conn, "Easy Quest"); // default = easy
+        test_quest_with(&conn, "Epic Quest", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].quest.title, "Trivial Quest");
+    }
+
+    #[test]
+    fn lane_filter_adventures() {
+        let conn = test_db();
+        test_quest_with(&conn, "Trivial", |q| q.difficulty = Difficulty::Trivial);
+        test_quest(&conn, "Easy"); // default = easy
+        test_quest_with(&conn, "Moderate", |q| q.difficulty = Difficulty::Moderate);
+        test_quest_with(&conn, "Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
+        assert!(titles.contains(&"Easy"));
+        assert!(titles.contains(&"Moderate"));
+        assert!(!titles.contains(&"Trivial"));
+        assert!(!titles.contains(&"Epic"));
+    }
+
+    #[test]
+    fn lane_filter_royal() {
+        let conn = test_db();
+        test_quest(&conn, "Easy"); // default = easy
+        test_quest_with(&conn, "Hard", |q| { q.difficulty = Difficulty::Challenging; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+        let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
+        assert!(titles.contains(&"Hard"));
+        assert!(titles.contains(&"Epic"));
+        assert!(!titles.contains(&"Easy"));
+    }
+
+    #[test]
+    fn saga_lane_inference_from_hardest_step() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Tax Saga".into(), None).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Easy step".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Epic step".into(),
+            difficulty: Difficulty::Epic,
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        // Saga has epic step → RoyalQuests lane
+        let royal = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+        assert!(royal.iter().any(|s| s.saga_name.is_some()));
+
+        // Should NOT appear in Adventures
+        let adventures = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        assert!(!adventures.iter().any(|s| s.saga_name.is_some()));
+    }
+
+    #[test]
+    fn saga_with_only_easy_steps_in_adventures() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Chore Saga".into(), Some(4)).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 1".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        // All easy steps → Adventures lane
+        let adventures = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        assert!(adventures.iter().any(|s| s.saga_name.is_some()));
+
+        // Should NOT appear in CastleDuties
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+        assert!(!castle.iter().any(|s| s.saga_name.is_some()));
     }
 }

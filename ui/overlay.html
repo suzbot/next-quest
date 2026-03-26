@@ -269,7 +269,7 @@
     async function loadQuest() {
       // Exclude the quest currently offered by the quest giver
       const offeredId = await invoke("get_offered_quest");
-      currentResult = await invoke("get_next_quest", { excludeQuestId: offeredId });
+      currentResult = await invoke("get_next_quest", { excludeQuestId: offeredId, lane: "castle_duties" });
       currentMonster = randomFromExcluding(monsterImages, currentMonster);
       currentEncounter = randomFromExcluding(encounterLines, currentEncounter);
       render();
@@ -375,9 +375,9 @@
       if (currentResult) {
         const questId = currentResult.quest.id;
         await invoke("skip_quest", { questId });
-        currentResult = await invoke("get_next_quest", { excludeQuestId: questId });
+        currentResult = await invoke("get_next_quest", { excludeQuestId: questId, lane: "castle_duties" });
       } else {
-        currentResult = await invoke("get_next_quest", {});
+        currentResult = await invoke("get_next_quest", { lane: "castle_duties" });
       }
       currentMonster = randomFromExcluding(monsterImages, currentMonster);
       currentEncounter = randomFromExcluding(encounterLines, currentEncounter);

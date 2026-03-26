@@ -184,7 +184,7 @@ fn cta_poll_loop(app: tauri::AppHandle) {
         let has_quest = {
             let db_state = app.state::<DbState>();
             let conn = db_state.0.lock().unwrap();
-            db::get_next_quest(&conn, &std::collections::HashMap::new(), None)
+            db::get_next_quest(&conn, &std::collections::HashMap::new(), None, &db::Lane::CastleDuties)
                 .map(|q| q.is_some())
                 .unwrap_or(false)
         };

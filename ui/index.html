@@ -503,6 +503,7 @@
     }
 
     #qg-content { }
+    .qg-lane-header { font-size: 12px; font-weight: 700; color: #444; padding: 4px 8px; border-bottom: 1px solid #999; }
 
     /* Split layout */
     .qg-split {
@@ -721,6 +722,7 @@
 
   <div class="content-box">
   <div id="quest-giver-view">
+    <div class="qg-lane-header">Castle Duties</div>
     <div id="qg-content"></div>
   </div>
 
@@ -1256,7 +1258,7 @@
       }
       // Load quest scores for debug display
       if (debugScoring) {
-        const scores = await invoke("get_quest_scores");
+        const scores = await invoke("get_quest_scores", { lane: "castle_duties" });
         questScoreMap = {};
         scores.forEach(s => { questScoreMap[s.quest.id] = s; });
       } else {
@@ -1838,7 +1840,7 @@
       }
 
       // Selection mode — ask backend for the next quest
-      const result = await invoke("get_next_quest", {});
+      const result = await invoke("get_next_quest", { lane: "castle_duties" });
       await renderQuestGiverWith(result);
     }
 
@@ -1863,8 +1865,8 @@
           <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
         </div>` : "";
 
-      if (!currentQGImage) currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
-      currentQGLine = randomFromExcluding(questGiverLines, currentQGLine);
+      if (!currentQGImage) currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
+      currentQGLine = randomFromExcluding(lane1Lines, currentQGLine);
       qgContent.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
@@ -1960,13 +1962,13 @@
           qgContent.classList.add("qg-content-fading");
           setTimeout(() => {
             qgContent.classList.remove("qg-content-fading");
-            currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
+            currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
             loadAll();
           }, 400);
         }, 3000);
       } else {
 
-        currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
+        currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
         renderQuestGiver();
       }
     }
@@ -2041,7 +2043,7 @@
         qgContent.classList.add("qg-content-fading");
         setTimeout(() => {
           qgContent.classList.remove("qg-content-fading");
-          currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
+          currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
           loadAll();
         }, 400);
       }, 3000);
@@ -2093,7 +2095,7 @@
         qgContent.classList.add("qg-content-fading");
         setTimeout(() => {
           qgContent.classList.remove("qg-content-fading");
-          currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
+          currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
           loadAll();
         }, 400);
       }, 2500);
@@ -2101,9 +2103,9 @@
 
     async function qgSomethingElse(questId) {
       await invoke("skip_quest", { questId });
-      currentQGImage = randomFromExcluding(questGiverImages, currentQGImage);
+      currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
       // Pass exclude so the just-skipped quest doesn't immediately reappear
-      const result = await invoke("get_next_quest", { excludeQuestId: questId });
+      const result = await invoke("get_next_quest", { excludeQuestId: questId, lane: "castle_duties" });
       await renderQuestGiverWith(result);
     }
 

@@ -1,83 +1,96 @@
-# Step Spec: Phase 3-1 — Asset structure for lane images and text
+# Step Spec: Phase 3-2 — Lane 1 replaces current quest giver ✅
 
 ## Goal
 
-Create the directory structure for lane-specific quest giver images and flavor text. Move existing quest giver images to lane1. Update build.rs to generate the manifest with lane entries. User can start adding images and text in parallel with code work.
+The quest giver filters to trivial quests only (Lane 1 / Castle Duties). Backend gains a lane enum and difficulty filter. Saga steps appear in whichever lane matches their saga's hardest step. The quest giver uses lane1 image and text pools.
 
 ---
 
-## Substep 1: Directory structure and text files
+## Substep 1: Backend — lane enum, difficulty filter, saga lane inference
 
-Create directories:
-```
-ui/images/lane1/
-ui/images/lane2/
-ui/images/lane3/
-ui/text/lane1/
-ui/text/lane2/
-ui/text/lane3/
-```
-
-Move all files from `ui/images/quest-givers/` to `ui/images/lane1/`.
-
-Create placeholder flavor text files:
-- `ui/text/lane1/quest-giver-lines.txt` — copy content from existing `ui/text/quest-giver-lines.txt`
-- `ui/text/lane2/quest-giver-lines.txt` — single placeholder line (e.g., "A task awaits beyond the walls...")
-- `ui/text/lane3/quest-giver-lines.txt` — single placeholder line (e.g., "The realm has need of you...")
-
-Keep existing `ui/text/quest-giver-lines.txt` and `ui/images/quest-givers/` for now (removed in a later step when the frontend switches over).
-
----
-
-## Substep 2: Update build.rs manifest
-
-Add three new categories to the manifest scan:
+**Lane enum** (`db.rs`):
 
 ```rust
-("lane1", "lane1"),
-("lane2", "lane2"),
-("lane3", "lane3"),
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum Lane {
+    CastleDuties,
+    Adventures,
+    RoyalQuests,
+}
 ```
 
-Keep existing `("quest-givers", "quest-givers")` entry for now so current frontend still works.
+With a method:
+```rust
+fn includes_difficulty(&self, d: &Difficulty) -> bool {
+    match self {
+        Lane::CastleDuties => matches!(d, Difficulty::Trivial),
+        Lane::Adventures => matches!(d, Difficulty::Easy | Difficulty::Moderate),
+        Lane::RoyalQuests => matches!(d, Difficulty::Challenging | Difficulty::Epic),
+    }
+}
+```
 
-The manifest.json will now include `lane1`, `lane2`, `lane3` keys alongside the existing `quest-givers` key.
+**Difficulty ranking helper** for saga inference:
+
+```rust
+fn difficulty_rank(d: &Difficulty) -> u8 {
+    match d { Trivial => 1, Easy => 2, Moderate => 3, Challenging => 4, Epic => 5 }
+}
+
+fn lane_for_difficulty_rank(rank: u8) -> Lane {
+    match rank {
+        4 | 5 => Lane::RoyalQuests,
+        2 | 3 => Lane::Adventures,
+        _ => Lane::CastleDuties,
+    }
+}
+```
+
+**Saga lane inference:** `get_active_saga_steps` already loads all steps per saga. Compute the max difficulty rank across all steps and include the inferred `Lane` in the returned tuple. New return type: `Vec<(Quest, String, String, Option<i32>, Lane)>`.
+
+**Filter in `get_quest_scores`:** Add `lane: &Lane` parameter.
+
+- Regular quests: add `lane.includes_difficulty(&q.difficulty)` to the hard filter alongside TOD/DOW
+- Saga steps: filter by `saga_lane == *lane`
+
+**Commands:** `get_quest_scores` and `get_next_quest` gain a `lane: String` parameter (deserialized as Lane).
+
+**Tests:**
+
+1. `lane_filter_trivial_only` — Create quests at trivial, easy, and epic. Call `get_quest_scores` with CastleDuties. Verify only trivial returned.
+2. `lane_filter_adventures` — Same setup. Adventures lane returns only easy/moderate.
+3. `lane_filter_royal` — Royal lane returns only challenging/epic.
+4. `saga_lane_inference_from_hardest_step` — Create saga with trivial and epic steps. Verify the saga step only appears in RoyalQuests lane (not CastleDuties).
+5. `saga_with_only_easy_steps_in_adventures` — Saga with all easy steps. Verify appears in Adventures lane.
+
+**Testing checkpoint:** `cargo test` passes.
 
 ---
 
-## Substep 3: Update frontend loadPools to load lane assets
+## Substep 2: Frontend — quest giver uses Lane 1
 
-Add lane-specific image and text arrays:
+**`renderQuestGiver`** now calls `get_next_quest` with `lane: "castle_duties"`.
 
-```javascript
-let lane1Images = [];
-let lane2Images = [];
-let lane3Images = [];
-let lane1Lines = [];
-let lane2Lines = [];
-let lane3Lines = [];
-```
+**`renderQuestGiverWith`** uses `lane1Images` and `lane1Lines` instead of `questGiverImages` and `questGiverLines`.
 
-In `loadPools`, fetch the three lane text files and read the three lane image arrays from the manifest:
+**`qgDone`**, **`qgQuestNow`**, **`qgSomethingElse`** pass `lane: "castle_duties"` on their `get_next_quest` calls.
 
-```javascript
-lane1Images = manifestText["lane1"] || [];
-lane2Images = manifestText["lane2"] || [];
-lane3Images = manifestText["lane3"] || [];
-```
+**`set_offered_quest`** still works as-is for now (fixed in step 4).
 
-Keep existing `questGiverImages` loading so current quest giver still works until step 2 switches it.
+**`get_quest_scores` call** (for debug) passes `lane: "castle_duties"`. The quest list debug view should show scores for all lanes — but for now just showing Lane 1 scores is acceptable (full multi-lane debug comes in step 3).
 
-**Testing checkpoint:** Build app. Current quest giver works unchanged. No visual difference. Console shows lane arrays loading (verify via debug if needed).
+**Lane header:** Add "Castle Duties" header text above the quest giver content.
+
+**Testing checkpoint:** Build app. Quest giver only shows trivial quests. Easy/hard quests don't appear. Images come from lane1 folder. Flavor text comes from lane1 file. Done/Quest Now/Something Else still work. Timer still works.
 
 ---
 
 ## NOT in this step
 
-- Lane filtering in scoring (step 2)
-- Three-lane quest giver UI (step 3)
-- Skip/overlay fixes (step 4)
+- Lane 2 and Lane 3 UI (step 3)
+- Skip exclusion fix (step 4)
 
 ## Done When
 
-Lane directories exist. Existing quest giver images copied to lane1. Build.rs generates manifest with lane1/lane2/lane3 keys. Frontend loads lane-specific pools at startup. Current quest giver still works unchanged. Build succeeds.
+Quest giver filters to trivial only. Saga steps appear in correct lane. Lane1 images and text used. All existing functionality (Done, Quest Now, Something Else, timer) works within the filtered pool. `cargo test` passes.
