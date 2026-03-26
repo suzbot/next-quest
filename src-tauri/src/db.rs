@@ -195,6 +195,7 @@ pub struct ScoredQuest {
     pub skip_penalty: f64,
     pub list_order_bonus: f64,
     pub membership_bonus: f64,
+    pub balance_bonus: f64,
     pub pool: String,
     pub due_count: usize,
     pub not_due_count: usize,
@@ -1849,6 +1850,18 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
     let weekday = local_weekday();
     let global_max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
 
+    // Load attribute/skill levels for balance bonus
+    let attributes = get_attributes(conn)?;
+    let skills = get_skills(conn)?;
+    let avg_attr_level = if attributes.is_empty() { 0.0 } else {
+        attributes.iter().map(|a| a.level as f64).sum::<f64>() / attributes.len() as f64
+    };
+    let avg_skill_level = if skills.is_empty() { 0.0 } else {
+        skills.iter().map(|s| s.level as f64).sum::<f64>() / skills.len() as f64
+    };
+    let attr_level_map: std::collections::HashMap<String, i32> = attributes.iter().map(|a| (a.id.clone(), a.level)).collect();
+    let skill_level_map: std::collections::HashMap<String, i32> = skills.iter().map(|s| (s.id.clone(), s.level)).collect();
+
     // Precompute quest IDs referenced by active campaigns
     let campaign_quest_ids: std::collections::HashSet<String> = {
         let mut stmt = conn.prepare(
@@ -1887,30 +1900,30 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
     let mut results: Vec<ScoredQuest> = Vec::new();
 
     if !due.is_empty() || !eligible_saga.is_empty() {
-        for (score, overdue, importance, skip, order, membership, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids) {
-            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, pool: "due".to_string(), due_count, not_due_count, saga_name: None });
+        for (score, overdue, importance, skip, order, membership, balance, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map) {
+            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, pool: "due".to_string(), due_count, not_due_count, saga_name: None });
         }
         for (quest, saga_name, activated_at, saga_cycle_days) in &eligible_saga {
             let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
             let days_since = (today - activated_days) as f64;
             let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
             let overdue_ratio = (days_since + saga_cycle) / saga_cycle;
-            let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT;
             let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
-            let skip_penalty = skips * (0.5 + quest.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
+            let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
+            let skip_penalty = skips * 0.5;
             let list_order_bonus = 1.0;
             let membership_bonus = 0.0;
             let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
-            results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, pool: "due".to_string(), due_count, not_due_count, saga_name: Some(saga_name.clone()) });
+            results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus: 0.0, pool: "due".to_string(), due_count, not_due_count, saga_name: Some(saga_name.clone()) });
         }
     }
 
     let all_skipped = !results.is_empty() && results.iter().all(|s| s.score <= 0.0);
     if results.is_empty() || all_skipped {
-        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort, &campaign_quest_ids);
+        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map);
         let pool = if due_count == 0 { "not_due" } else { "due+not_due" };
-        for (score, overdue, importance, skip, order, membership, quest) in not_due_scored {
-            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, pool: pool.to_string(), due_count, not_due_count, saga_name: None });
+        for (score, overdue, importance, skip, order, membership, balance, quest) in not_due_scored {
+            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, pool: pool.to_string(), due_count, not_due_count, saga_name: None });
         }
     }
 
@@ -1936,20 +1949,21 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
     Ok(Some(top))
 }
 
-fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>) -> Vec<(f64, f64, f64, f64, f64, f64, Quest)> {
+fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>, avg_attr_level: f64, avg_skill_level: f64, attr_level_map: &std::collections::HashMap<String, i32>, skill_level_map: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, f64, f64, Quest)> {
     quests.iter().map(|q| {
         let overdue_ratio = compute_overdue_ratio(q, today);
-        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
-        let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
+        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
+        let skip_penalty = skips * 0.5;
         let list_order_bonus = q.sort_order as f64 / global_max_sort;
         let membership_bonus = if campaign_quest_ids.contains(&q.id) { 1.0 } else { 0.0 };
-        let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
-        (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, (*q).clone())
+        let balance_bonus = compute_balance_bonus(q, avg_attr_level, avg_skill_level, attr_level_map, skill_level_map);
+        let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus + balance_bonus;
+        (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus, (*q).clone())
     }).collect()
 }
 
-fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>) -> Vec<(f64, f64, f64, f64, f64, f64, Quest)> {
+fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>, avg_attr_level: f64, avg_skill_level: f64, attr_level_map: &std::collections::HashMap<String, i32>, skill_level_map: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, f64, f64, Quest)> {
     let days_since: Vec<f64> = quests.iter().map(|q| {
         match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
             Some(d) => (today - d) as f64,
@@ -1960,14 +1974,32 @@ fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collec
 
     quests.iter().enumerate().map(|(i, q)| {
         let normalized = if days_since[i] == f64::MAX { 1.0 } else { days_since[i] / max_days };
-        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT;
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
-        let skip_penalty = skips * (0.5 + q.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
+        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
+        let skip_penalty = skips * 0.5;
         let list_order_bonus = q.sort_order as f64 / global_max_sort;
         let membership_bonus = if campaign_quest_ids.contains(&q.id) { 1.0 } else { 0.0 };
-        let score = normalized + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
-        (score, normalized, importance_boost, skip_penalty, list_order_bonus, membership_bonus, (*q).clone())
+        let balance_bonus = compute_balance_bonus(q, avg_attr_level, avg_skill_level, attr_level_map, skill_level_map);
+        let score = normalized + importance_boost - skip_penalty + list_order_bonus + membership_bonus + balance_bonus;
+        (score, normalized, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus, (*q).clone())
     }).collect()
+}
+
+fn compute_balance_bonus(
+    quest: &Quest,
+    avg_attr_level: f64, avg_skill_level: f64,
+    attr_level_map: &std::collections::HashMap<String, i32>,
+    skill_level_map: &std::collections::HashMap<String, i32>,
+) -> f64 {
+    let attr_max = quest.attribute_ids.iter()
+        .filter_map(|id| attr_level_map.get(id))
+        .map(|&level| (avg_attr_level - level as f64).max(0.0) * 0.5)
+        .fold(0.0f64, f64::max);
+    let skill_max = quest.skill_ids.iter()
+        .filter_map(|id| skill_level_map.get(id))
+        .map(|&level| (avg_skill_level - level as f64).max(0.0) * 0.5)
+        .fold(0.0f64, f64::max);
+    attr_max.max(skill_max)
 }
 
 fn compute_overdue_ratio(q: &Quest, today: i64) -> f64 {
@@ -5259,23 +5291,21 @@ mod tests {
     }
 
     #[test]
-    fn skip_penalty_scales_with_importance() {
+    fn skip_diminishes_importance() {
         let conn = test_db();
         let q = test_quest_with(&conn, "Important", |q| q.importance = 2);
-        let _q2 = test_quest(&conn, "Filler"); // need another quest so skip doesn't return the same one
+        let _q2 = test_quest(&conn, "Filler");
 
         let mut skips = std::collections::HashMap::new();
         skips.insert(q.id.clone(), 1);
 
         let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
-        // The skipped quest might not be returned — check via the filler or by finding q in scored
-        // Instead, let's check that the non-skipped quest wins
-        // Important quest: overdue ~1 + importance 60 - skip (0.5 + 2*15) = 61 - 30.5 = 30.5
-        // Filler quest: overdue ~1 + importance 0 - skip 0 + order bonus ≈ 2.0
-        // Important should still win despite skip
+        // Important quest still wins despite skip (importance 60/2 = 30 >> filler's ~2)
         assert_eq!(result.quest.id, q.id);
-        // skip_penalty = 1 × (0.5 + 2 × 30/2) = 30.5
-        assert!((result.skip_penalty - 30.5).abs() < 0.01);
+        // importance_boost = 2 × 30 / (1 + 1) = 30.0 (halved)
+        assert!((result.importance_boost - 30.0).abs() < 0.01);
+        // skip_penalty = 1 × 0.5 = 0.5
+        assert!((result.skip_penalty - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -5292,6 +5322,26 @@ mod tests {
         // Both quests are equal overdue, so filler (not skipped) should win
         let result = get_next_quest(&conn, &skips, None).unwrap().unwrap();
         assert_eq!(result.quest.id, _q2.id); // filler wins since q is penalized
+    }
+
+    #[test]
+    fn skip_diminishes_importance_not_craters() {
+        let conn = test_db();
+        let q = test_quest_with(&conn, "Critical", |q| q.importance = 5);
+        let _q2 = test_quest(&conn, "Filler");
+
+        let mut skips = std::collections::HashMap::new();
+        skips.insert(q.id.clone(), 3);
+
+        let scores = get_quest_scores(&conn, &skips).unwrap();
+        let score = scores.iter().find(|s| s.quest.id == q.id).unwrap();
+
+        // importance_boost = 5 × 30 / (1 + 3) = 37.5
+        assert!((score.importance_boost - 37.5).abs() < 0.01);
+        // skip_penalty = 3 × 0.5 = 1.5
+        assert!((score.skip_penalty - 1.5).abs() < 0.01);
+        // Score should still be positive
+        assert!(score.score > 0.0);
     }
 
     // --- Campaign membership bonus tests ---
@@ -5374,5 +5424,64 @@ mod tests {
         // Saga step gets 0 membership bonus (gets 1.0 from list_order instead)
         assert_eq!(result.membership_bonus, 0.0);
         assert!((result.list_order_bonus - 1.0).abs() < 0.01);
+    }
+
+    // --- Balance bonus tests ---
+
+    #[test]
+    fn balance_boosts_underleveled_skill() {
+        let conn = test_db();
+        // Give one skill some XP so it's above average
+        let skills = get_skills(&conn).unwrap();
+        // Set first skill to high XP (level 2+), leave others at 0
+        conn.execute(
+            "UPDATE skill SET xp = 200 WHERE id = ?1",
+            rusqlite::params![skills[0].id],
+        ).unwrap();
+
+        // Create two quests: one linked to the high-level skill, one linked to a level-0 skill
+        let q_high = test_quest(&conn, "High Skill Quest");
+        let q_low = test_quest(&conn, "Low Skill Quest");
+        set_quest_links(&conn, q_high.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
+        set_quest_links(&conn, q_low.id.clone(), vec![skills[1].id.clone()], vec![]).unwrap();
+
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new()).unwrap();
+        let high_score = scores.iter().find(|s| s.quest.id == q_high.id).unwrap();
+        let low_score = scores.iter().find(|s| s.quest.id == q_low.id).unwrap();
+
+        // The quest linked to the underleveled skill should get a higher balance bonus
+        assert!(low_score.balance_bonus > high_score.balance_bonus);
+        assert!(low_score.balance_bonus > 0.0);
+    }
+
+    #[test]
+    fn no_links_no_balance_bonus() {
+        let conn = test_db();
+        let q = test_quest(&conn, "No Links");
+        // Don't set any links
+
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new()).unwrap();
+        let score = scores.iter().find(|s| s.quest.id == q.id).unwrap();
+        assert_eq!(score.balance_bonus, 0.0);
+    }
+
+    #[test]
+    fn overleveled_gets_no_bonus() {
+        let conn = test_db();
+        // Set one attribute to high XP, all others stay at 0
+        let attrs = get_attributes(&conn).unwrap();
+        conn.execute(
+            "UPDATE attribute SET xp = 500 WHERE id = ?1",
+            rusqlite::params![attrs[0].id],
+        ).unwrap();
+
+        // Quest linked to the overleveled attribute
+        let q = test_quest(&conn, "Over Leveled");
+        set_quest_links(&conn, q.id.clone(), vec![], vec![attrs[0].id.clone()]).unwrap();
+
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new()).unwrap();
+        let score = scores.iter().find(|s| s.quest.id == q.id).unwrap();
+        // Overleveled = above average, so no balance bonus
+        assert_eq!(score.balance_bonus, 0.0);
     }
 }

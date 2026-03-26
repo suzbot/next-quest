@@ -166,43 +166,67 @@ changes with them.
 
 ## Quest Selector Scoring
 
-### Overdue Ratio
+### Combined Score
 
-The primary signal for quest priority. Higher = more urgent.
+```
+score = overdue_ratio + importance_boost + list_order_bonus + membership_bonus + balance_bonus - skip_penalty
+```
+
+Importance is the dominant signal. Overdue ratio is secondary. List order, membership, and balance are tiebreakers. Skips diminish importance rather than subtracting from the score.
+
+### Importance Boost (dominant signal)
+
+```
+importance_boost = importance × 30.0 / (1 + skips)
+```
+
+Importance (0–5) is the strongest scoring factor. Each level adds ~30 points — equivalent to a daily quest being 30 days overdue. Skipping divides the boost: 1 skip halves it, 2 skips cut it to a third, etc. After many skips, approaches a 0! quest's score. Never goes negative.
+
+| Importance | 0 skips | 1 skip | 2 skips | 3 skips |
+|---|---|---|---|---|
+| 0 (—) | 0 | 0 | 0 | 0 |
+| 1 (!) | 30 | 15 | 10 | 7.5 |
+| 2 (!!) | 60 | 30 | 20 | 15 |
+| 3 (!!!) | 90 | 45 | 30 | 22.5 |
+| 5 (!!!!!) | 150 | 75 | 50 | 37.5 |
+
+### Overdue Ratio (secondary signal)
+
+Higher = more urgent.
 
 | Quest state | Formula |
 |---|---|
 | Recurring, has completions | `days_since_completed / cycle_days` (min 1.0) |
 | Recurring, never completed | `(days_since_created + cycle_days) / cycle_days` |
 | One-off, never completed | `(days_since_created + 9) / 9` |
-| Saga step (active) | `(days_since_activated + 9) / 9` — where days_since_activated is days since previous step completed or saga became due |
-
-### Skip Penalty
-
-Each "Something Else" or "Run" action adds 0.5 to the penalty. Resets at local midnight.
+| Saga step (recurring saga) | `(days_since_activated + saga_cycle_days) / saga_cycle_days` |
+| Saga step (one-off saga) | `(days_since_activated + 9) / 9` |
 
 ### List Order Bonus
 
-`0.01 × sort_order / max_sort_order` — tiny tiebreaker favoring quests higher in the user's list.
+`sort_order / global_max_sort_order` (max 1.0). Uses the full quest list's max, not the candidate pool. Saga steps get 1.0 (treated as top-of-list priority).
 
-### Combined Score
+### Membership Bonus
 
-```
-score = overdue_ratio - skip_penalty + list_order_bonus
-```
++1.0 for regular quests referenced as a criterion in any active campaign. Boolean — does not stack. Saga steps do not get this (they already have 1.0 from list order).
+
+### Balance Bonus
+
+`0.5 × max(0, avg_level - linked_level)` per linked attribute/skill, take the max. Gently nudges quests feeding underleveled attributes/skills.
+
+### Skip Penalty
+
+`skip_count × 0.5`. Base penalty for 0! quests. For important quests, skips are handled by dividing importance (see above). Each "Something Else" or "Run" action adds one skip. Resets at local midnight.
 
 ### Reference Values
 
-| Scenario | Overdue ratio | 0 skips | 1 skip | 2 skips | 3 skips |
-|---|---|---|---|---|---|
-| Just due (1x cycle) | 1.0 | 1.01 | 0.51 | 0.01 | -0.49 |
-| 2x overdue | 2.0 | 2.01 | 1.51 | 1.01 | 0.51 |
-| 3x overdue | 3.0 | 3.01 | 2.51 | 2.01 | 1.51 |
-| 7x overdue | 7.0 | 7.01 | 6.51 | 6.01 | 5.51 |
-| New one-off (created today) | 1.0 | 1.01 | 0.51 | 0.01 | -0.49 |
-| New one-off (9 days old) | 2.0 | 2.01 | 1.51 | 1.01 | 0.51 |
-
-(List order bonus shown as +0.01 for illustration; actual value varies by position.)
+| Scenario | Score (0 skips) | Score (1 skip) | Score (3 skips) |
+|---|---|---|---|
+| 0!, just due, bottom of list | ~1.0 | ~0.5 | ~-0.5 |
+| 0!, 30 days overdue daily | ~31.0 | ~30.5 | ~29.5 |
+| 1!, just due | ~32.0 | ~16.5 | ~8.5 |
+| 3!, just due, top of list | ~92.0 | ~46.5 | ~23.5 |
+| 5!, just due | ~152.0 | ~76.5 | ~38.5 |
 
 ### Time-of-Day Windows
 
@@ -210,8 +234,9 @@ score = overdue_ratio - skip_penalty + list_order_bonus
 |---|---|---|
 | Morning | 4:00 AM – 11:59 AM | 1 |
 | Afternoon | 12:00 PM – 4:59 PM | 2 |
-| Evening | 5:00 PM – 3:59 AM | 4 |
-| All times | — | 7 (or 0) |
+| Evening | 5:00 PM – 8:59 PM | 4 |
+| Night | 9:00 PM – 3:59 AM | 8 |
+| All times | — | 15 (or 0) |
 
 ### Days-of-Week Bitmask
 

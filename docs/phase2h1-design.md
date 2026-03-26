@@ -132,7 +132,7 @@ score = overdue_ratio - skip_penalty + list_order_bonus
 
 Where:
 - `overdue_ratio`: `(days_overdue + cycle) / cycle` for recurring, `(days + 9) / 9` for one-off
-- `skip_penalty`: `skip_count × (0.5 + importance × IMPORTANCE_WEIGHT / 2)`
+- `skip_penalty`: `skip_count × 0.5` (base). Importance is divided by `(1 + skips)` instead of subtracted — skips diminish importance gracefully rather than cratering into negatives.
 - `list_order_bonus`: `0.01 × sort_order / max_sort_order` (negligible)
 
 ### New scoring formula (after all 5 changes)
@@ -246,14 +246,14 @@ For regular quests (not saga steps), the campaign check requires a query. To avo
 **Formula:**
 1. Compute `avg_attr_level` across all attributes
 2. Compute `avg_skill_level` across all skills
-3. For each quest's linked attributes: `max(0, avg_attr_level - attr_level) × 0.1`
-4. For each quest's linked skills: `max(0, avg_skill_level - skill_level) × 0.1`
+3. For each quest's linked attributes: `max(0, avg_attr_level - attr_level) × 0.5`
+4. For each quest's linked skills: `max(0, avg_skill_level - skill_level) × 0.5`
 5. Quest's balance bonus = max across all linked attributes and skills
 
 **Example:** Average attribute level is 3, average skill level is 3. A quest linked to Cooking (level 1, skill) and Health (level 2, attribute):
-- Skill bonus: (3 - 1) × 0.1 = 0.2
-- Attribute bonus: (3 - 2) × 0.1 = 0.1
-- Quest gets max: 0.2
+- Skill bonus: (3 - 1) × 0.5 = 1.0
+- Attribute bonus: (3 - 2) × 0.5 = 0.5
+- Quest gets max: 1.0
 
 Applies to both due and not-due pools.
 
@@ -300,12 +300,13 @@ score = overdue_ratio + importance_boost + (sort_order/global_max) + membership_
 
 Where:
 - `importance_boost = importance × IMPORTANCE_WEIGHT` (currently 30.0)
-- `skip_penalty = skips × (0.5 + importance × IMPORTANCE_WEIGHT / 2)` — base 0.5 for 0! quests, plus half the importance modifier per skip. Skipping a high-importance quest has proportional teeth.
+- `importance_boost = importance × IMPORTANCE_WEIGHT / (1 + skips)` — importance diminishes with each skip instead of being subtracted. After many skips, approaches a 0! quest.
+- `skip_penalty = skips × 0.5` — base penalty for 0! quests. Small but ensures "Something Else" still works.
 
 With typical ranges:
 - overdue_ratio: 1.0 – 30.0+ (secondary signal)
 - importance_boost: 0 – 150.0 (dominant signal, importance × 30.0)
 - list_order: 0 – 1.0 (meaningful nudge)
 - membership: 0 or 1.0 (campaign quest tiebreaker, boolean)
-- balance: 0 – ~0.3 (gentle nudge)
-- skip_penalty: 0.5 – 75.5 per skip (scales with importance)
+- balance: 0 – ~2.5 (gentle nudge, 0.5 per level of deficit)
+- skip_penalty: 0.5 per skip (base). Importance divided by (1 + skips) instead.

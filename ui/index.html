@@ -1102,7 +1102,7 @@
     let questScoreMap = {}; // quest_id → ScoredQuest, populated when debugScoring is on
 
     function formatScoreDebug(s) {
-      return `Score: ${s.score.toFixed(2)} (overdue: ${s.overdue_ratio.toFixed(2)} | importance: +${s.importance_boost.toFixed(1)} | order: +${s.list_order_bonus.toFixed(2)} | member: +${s.membership_bonus.toFixed(1)} | skips: -${s.skip_penalty.toFixed(1)}) [${s.pool}]`;
+      return `Score: ${s.score.toFixed(2)} (overdue: ${s.overdue_ratio.toFixed(2)} | importance: +${s.importance_boost.toFixed(1)} | order: +${s.list_order_bonus.toFixed(2)} | member: +${s.membership_bonus.toFixed(1)} | balance: +${s.balance_bonus.toFixed(1)} | skips: -${s.skip_penalty.toFixed(1)}) [${s.pool}]`;
     }
 
     // Filter state
@@ -1841,7 +1841,7 @@
       const quest = result.quest;
       const debugHtml = debugScoring ? `
         <div class="qg-debug">
-          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | importance: +${result.importance_boost.toFixed(1)} | order: +${result.list_order_bonus.toFixed(2)} | member: +${result.membership_bonus.toFixed(1)} | skips: -${result.skip_penalty.toFixed(1)})
+          Score: ${result.score.toFixed(2)} (overdue: ${result.overdue_ratio.toFixed(2)} | importance: +${result.importance_boost.toFixed(1)} | order: +${result.list_order_bonus.toFixed(2)} | member: +${result.membership_bonus.toFixed(1)} | balance: +${result.balance_bonus.toFixed(1)} | skips: -${result.skip_penalty.toFixed(1)})
           <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
         </div>` : "";
 
