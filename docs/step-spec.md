@@ -1,96 +1,115 @@
-# Step Spec: Phase 3-2 — Lane 1 replaces current quest giver ✅
+# Step Spec: Phase 3-3 — Add Lane 2 and Lane 3 ✅
 
 ## Goal
 
-The quest giver filters to trivial quests only (Lane 1 / Castle Duties). Backend gains a lane enum and difficulty filter. Saga steps appear in whichever lane matches their saga's hardest step. The quest giver uses lane1 image and text pools.
+The Next Quest tab shows three stacked lanes — Castle Duties (trivial), Adventures (easy/fair), Royal Quests (hard/epic). Each lane functions independently with its own images, text, quest state, and Done/Quest Now/Something Else controls.
 
 ---
 
-## Substep 1: Backend — lane enum, difficulty filter, saga lane inference
+## Substep 1: Frontend — HTML structure and per-lane state
 
-**Lane enum** (`db.rs`):
+**HTML:** Replace the single `qg-content` div with three lane sections:
 
-```rust
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "snake_case")]
-pub enum Lane {
-    CastleDuties,
-    Adventures,
-    RoyalQuests,
-}
+```html
+<div id="quest-giver-view">
+  <div class="qg-lane" id="qg-lane1">
+    <div class="qg-lane-header">Castle Duties</div>
+    <div class="qg-lane-content"></div>
+  </div>
+  <div class="qg-lane" id="qg-lane2">
+    <div class="qg-lane-header">Adventures</div>
+    <div class="qg-lane-content"></div>
+  </div>
+  <div class="qg-lane" id="qg-lane3">
+    <div class="qg-lane-header">Royal Quests</div>
+    <div class="qg-lane-content"></div>
+  </div>
+</div>
 ```
 
-With a method:
-```rust
-fn includes_difficulty(&self, d: &Difficulty) -> bool {
-    match self {
-        Lane::CastleDuties => matches!(d, Difficulty::Trivial),
-        Lane::Adventures => matches!(d, Difficulty::Easy | Difficulty::Moderate),
-        Lane::RoyalQuests => matches!(d, Difficulty::Challenging | Difficulty::Epic),
-    }
-}
+**Per-lane state:** Replace single `currentQGImage` / `currentQGLine` with per-lane state:
+
+```javascript
+const laneState = {
+  castle_duties: { image: null, line: null, images: lane1Images, lines: lane1Lines, lane: "castle_duties", label: "Castle Duties", emptyText: "The walls are secure." },
+  adventures:    { image: null, line: null, images: lane2Images, lines: lane2Lines, lane: "adventures",    label: "Adventures",    emptyText: "I haven't heard any new rumors." },
+  royal_quests:  { image: null, line: null, images: lane3Images, lines: lane3Lines, lane: "royal_quests",  label: "Royal Quests",  emptyText: "The realm is at peace." },
+};
 ```
 
-**Difficulty ranking helper** for saga inference:
+Image/line arrays must be assigned after `loadPools` completes (pools are loaded async).
 
-```rust
-fn difficulty_rank(d: &Difficulty) -> u8 {
-    match d { Trivial => 1, Easy => 2, Moderate => 3, Challenging => 4, Epic => 5 }
-}
-
-fn lane_for_difficulty_rank(rank: u8) -> Lane {
-    match rank {
-        4 | 5 => Lane::RoyalQuests,
-        2 | 3 => Lane::Adventures,
-        _ => Lane::CastleDuties,
-    }
-}
-```
-
-**Saga lane inference:** `get_active_saga_steps` already loads all steps per saga. Compute the max difficulty rank across all steps and include the inferred `Lane` in the returned tuple. New return type: `Vec<(Quest, String, String, Option<i32>, Lane)>`.
-
-**Filter in `get_quest_scores`:** Add `lane: &Lane` parameter.
-
-- Regular quests: add `lane.includes_difficulty(&q.difficulty)` to the hard filter alongside TOD/DOW
-- Saga steps: filter by `saga_lane == *lane`
-
-**Commands:** `get_quest_scores` and `get_next_quest` gain a `lane: String` parameter (deserialized as Lane).
-
-**Tests:**
-
-1. `lane_filter_trivial_only` — Create quests at trivial, easy, and epic. Call `get_quest_scores` with CastleDuties. Verify only trivial returned.
-2. `lane_filter_adventures` — Same setup. Adventures lane returns only easy/moderate.
-3. `lane_filter_royal` — Royal lane returns only challenging/epic.
-4. `saga_lane_inference_from_hardest_step` — Create saga with trivial and epic steps. Verify the saga step only appears in RoyalQuests lane (not CastleDuties).
-5. `saga_with_only_easy_steps_in_adventures` — Saga with all easy steps. Verify appears in Adventures lane.
-
-**Testing checkpoint:** `cargo test` passes.
+**CSS:** Lanes separated by a subtle border or spacing. Each lane is compact — image + text side-by-side, same layout as current quest giver but potentially smaller to fit three.
 
 ---
 
-## Substep 2: Frontend — quest giver uses Lane 1
+## Substep 2: Frontend — renderLane function
 
-**`renderQuestGiver`** now calls `get_next_quest` with `lane: "castle_duties"`.
+**`renderLane(laneKey, container)`** — renders a single lane into its container div. Essentially the current `renderQuestGiverWith` logic scoped to one lane's state:
 
-**`renderQuestGiverWith`** uses `lane1Images` and `lane1Lines` instead of `questGiverImages` and `questGiverLines`.
+1. Call `get_next_quest` with the lane's key
+2. If no result: show empty state (quest giver image + empty text)
+3. If result: show quest giver image, flavor text, quest name (with saga name if applicable), Done/Quest Now/Something Else buttons
 
-**`qgDone`**, **`qgQuestNow`**, **`qgSomethingElse`** pass `lane: "castle_duties"` on their `get_next_quest` calls.
+Each button calls lane-specific handlers: `laneDone(laneKey, questId, difficulty, sagaId)`, `laneQuestNow(laneKey, questId)`, `laneSomethingElse(laneKey, questId)`.
 
-**`set_offered_quest`** still works as-is for now (fixed in step 4).
+**`renderQuestGiver()`** calls `renderLane` for all three lanes.
 
-**`get_quest_scores` call** (for debug) passes `lane: "castle_duties"`. The quest list debug view should show scores for all lanes — but for now just showing Lane 1 scores is acceptable (full multi-lane debug comes in step 3).
+**Empty state:** Shows a quest giver image (from the lane's pool) with the hardcoded empty text. Same split layout as a normal offer.
 
-**Lane header:** Add "Castle Duties" header text above the quest giver content.
+---
 
-**Testing checkpoint:** Build app. Quest giver only shows trivial quests. Easy/hard quests don't appear. Images come from lane1 folder. Flavor text comes from lane1 file. Done/Quest Now/Something Else still work. Timer still works.
+## Substep 3: Frontend — lane-specific Done/Quest Now/Something Else
+
+**`laneDone(laneKey, questId, difficulty, sagaId)`** — same logic as current `qgDone` but:
+- Calls `check_campaign_progress` as today
+- Shows completion feedback within the lane's container
+- After feedback, re-renders all lanes (via `renderQuestGiver`)
+
+**`laneQuestNow(laneKey, questId)`** — same as current `qgQuestNow`:
+- Starts timer
+- Locks tabs
+- All three lane containers hidden, timer view shown in their place
+
+**`laneSomethingElse(laneKey, questId)`** — same as current `qgSomethingElse` but scoped to the lane:
+- Calls `skip_quest`
+- Calls `get_next_quest` with the lane's key and `excludeQuestId`
+- Re-renders only that lane
+
+**Timer mode:** When timer is active, all lane containers are hidden and the timer view renders in `quest-giver-view` (same as today). On completion/cancel, all lanes re-render.
+
+---
+
+## Substep 4: Debug scoring across all lanes
+
+Update the debug score loading in `loadAll` to fetch scores for all three lanes and merge into `questScoreMap`:
+
+```javascript
+if (debugScoring) {
+  const [s1, s2, s3] = await Promise.all([
+    invoke("get_quest_scores", { lane: "castle_duties" }),
+    invoke("get_quest_scores", { lane: "adventures" }),
+    invoke("get_quest_scores", { lane: "royal_quests" }),
+  ]);
+  questScoreMap = {};
+  [...s1, ...s2, ...s3].forEach(s => { questScoreMap[s.quest.id] = s; });
+}
+```
+
+This ensures quest list debug shows scores for all quests regardless of difficulty.
+
+---
+
+## Testing checkpoint
+
+Build app. See all three lanes stacked. Castle Duties shows trivial quests. Adventures shows easy/moderate. Royal Quests shows hard/epic (or empty state if none eligible). Complete a trivial from Lane 1 — XP flash, reloads. Start Quest Now from Lane 2 — timer replaces all lanes, tabs locked. Complete from timer — all lanes re-render. Something Else in Lane 3 — only Lane 3 changes. Enable debug scoring — quest list shows scores for quests at all difficulty levels.
 
 ---
 
 ## NOT in this step
 
-- Lane 2 and Lane 3 UI (step 3)
-- Skip exclusion fix (step 4)
+- Skip exclusion fix / overlay sync (step 4)
 
 ## Done When
 
-Quest giver filters to trivial only. Saga steps appear in correct lane. Lane1 images and text used. All existing functionality (Done, Quest Now, Something Else, timer) works within the filtered pool. `cargo test` passes.
+Three lanes visible and functional. Each lane independent with own images, text, and controls. Timer works from any lane. Debug scoring covers all lanes. Empty states display correctly.

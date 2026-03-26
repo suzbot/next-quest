@@ -502,8 +502,9 @@
     #quest-giver-view {
     }
 
-    #qg-content { }
-    .qg-lane-header { font-size: 12px; font-weight: 700; color: #444; padding: 4px 8px; border-bottom: 1px solid #999; }
+    .qg-lane { margin-bottom: 4px; border-bottom: 1px solid #999; padding-bottom: 8px; }
+    .qg-lane-header { font-size: 12px; font-weight: 700; color: #444; padding: 4px 8px; background: #c0c0c0; }
+    .qg-lane-content { }
 
     /* Split layout */
     .qg-split {
@@ -722,8 +723,19 @@
 
   <div class="content-box">
   <div id="quest-giver-view">
-    <div class="qg-lane-header">Castle Duties</div>
-    <div id="qg-content"></div>
+    <div id="qg-timer-content" class="hidden"></div>
+    <div id="qg-lane1" class="qg-lane">
+      <div class="qg-lane-header">Castle Duties</div>
+      <div class="qg-lane-content"></div>
+    </div>
+    <div id="qg-lane2" class="qg-lane">
+      <div class="qg-lane-header">Adventures</div>
+      <div class="qg-lane-content"></div>
+    </div>
+    <div id="qg-lane3" class="qg-lane">
+      <div class="qg-lane-header">Royal Quests</div>
+      <div class="qg-lane-content"></div>
+    </div>
   </div>
 
   <div id="quests-view" class="hidden">
@@ -1098,8 +1110,29 @@
       return pick;
     }
 
-    let currentQGImage = null;
-    let currentQGLine = null;
+    let currentQGImage = null; // legacy, used by timer
+    let currentQGLine = null; // legacy, used by timer
+    const laneConfig = [
+      { key: "castle_duties", containerId: "qg-lane1", emptyText: "The walls are secure." },
+      { key: "adventures", containerId: "qg-lane2", emptyText: "I haven't heard any new rumors." },
+      { key: "royal_quests", containerId: "qg-lane3", emptyText: "The realm is at peace." },
+    ];
+    const laneImages = { castle_duties: null, adventures: null, royal_quests: null };
+    const laneLines = { castle_duties: null, adventures: null, royal_quests: null };
+    const laneCurrentQuestId = { castle_duties: null, adventures: null, royal_quests: null };
+
+    function getLaneImagePool(key) {
+      if (key === "castle_duties") return lane1Images.length > 0 ? lane1Images : questGiverImages;
+      if (key === "adventures") return lane2Images.length > 0 ? lane2Images : questGiverImages;
+      if (key === "royal_quests") return lane3Images.length > 0 ? lane3Images : questGiverImages;
+      return questGiverImages;
+    }
+    function getLaneLinePool(key) {
+      if (key === "castle_duties") return lane1Lines;
+      if (key === "adventures") return lane2Lines;
+      if (key === "royal_quests") return lane3Lines;
+      return lane1Lines;
+    }
     let currentMonsterImage = null;
     let currentEncounterLine = null;
 
@@ -1256,11 +1289,15 @@
       if (!questGiverView.classList.contains("hidden")) {
         renderQuestGiver();
       }
-      // Load quest scores for debug display
+      // Load quest scores for debug display (all lanes)
       if (debugScoring) {
-        const scores = await invoke("get_quest_scores", { lane: "castle_duties" });
+        const [s1, s2, s3] = await Promise.all([
+          invoke("get_quest_scores", { lane: "castle_duties" }),
+          invoke("get_quest_scores", { lane: "adventures" }),
+          invoke("get_quest_scores", { lane: "royal_quests" }),
+        ]);
         questScoreMap = {};
-        scores.forEach(s => { questScoreMap[s.quest.id] = s; });
+        [...s1, ...s2, ...s3].forEach(s => { questScoreMap[s.quest.id] = s; });
       } else {
         questScoreMap = {};
       }
@@ -1770,7 +1807,7 @@
     // --- Navigation ---
 
     const questGiverView = document.getElementById("quest-giver-view");
-    const qgContent = document.getElementById("qg-content");
+    // Lane containers are accessed via laneConfig[].containerId
     const questsView = document.getElementById("quests-view");
     const sagasView = document.getElementById("sagas-view");
     const sagaList = document.getElementById("saga-list");
@@ -1839,22 +1876,47 @@
         return;
       }
 
-      // Selection mode — ask backend for the next quest
-      const result = await invoke("get_next_quest", { lane: "castle_duties" });
-      await renderQuestGiverWith(result);
+      // Show lanes, hide timer
+      document.getElementById("qg-timer-content").classList.add("hidden");
+      laneConfig.forEach(l => document.getElementById(l.containerId).classList.remove("hidden"));
+
+      // Render all three lanes
+      for (const lane of laneConfig) {
+        await renderLane(lane);
+      }
     }
 
-    async function renderQuestGiverWith(result) {
-      // Track which quest the quest giver is offering so the overlay can exclude it
-      await invoke("set_offered_quest", { questId: result?.quest?.id || null });
+    async function renderLane(lane, forceRefresh, excludeQuestId) {
+      const container = document.getElementById(lane.containerId).querySelector(".qg-lane-content");
+      const params = { lane: lane.key };
+      if (excludeQuestId) params.excludeQuestId = excludeQuestId;
+      const result = await invoke("get_next_quest", params);
 
-      if (cachedQuests.filter(q => q.active).length === 0) {
-        qgContent.innerHTML = '<div class="qg-empty">No quests yet. Add some in the Quest List tab.</div>';
-        return;
+      // Track offered quest for overlay sync (Lane 1 only)
+      if (lane.key === "castle_duties") {
+        await invoke("set_offered_quest", { questId: result?.quest?.id || null });
       }
 
+      // Skip re-render if quest hasn't changed and we already have content
+      const newQuestId = result?.quest?.id || null;
+      if (!forceRefresh && newQuestId === laneCurrentQuestId[lane.key] && container.innerHTML !== "") {
+        return;
+      }
+      laneCurrentQuestId[lane.key] = newQuestId;
+
       if (!result) {
-        qgContent.innerHTML = '<div class="qg-empty">All caught up. Rest well, adventurer.</div>';
+        // Empty state — show quest giver image with empty text
+        if (!laneImages[lane.key]) laneImages[lane.key] = randomFromExcluding(getLaneImagePool(lane.key), null);
+        container.innerHTML = `
+          <div class="qg-split">
+            <div class="qg-split-image">
+              <img src="${laneImages[lane.key] || ''}" alt="Quest Giver">
+            </div>
+            <div class="qg-split-text">
+              <div class="qg-empty">${lane.emptyText}</div>
+            </div>
+          </div>
+        `;
         return;
       }
 
@@ -1865,23 +1927,23 @@
           <br>Pool: ${result.pool} | Candidates: ${result.due_count} due, ${result.not_due_count} not-due
         </div>` : "";
 
-      if (!currentQGImage) currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
-      currentQGLine = randomFromExcluding(lane1Lines, currentQGLine);
-      qgContent.innerHTML = `
+      if (!laneImages[lane.key]) laneImages[lane.key] = randomFromExcluding(getLaneImagePool(lane.key), null);
+      if (!laneLines[lane.key]) laneLines[lane.key] = randomFromExcluding(getLaneLinePool(lane.key), null);
+      container.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
-            <img src="${currentQGImage}" alt="Quest Giver">
+            <img src="${laneImages[lane.key]}" alt="Quest Giver">
           </div>
           <div class="qg-split-text">
-            <div class="qg-flavor">${currentQGLine}</div>
+            <div class="qg-flavor">${laneLines[lane.key]}</div>
             ${result.saga_name ? `<div class="qg-saga-name">${escapeHtml(result.saga_name)}</div>` : ''}
             <div class="qg-quest-name">${escapeHtml(quest.title)}</div>
             ${debugHtml}
             <div class="qg-prompt">Does our stalwart hero accept this quest?</div>
             <div class="qg-actions">
-              <button onclick="qgDone('${quest.id}', '${quest.difficulty}', ${quest.saga_id ? `'${quest.saga_id}'` : 'null'})">Done</button>
-              <button onclick="qgQuestNow('${quest.id}')">Quest Now</button>
-              <button onclick="qgSomethingElse('${quest.id}')">Something Else</button>
+              <button onclick="laneDone('${lane.key}', '${quest.id}', '${quest.difficulty}', ${quest.saga_id ? `'${quest.saga_id}'` : 'null'})">Done</button>
+              <button onclick="laneQuestNow('${lane.key}', '${quest.id}')">Quest Now</button>
+              <button onclick="laneSomethingElse('${lane.key}', '${quest.id}')">Something Else</button>
             </div>
           </div>
         </div>
@@ -1889,8 +1951,12 @@
     }
 
     function renderTimerMode() {
+      // Hide lanes, show timer
+      laneConfig.forEach(l => document.getElementById(l.containerId).classList.add("hidden"));
+      const timerDiv = document.getElementById("qg-timer-content");
+      timerDiv.classList.remove("hidden");
       const elapsed = Date.now() - timerStartLocal;
-      qgContent.innerHTML = `
+      timerDiv.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
             <img src="${currentMonsterImage}" alt="Monster">
@@ -1944,9 +2010,10 @@
       setTabsLocked(false);
       await invoke("cancel_timer");
 
+      const timerDiv = document.getElementById("qg-timer-content");
       const defeatImg = randomFromExcluding(defeatImages, null);
       if (defeatImg) {
-        qgContent.innerHTML = `
+        timerDiv.innerHTML = `
           <div class="qg-split">
             <div class="qg-split-image">
               <img src="${defeatImg}" alt="Defeated">
@@ -1959,21 +2026,18 @@
         `;
 
         setTimeout(() => {
-          qgContent.classList.add("qg-content-fading");
+          timerDiv.classList.add("qg-content-fading");
           setTimeout(() => {
-            qgContent.classList.remove("qg-content-fading");
-            currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
+            timerDiv.classList.remove("qg-content-fading");
             loadAll();
           }, 400);
         }, 3000);
       } else {
-
-        currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
         renderQuestGiver();
       }
     }
 
-    async function qgQuestNow(questId) {
+    async function laneQuestNow(laneKey, questId) {
       currentMonsterImage = randomFromExcluding(monsterImages, currentMonsterImage);
       currentEncounterLine = randomFromExcluding(encounterLines, currentEncounterLine);
       await invoke("start_timer", { questId, monsterImage: currentMonsterImage, encounterLine: currentEncounterLine });
@@ -2030,7 +2094,8 @@
       textHtml += campaignCelebrationHtml(campaignResults);
 
       const victoryImg = randomFromExcluding(victoryImages, null) || currentMonsterImage;
-      qgContent.innerHTML = `
+      const timerDiv = document.getElementById("qg-timer-content");
+      timerDiv.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
             <img src="${victoryImg}" alt="Victorious">
@@ -2040,16 +2105,15 @@
         </div>
       `;
       setTimeout(() => {
-        qgContent.classList.add("qg-content-fading");
+        timerDiv.classList.add("qg-content-fading");
         setTimeout(() => {
-          qgContent.classList.remove("qg-content-fading");
-          currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
+          timerDiv.classList.remove("qg-content-fading");
           loadAll();
         }, 400);
       }, 3000);
     }
 
-    async function qgDone(questId, difficulty, sagaId) {
+    async function laneDone(laneKey, questId, difficulty, sagaId) {
       const completion = await invoke("complete_quest", { questId });
       let sagaResult = null;
       if (sagaId) sagaResult = await invoke("check_saga_completion", { sagaId });
@@ -2062,7 +2126,7 @@
         campaignResults = campaignResults.concat(sagaCampaignResults);
       }
 
-      // Show completion feedback with pulse in split layout
+      // Show completion feedback within the lane
       let textHtml = `<div class="qg-quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
         textHtml += `<div class="qg-xp-flash pulsing" style="color: ${color}">+${completion.xp_earned} XP</div>`;
@@ -2080,33 +2144,36 @@
         textHtml += `</div>`;
       }
       textHtml += campaignCelebrationHtml(campaignResults);
-      qgContent.innerHTML = `
+      const container = document.getElementById(laneConfig.find(l => l.key === laneKey).containerId).querySelector(".qg-lane-content");
+      container.innerHTML = `
         <div class="qg-split">
           <div class="qg-split-image">
-            <img src="${currentQGImage}" alt="Quest Giver">
+            <img src="${laneImages[laneKey]}" alt="Quest Giver">
           </div>
           <div class="qg-split-text">${textHtml}</div>
         </div>
       `;
 
-      // Hold for 2.5s, then fade out and show next quest
-
+      // Hold for 2.5s, then fade out and re-render all lanes
       setTimeout(() => {
-        qgContent.classList.add("qg-content-fading");
+        container.classList.add("qg-content-fading");
         setTimeout(() => {
-          qgContent.classList.remove("qg-content-fading");
-          currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
+          container.classList.remove("qg-content-fading");
+          laneImages[laneKey] = randomFromExcluding(getLaneImagePool(laneKey), laneImages[laneKey]);
+          laneLines[laneKey] = randomFromExcluding(getLaneLinePool(laneKey), laneLines[laneKey]);
+          laneCurrentQuestId[laneKey] = null;
           loadAll();
         }, 400);
       }, 2500);
     }
 
-    async function qgSomethingElse(questId) {
+    async function laneSomethingElse(laneKey, questId) {
       await invoke("skip_quest", { questId });
-      currentQGImage = randomFromExcluding(lane1Images.length > 0 ? lane1Images : questGiverImages, currentQGImage);
-      // Pass exclude so the just-skipped quest doesn't immediately reappear
-      const result = await invoke("get_next_quest", { excludeQuestId: questId, lane: "castle_duties" });
-      await renderQuestGiverWith(result);
+      laneCurrentQuestId[laneKey] = null; // force re-render
+      laneImages[laneKey] = randomFromExcluding(getLaneImagePool(laneKey), laneImages[laneKey]);
+      laneLines[laneKey] = randomFromExcluding(getLaneLinePool(laneKey), laneLines[laneKey]);
+      const lane = laneConfig.find(l => l.key === laneKey);
+      await renderLane(lane, true, questId);
     }
 
     // Quest Now from list view

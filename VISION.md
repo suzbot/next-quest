@@ -260,6 +260,7 @@ The quest giver becomes three quest givers, each with their own personality, ima
 **Lane 3 — Royal Quests** (The Royal Court): Hard and Epic quests. The big challenges — taxes, doctor appointments, major projects. Visible all day so you can psych up. Do at most one per day.
 
 Key design decisions:
+
 - All three lanes stacked vertically on the Next Quest tab, Castle Duties on top
 - Each lane has its own quest giver images (`ui/images/lane1/`, `lane2/`, `lane3/`) and flavor text (`ui/text/lane1/`, `lane2/`, `lane3/`) for easy reskinning
 - Same scoring algorithm within each lane — importance, overdue, list order, etc.
@@ -270,25 +271,40 @@ Key design decisions:
 ## Phase 4: "Everything Else"
 
 Potential UI reorg:
+
 - Evaluate: adding quest timer to overlay instead of going into full app?
-- Evaluate: having quest giver view always at the top and tabs expand bottom detail?
 - Show kind of XP gained on celebration text?
-- Show on next step whether its part of a saga, feat, or both
 
 Rewards:
+
 - Receive coin and items from questing
 - Buy stuff with gold
 - Rotating fighting text at different skill/attribute levels
 
 Polish and systems:
+
 - **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
 - Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
 - **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
 - Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
-- Seed data guard rework (seed_data() skips if character exists, needs rethinking)
-- SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
-- Elemental Alignment Matrix: Fire (Fight, Shout, Hot and Bright) <-> Water (Follow, Attune, Adapt, Flow, Listen, Reflect), Earth (Grounded, Solidity, Present,) <-> Sky (Abstract, Future/Past, Thinking, Planning, Remembering) Centered: Green, Growth
-- Character image with visual progression
-- Novelty engine
-- Template Sagas
-- Bounded reward system (computer time earning)
+  - Seed data guard rework (seed_data() skips if character exists, needs rethinking)
+  - SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
+
+## Unallocated Ideas
+
+1. Stat tracking
+   - Problem: how much energy can I budget in a given day? can I learn from the past? Can I use XP history as a source of motivation?
+   - Proposed solution:
+     - Start tracking xp earned per day (either running or extrapolated from history)
+     - In character, have a new stats section with
+       - Avg XP per day (excludes 0-XP days)
+       - High Score (most XP earned in one day)
+       - Last Score (most recent non-zero daily XP total)
+       - Today's Score (running total of XP today)
+     - Also, under the character name, show all=time earned XP
+       - (not derived from history, like stats might be -- so that its in line with shown levels)
+   - Future: having these values could in the future have the system suggest a daily todo list
+
+2. Additional quest giver images (can Claude help generate some that feature women?)
+
+3.
