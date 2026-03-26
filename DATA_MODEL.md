@@ -38,19 +38,20 @@ A template for something you do. Can be recurring or one-off.
 - Saga step XP uses the parent saga's cycle_days (not the one-off multiplier). One-off saga steps use 3x.
 
 ### Completion
-A visible record that you did a quest at a specific time.
+A visible record that you did a quest at a specific time, or that a bonus was awarded.
 
 | Field | Type | Description |
 |---|---|---|
 | id | UUID (text) | Unique identifier |
-| quest_id | UUID? (text) | FK to Quest. NULL if the quest has been deleted. |
-| quest_title | String | Snapshot of quest title at completion time |
+| quest_id | UUID? (text) | FK to Quest. NULL for deleted quests or bonus entries. |
+| quest_title | String | Snapshot of quest title, or bonus description (e.g., "Morning Routine complete!") |
 | completed_at | Timestamp | ISO 8601 completion time |
 | xp_earned | Integer | XP awarded for this completion |
 
 **Rules:**
 - Completions snapshot the quest title so they remain self-contained after quest rename or deletion.
 - Quests and completions are independent: deleting a quest orphans (not deletes) its completions.
+- Saga completion bonuses and campaign completion bonuses are also recorded as completions with `quest_id: NULL` and a descriptive title. These appear in the history list and count toward daily XP stats.
 - Individually deletable. Deleting a completion does NOT reduce XP — XP only goes up.
 
 ### Character

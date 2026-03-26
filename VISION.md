@@ -268,43 +268,52 @@ Key design decisions:
 - CTA overlay only surfaces Lane 1 (trivial) quests — no surprise ambush with hard things
 - Quest Now / timer works from any lane (locks all three)
 
-## Phase 4: "Everything Else"
+## Phase 4: "Stats and Feedback"
 
-Potential UI reorg:
+1. **Stat tracking** — XP stats on the Character tab:
+   - Avg XP per day (excludes 0-XP days)
+   - High Score (most XP earned in one day)
+   - Last Score (most recent non-zero daily XP total)
+   - Today's Score (running total of XP today)
+   - All-time earned XP shown under character name (not derived from history — matches shown levels)
+   - Future: these values could feed a daily todo list suggestion
 
-- Evaluate: adding quest timer to overlay instead of going into full app?
-- Show kind of XP gained on celebration text?
+2. **Show XP type on celebration text** — "Cooking +25 XP, Health +25 XP" instead of just "+25 XP". Richer RPG feedback on completion.
+
+## Phase 5: "Portfolio and Polish"
+
+1. **GitHub readme** — User-facing showcase of what makes this app unique, and how AI was leveraged to build it:
+   - No streaks, no failure punishment
+   - XP curve that rewards consistent on-time completion, doing things that have been put off, but doesn't over-reward procrastination. The best strategy to max points is to do things as often as they should be done.
+   - Novelty images and text to keep things fun and interesting
+   - Encounters that break hyperfocus and get you going on things, but don't blindside you with big tasks you'll always avoid
+   - Three lanes of tasks — you only see 3 at once so you're never overwhelmed, and you have advance notice of the bigger items you might need to psych yourself up for
+   - A very clever algorithm that looks at a lot of factors, so you can just brain dump all the things you might ever want to do into the list, and the system will raise them to you at the right time
+
+2. **Quest giver images** — More variety, including women characters. Explore AI image generation.
+
+3. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+
+## Phase 6: "Everything Else"
 
 Rewards:
-
 - Receive coin and items from questing
-- Buy stuff with gold
+- Buy stuff with gold?
 - Rotating fighting text at different skill/attribute levels
+- Receive trophies, medals, equipment from questing?
 
 Polish and systems:
-
 - **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
 - Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
 - **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
 - Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
   - Seed data guard rework (seed_data() skips if character exists, needs rethinking)
   - SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
+- Evaluate: adding quest timer to overlay instead of going into full app?
+- Expand campaign types (when a concrete need arises)
 
-## Unallocated Ideas
-
-1. Stat tracking
-   - Problem: how much energy can I budget in a given day? can I learn from the past? Can I use XP history as a source of motivation?
-   - Proposed solution:
-     - Start tracking xp earned per day (either running or extrapolated from history)
-     - In character, have a new stats section with
-       - Avg XP per day (excludes 0-XP days)
-       - High Score (most XP earned in one day)
-       - Last Score (most recent non-zero daily XP total)
-       - Today's Score (running total of XP today)
-     - Also, under the character name, show all=time earned XP
-       - (not derived from history, like stats might be -- so that its in line with shown levels)
-   - Future: having these values could in the future have the system suggest a daily todo list
-
-2. Additional quest giver images (can Claude help generate some that feature women?)
-
-3.
+Smart insights (data-driven, low priority):
+- "Best time of day" analysis from completion timestamps
+- Lane progress counters ("3/12 Castle Duties done today")
+- Weekly review summary
+- Quest health check (flag quests never completed after 30+ days)

@@ -1266,6 +1266,12 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCom
                 level_ups.push(LevelUp { name: skill_after.name.clone(), new_level: skill_after.level });
             }
         }
+
+        // Record bonus in completion history
+        conn.execute(
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, NULL, ?2, ?3, ?4)",
+            rusqlite::params![Uuid::new_v4().to_string(), format!("{} complete!", saga.name), now, bonus_xp],
+        ).map_err(|e| e.to_string())?;
     }
 
     Ok(SagaCompletionResult {
@@ -1804,6 +1810,14 @@ pub fn check_campaign_progress(
                 "INSERT INTO accomplishment (id, campaign_id, campaign_name, completed_at, bonus_xp) VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![accomplishment_id, campaign_id, campaign_name, now, bonus_xp],
             ).map_err(|e| e.to_string())?;
+
+            // Record bonus in completion history
+            if bonus_xp > 0 {
+                conn.execute(
+                    "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, NULL, ?2, ?3, ?4)",
+                    rusqlite::params![Uuid::new_v4().to_string(), format!("{} complete!", campaign_name), now, bonus_xp],
+                ).map_err(|e| e.to_string())?;
+            }
 
             results.push(CampaignCompletionResult {
                 completed: true,
@@ -5623,5 +5637,64 @@ mod tests {
         // Should NOT appear in CastleDuties
         let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
         assert!(!castle.iter().any(|s| s.saga_name.is_some()));
+    }
+
+    // --- Bonus XP in history tests ---
+
+    #[test]
+    fn saga_completion_creates_history_entry() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Morning Routine".into(), Some(1)).unwrap();
+        let step1 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 1".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+        let step2 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 2".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        // Backdate saga so completions are after created_at
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        complete_quest(&conn, step1.id).unwrap();
+        complete_quest(&conn, step2.id).unwrap();
+        let result = check_saga_completion(&conn, &s.id).unwrap();
+        assert!(result.completed);
+        assert!(result.bonus_xp > 0);
+
+        // Check history for bonus entry
+        let completions = get_completions(&conn).unwrap();
+        let bonus_entry = completions.iter().find(|c| c.quest_id.is_none() && c.quest_title.contains("Morning Routine"));
+        assert!(bonus_entry.is_some());
+        let entry = bonus_entry.unwrap();
+        assert_eq!(entry.xp_earned, result.bonus_xp);
+        assert!(entry.quest_title.contains("complete!"));
+    }
+
+    #[test]
+    fn campaign_completion_creates_history_entry() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Vacuuming");
+        create_campaign(&conn, "Spring Cleaning".into(), vec![
+            NewCriterion { target_type: "quest_completions".into(), target_id: q.id.clone(), target_count: 1 },
+        ]).unwrap();
+
+        let results = check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].bonus_xp > 0);
+
+        // Check history for bonus entry
+        let completions = get_completions(&conn).unwrap();
+        let bonus_entry = completions.iter().find(|c| c.quest_id.is_none() && c.quest_title.contains("Spring Cleaning"));
+        assert!(bonus_entry.is_some());
+        let entry = bonus_entry.unwrap();
+        assert_eq!(entry.xp_earned, results[0].bonus_xp);
+        assert!(entry.quest_title.contains("complete!"));
     }
 }
