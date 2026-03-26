@@ -294,6 +294,16 @@ pub struct Skill {
     pub xp_into_current_level: i64,
 }
 
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct XpStats {
+    pub today_xp: i64,
+    pub last_day_xp: i64,
+    pub avg_xp_per_day: f64,
+    pub high_score_xp: i64,
+    pub all_time_xp: i64,
+}
+
 // --- Campaign structs ---
 
 #[derive(Deserialize, Debug, Clone)]
@@ -2862,6 +2872,56 @@ pub fn get_character(conn: &Connection) -> Result<Character, String> {
         },
     )
     .map_err(|e| e.to_string())
+}
+
+pub fn get_xp_stats(conn: &Connection) -> Result<XpStats, String> {
+    let all_time_xp = get_character(conn)?.xp;
+    let today = local_today_days();
+
+    // Fetch all completions and group XP by local day
+    let mut stmt = conn
+        .prepare("SELECT completed_at, xp_earned FROM quest_completion")
+        .map_err(|e| e.to_string())?;
+
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut daily_xp: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    for (completed_at, xp) in &rows {
+        if let Some(day) = utc_iso_to_local_days(completed_at) {
+            *daily_xp.entry(day).or_insert(0) += xp;
+        }
+    }
+
+    let today_xp = *daily_xp.get(&today).unwrap_or(&0);
+
+    // Last non-zero day before today
+    let last_day_xp = daily_xp.iter()
+        .filter(|(&day, &xp)| day < today && xp > 0)
+        .max_by_key(|(&day, _)| day)
+        .map(|(_, &xp)| xp)
+        .unwrap_or(0);
+
+    // Avg across all days with XP > 0
+    let active_days: Vec<i64> = daily_xp.values().filter(|&&xp| xp > 0).copied().collect();
+    let avg_xp_per_day = if active_days.is_empty() {
+        0.0
+    } else {
+        active_days.iter().sum::<i64>() as f64 / active_days.len() as f64
+    };
+
+    let high_score_xp = daily_xp.values().copied().max().unwrap_or(0);
+
+    Ok(XpStats {
+        today_xp,
+        last_day_xp,
+        avg_xp_per_day,
+        high_score_xp,
+        all_time_xp,
+    })
 }
 
 pub fn update_character(conn: &Connection, name: String) -> Result<Character, String> {
@@ -5696,5 +5756,91 @@ mod tests {
         let entry = bonus_entry.unwrap();
         assert_eq!(entry.xp_earned, results[0].bonus_xp);
         assert!(entry.quest_title.contains("complete!"));
+    }
+
+    // --- XP stats tests ---
+
+    #[test]
+    fn xp_stats_today() {
+        let conn = test_db();
+        let q1 = test_quest(&conn, "Quest A");
+        let q2 = test_quest(&conn, "Quest B");
+        let c1 = complete_quest(&conn, q1.id).unwrap();
+        let c2 = complete_quest(&conn, q2.id).unwrap();
+
+        let stats = get_xp_stats(&conn).unwrap();
+        assert_eq!(stats.today_xp, c1.xp_earned + c2.xp_earned);
+    }
+
+    #[test]
+    fn xp_stats_high_score() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Quest");
+
+        // Complete today
+        complete_quest(&conn, q.id.clone()).unwrap();
+
+        // Backdate a completion to yesterday with higher XP
+        conn.execute(
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, ?2, 'Old', '2020-06-15T12:00:00Z', 999)",
+            rusqlite::params![Uuid::new_v4().to_string(), q.id],
+        ).unwrap();
+
+        let stats = get_xp_stats(&conn).unwrap();
+        assert_eq!(stats.high_score_xp, 999);
+    }
+
+    #[test]
+    fn xp_stats_avg_excludes_zero_days() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Quest");
+
+        // Day 1: 100 XP
+        conn.execute(
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, ?2, 'Day1', '2020-06-15T12:00:00Z', 100)",
+            rusqlite::params![Uuid::new_v4().to_string(), q.id],
+        ).unwrap();
+
+        // Day 2: 200 XP
+        conn.execute(
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, ?2, 'Day2', '2020-06-16T12:00:00Z', 200)",
+            rusqlite::params![Uuid::new_v4().to_string(), q.id],
+        ).unwrap();
+
+        // Day 3 has no completions — should not count
+
+        let stats = get_xp_stats(&conn).unwrap();
+        // Avg = (100 + 200) / 2 = 150 (not /3)
+        assert!((stats.avg_xp_per_day - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn xp_stats_last_day() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Quest");
+
+        // Complete today
+        complete_quest(&conn, q.id.clone()).unwrap();
+
+        // Backdate a completion to yesterday
+        conn.execute(
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, ?2, 'Yesterday', '2020-06-15T12:00:00Z', 500)",
+            rusqlite::params![Uuid::new_v4().to_string(), q.id],
+        ).unwrap();
+
+        let stats = get_xp_stats(&conn).unwrap();
+        // Last day should be the backdated day (before today)
+        assert_eq!(stats.last_day_xp, 500);
+    }
+
+    #[test]
+    fn xp_stats_empty() {
+        let conn = test_db();
+        let stats = get_xp_stats(&conn).unwrap();
+        assert_eq!(stats.today_xp, 0);
+        assert_eq!(stats.last_day_xp, 0);
+        assert_eq!(stats.avg_xp_per_day, 0.0);
+        assert_eq!(stats.high_score_xp, 0);
+        assert!(stats.all_time_xp == 0);
     }
 }

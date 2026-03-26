@@ -306,6 +306,12 @@ pub fn get_character(state: State<DbState>) -> Result<db::Character, String> {
 }
 
 #[tauri::command]
+pub fn get_xp_stats(state: State<DbState>) -> Result<db::XpStats, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_xp_stats(&conn)
+}
+
+#[tauri::command]
 pub fn update_character(
     state: State<DbState>,
     name: String,
