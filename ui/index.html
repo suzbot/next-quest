@@ -1892,11 +1892,6 @@
       if (excludeQuestId) params.excludeQuestId = excludeQuestId;
       const result = await invoke("get_next_quest", params);
 
-      // Track offered quest for overlay sync (Lane 1 only)
-      if (lane.key === "castle_duties") {
-        await invoke("set_offered_quest", { questId: result?.quest?.id || null });
-      }
-
       // Skip re-render if quest hasn't changed and we already have content
       const newQuestId = result?.quest?.id || null;
       if (!forceRefresh && newQuestId === laneCurrentQuestId[lane.key] && container.innerHTML !== "") {
@@ -2029,10 +2024,12 @@
           timerDiv.classList.add("qg-content-fading");
           setTimeout(() => {
             timerDiv.classList.remove("qg-content-fading");
+            invoke("set_last_skipped", { questId: null });
             loadAll();
           }, 400);
         }, 3000);
       } else {
+        await invoke("set_last_skipped", { questId: null });
         renderQuestGiver();
       }
     }
@@ -2108,6 +2105,7 @@
         timerDiv.classList.add("qg-content-fading");
         setTimeout(() => {
           timerDiv.classList.remove("qg-content-fading");
+          invoke("set_last_skipped", { questId: null });
           loadAll();
         }, 400);
       }, 3000);
@@ -2162,6 +2160,7 @@
           laneImages[laneKey] = randomFromExcluding(getLaneImagePool(laneKey), laneImages[laneKey]);
           laneLines[laneKey] = randomFromExcluding(getLaneLinePool(laneKey), laneLines[laneKey]);
           laneCurrentQuestId[laneKey] = null;
+          invoke("set_last_skipped", { questId: null }); // clear stale exclude
           loadAll();
         }, 400);
       }, 2500);
@@ -2169,6 +2168,9 @@
 
     async function laneSomethingElse(laneKey, questId) {
       await invoke("skip_quest", { questId });
+      if (laneKey === "castle_duties") {
+        await invoke("set_last_skipped", { questId });
+      }
       laneCurrentQuestId[laneKey] = null; // force re-render
       laneImages[laneKey] = randomFromExcluding(getLaneImagePool(laneKey), laneImages[laneKey]);
       laneLines[laneKey] = randomFromExcluding(getLaneLinePool(laneKey), laneLines[laneKey]);

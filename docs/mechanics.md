@@ -164,6 +164,27 @@ of a **Moderate one-off quest** (currently 150 XP). This is computed from the
 formula, not hardcoded — if base XP or difficulty multipliers change, the bump
 changes with them.
 
+## Quest Giver Lanes
+
+The Next Quest tab shows three stacked quest givers, each filtering by difficulty:
+
+| Lane | Name | Difficulties | Images | Text |
+|---|---|---|---|---|
+| 1 | Castle Duties | Trivial | `ui/images/lane1/` | `ui/text/lane1/` |
+| 2 | Adventures | Easy, Moderate | `ui/images/lane2/` | `ui/text/lane2/` |
+| 3 | Royal Quests | Challenging, Epic | `ui/images/lane3/` | `ui/text/lane3/` |
+
+Each lane uses the same scoring algorithm independently. "Something Else" skips within a single lane. Quest Now / timer from any lane locks all three.
+
+**Saga steps** appear in the lane matching their saga's hardest step, but only when the saga has an active run (it's due, or the user started early). A saga with an Epic step puts all its steps in Royal Quests, even the trivial ones.
+
+**Encounters overlay** shows Lane 1 (trivial) only. Syncs with Lane 1's quest giver — both exclude the last-skipped quest so they show the same thing.
+
+**Empty states:**
+- Lane 1: "The walls are secure."
+- Lane 2: "I haven't heard any new rumors."
+- Lane 3: "The realm is at peace."
+
 ## Quest Selector Scoring
 
 ### Combined Score
@@ -242,7 +263,25 @@ Higher = more urgent.
 
 Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 = every day.
 
-## Saga Step XP
+## Sagas
+
+### Saga Lifecycle
+
+A saga is a multi-step goal with ordered sub-quests. Can be one-off or recurring (with cycle_days).
+
+**Active run:** A saga has an active run when it's due (one-off and incomplete, or recurring and cycle has elapsed since last run completion). The quest giver surfaces the first step not yet completed in the current run.
+
+**Early start:** A user can start a new run early by completing a step after the saga was in completed state but before it became due. This activates a new run.
+
+**Completion:** When all steps have a completion more recent than the run start (`last_run_completed_at` or `created_at`), the saga's run completes: `last_run_completed_at` is stamped, and a completion bonus is awarded.
+
+**Between runs:** After a run completes and before the next cycle, no steps appear in the quest giver. The saga is "cooling down."
+
+### Lane assignment
+
+A saga's lane is determined by its hardest step's difficulty. ALL steps appear in that lane, regardless of individual step difficulty.
+
+### Saga Step XP
 
 Saga steps use the parent saga's cycle for XP calculation, not the one-off multiplier.
 

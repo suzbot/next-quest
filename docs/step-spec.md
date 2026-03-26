@@ -1,115 +1,53 @@
-# Step Spec: Phase 3-3 — Add Lane 2 and Lane 3 ✅
+# Step Spec: Phase 3-4 — Skip exclusion fix + overlay sync ✅
 
 ## Goal
 
-The Next Quest tab shows three stacked lanes — Castle Duties (trivial), Adventures (easy/fair), Royal Quests (hard/epic). Each lane functions independently with its own images, text, quest state, and Done/Quest Now/Something Else controls.
+Overlay shows the same quest as Lane 1 (Castle Duties). After a skip in Lane 1, neither the quest giver nor the overlay shows the just-skipped quest. Replace `offered_quest` with `last_skipped_id` in the skip state.
 
 ---
 
-## Substep 1: Frontend — HTML structure and per-lane state
+## Substep 1: Backend — rename offered_quest to last_skipped
 
-**HTML:** Replace the single `qg-content` div with three lane sections:
+**`SkipStateInner`** in commands.rs: rename `offered_quest_id: Option<String>` to `last_skipped_id: Option<String>`.
 
-```html
-<div id="quest-giver-view">
-  <div class="qg-lane" id="qg-lane1">
-    <div class="qg-lane-header">Castle Duties</div>
-    <div class="qg-lane-content"></div>
-  </div>
-  <div class="qg-lane" id="qg-lane2">
-    <div class="qg-lane-header">Adventures</div>
-    <div class="qg-lane-content"></div>
-  </div>
-  <div class="qg-lane" id="qg-lane3">
-    <div class="qg-lane-header">Royal Quests</div>
-    <div class="qg-lane-content"></div>
-  </div>
-</div>
-```
+**Rename commands:**
+- `set_offered_quest` → `set_last_skipped` — accepts `quest_id: Option<String>`, stores it
+- `get_offered_quest` → `get_last_skipped` — returns the stored ID
 
-**Per-lane state:** Replace single `currentQGImage` / `currentQGLine` with per-lane state:
-
-```javascript
-const laneState = {
-  castle_duties: { image: null, line: null, images: lane1Images, lines: lane1Lines, lane: "castle_duties", label: "Castle Duties", emptyText: "The walls are secure." },
-  adventures:    { image: null, line: null, images: lane2Images, lines: lane2Lines, lane: "adventures",    label: "Adventures",    emptyText: "I haven't heard any new rumors." },
-  royal_quests:  { image: null, line: null, images: lane3Images, lines: lane3Lines, lane: "royal_quests",  label: "Royal Quests",  emptyText: "The realm is at peace." },
-};
-```
-
-Image/line arrays must be assigned after `loadPools` completes (pools are loaded async).
-
-**CSS:** Lanes separated by a subtle border or spacing. Each lane is compact — image + text side-by-side, same layout as current quest giver but potentially smaller to fit three.
+Update `invoke_handler` registration in main.rs.
 
 ---
 
-## Substep 2: Frontend — renderLane function
+## Substep 2: Frontend — quest giver stores last-skipped on skip
 
-**`renderLane(laneKey, container)`** — renders a single lane into its container div. Essentially the current `renderQuestGiverWith` logic scoped to one lane's state:
+**`laneSomethingElse`**: After calling `skip_quest`, call `set_last_skipped` with the skipped quest ID. (Currently calls `set_offered_quest` with the offered quest — wrong direction.)
 
-1. Call `get_next_quest` with the lane's key
-2. If no result: show empty state (quest giver image + empty text)
-3. If result: show quest giver image, flavor text, quest name (with saga name if applicable), Done/Quest Now/Something Else buttons
+**`renderLane`**: Remove the `set_offered_quest` call. The offered quest is no longer tracked — only the skipped quest matters.
 
-Each button calls lane-specific handlers: `laneDone(laneKey, questId, difficulty, sagaId)`, `laneQuestNow(laneKey, questId)`, `laneSomethingElse(laneKey, questId)`.
-
-**`renderQuestGiver()`** calls `renderLane` for all three lanes.
-
-**Empty state:** Shows a quest giver image (from the lane's pool) with the hardcoded empty text. Same split layout as a normal offer.
+**Clear on completion**: After `laneDone` completes and calls `loadAll`, call `set_last_skipped` with null (no stale exclude). Similarly after `timerDone`.
 
 ---
 
-## Substep 3: Frontend — lane-specific Done/Quest Now/Something Else
+## Substep 3: Frontend — overlay reads last-skipped
 
-**`laneDone(laneKey, questId, difficulty, sagaId)`** — same logic as current `qgDone` but:
-- Calls `check_campaign_progress` as today
-- Shows completion feedback within the lane's container
-- After feedback, re-renders all lanes (via `renderQuestGiver`)
+**Overlay `loadQuest`**: Replace `get_offered_quest` → `get_last_skipped`. Pass the result as `excludeQuestId` to `get_next_quest`. This means:
+- No skip: `last_skipped` is null, no exclude, overlay gets same top quest as Lane 1
+- After skip A: `last_skipped` is A, overlay excludes A, gets B (same as Lane 1)
 
-**`laneQuestNow(laneKey, questId)`** — same as current `qgQuestNow`:
-- Starts timer
-- Locks tabs
-- All three lane containers hidden, timer view shown in their place
-
-**`laneSomethingElse(laneKey, questId)`** — same as current `qgSomethingElse` but scoped to the lane:
-- Calls `skip_quest`
-- Calls `get_next_quest` with the lane's key and `excludeQuestId`
-- Re-renders only that lane
-
-**Timer mode:** When timer is active, all lane containers are hidden and the timer view renders in `quest-giver-view` (same as today). On completion/cancel, all lanes re-render.
-
----
-
-## Substep 4: Debug scoring across all lanes
-
-Update the debug score loading in `loadAll` to fetch scores for all three lanes and merge into `questScoreMap`:
-
-```javascript
-if (debugScoring) {
-  const [s1, s2, s3] = await Promise.all([
-    invoke("get_quest_scores", { lane: "castle_duties" }),
-    invoke("get_quest_scores", { lane: "adventures" }),
-    invoke("get_quest_scores", { lane: "royal_quests" }),
-  ]);
-  questScoreMap = {};
-  [...s1, ...s2, ...s3].forEach(s => { questScoreMap[s.quest.id] = s; });
-}
-```
-
-This ensures quest list debug shows scores for all quests regardless of difficulty.
+**Overlay "Run" (somethingElse)**: Also calls `set_last_skipped` with the skipped quest ID so the main quest giver stays in sync if it re-renders.
 
 ---
 
 ## Testing checkpoint
 
-Build app. See all three lanes stacked. Castle Duties shows trivial quests. Adventures shows easy/moderate. Royal Quests shows hard/epic (or empty state if none eligible). Complete a trivial from Lane 1 — XP flash, reloads. Start Quest Now from Lane 2 — timer replaces all lanes, tabs locked. Complete from timer — all lanes re-render. Something Else in Lane 3 — only Lane 3 changes. Enable debug scoring — quest list shows scores for quests at all difficulty levels.
+Build app. Lane 1 shows quest A. Skip A → Lane 1 shows B. Wait for overlay → overlay also shows B (not A). Complete B → both move to next quest. Skip in Lane 2 → overlay unaffected (only Lane 1 skips matter).
 
 ---
 
 ## NOT in this step
 
-- Skip exclusion fix / overlay sync (step 4)
+Nothing — this completes Phase 3.
 
 ## Done When
 
-Three lanes visible and functional. Each lane independent with own images, text, and controls. Timer works from any lane. Debug scoring covers all lanes. Empty states display correctly.
+Overlay and Lane 1 show the same quest. Skipping in Lane 1 excludes the skipped quest from both. `set_last_skipped`/`get_last_skipped` replace the old offered_quest commands. `cargo test` passes.

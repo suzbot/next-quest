@@ -49,7 +49,7 @@ pub struct AppTrayState(pub Mutex<TrayStateInner>);
 pub struct SkipStateInner {
     pub skip_counts: std::collections::HashMap<String, i32>,
     pub reset_date: String,
-    pub offered_quest_id: Option<String>,
+    pub last_skipped_id: Option<String>,
 }
 
 pub struct AppSkipState(pub Mutex<SkipStateInner>);
@@ -416,21 +416,21 @@ pub fn skip_quest(
 }
 
 #[tauri::command]
-pub fn set_offered_quest(
+pub fn set_last_skipped(
     skip_state: State<AppSkipState>,
     quest_id: Option<String>,
 ) -> Result<(), String> {
     let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
-    skips.offered_quest_id = quest_id;
+    skips.last_skipped_id = quest_id;
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_offered_quest(
+pub fn get_last_skipped(
     skip_state: State<AppSkipState>,
 ) -> Result<Option<String>, String> {
     let skips = skip_state.0.lock().map_err(|e| e.to_string())?;
-    Ok(skips.offered_quest_id.clone())
+    Ok(skips.last_skipped_id.clone())
 }
 
 // --- Timer ---

@@ -252,11 +252,23 @@ App configuration. Single row, seeded on first launch.
 
 The quest giver picks quests using a scoring system with hard filters and soft ranking.
 
-### Candidate Pool
-1. All active quests + active saga steps (first incomplete step per active saga)
+### Lanes
+
+The quest giver has three lanes, each filtering by difficulty:
+
+| Lane | Name | Difficulties |
+|---|---|---|
+| 1 | Castle Duties | Trivial |
+| 2 | Adventures | Easy, Moderate |
+| 3 | Royal Quests | Challenging, Epic |
+
+Saga steps appear in the lane matching their saga's hardest step difficulty. Each lane has its own quest giver images and flavor text.
+
+### Candidate Pool (per lane)
+1. All active quests matching the lane's difficulty filter + active saga steps whose saga matches the lane
 2. Hard-filter: time-of-day bitmask matches current local hour (Morning 4am–noon, Afternoon noon–5pm, Evening 5pm–9pm, Night 9pm–4am)
 3. Hard-filter: days-of-week bitmask includes today
-4. Split into **due** and **not-due** pools; due always preferred. Saga steps are always in the due pool.
+4. Split into **due** and **not-due** pools; due always preferred. Saga steps go in the due pool when present (they only appear when their saga has an active run — either the saga is due, or the user started a new run early).
 
 ### Scoring
 ```
@@ -276,7 +288,7 @@ All factors apply to both due and not-due pools (not-due uses normalized days_si
 - "Something Else" / "Run": records a skip, then re-scores. The just-skipped quest is excluded from the next pick (unless it's the only quest).
 - Exhaustion fallback: if all scores ≤ 0, returns the least-negative.
 - Skip counts are in-memory, reset at local midnight or app restart.
-- The Encounters overlay excludes whatever quest the quest giver is currently offering, so the two never show the same quest. The quest giver stores its current quest ID in the skip state; the overlay reads it and passes it as an exclude.
+- The Encounters overlay shows only Lane 1 (trivial) quests and syncs with the quest giver. Both exclude the last-skipped quest so they show the same quest. The last-skipped ID is stored in skip state, set on "Something Else" / "Run", cleared on completion.
 
 ## Planned Entities (Phase 2+)
 
