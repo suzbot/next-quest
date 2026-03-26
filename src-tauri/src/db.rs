@@ -1842,7 +1842,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
 
 const IMPORTANCE_WEIGHT: f64 = 30.0;
 
-pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, exclude_quest_id: Option<&str>) -> Result<Option<ScoredQuest>, String> {
+pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>) -> Result<Vec<ScoredQuest>, String> {
     let quests = get_quests(conn)?;
     let today = local_today_days();
     let hour = local_hour();
@@ -1877,29 +1877,19 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
         .filter(|(q, _, _, _)| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
-    if eligible.is_empty() && eligible_saga.is_empty() {
-        return Ok(None);
-    }
-
     let due: Vec<&Quest> = eligible.iter().filter(|q| q.is_due).copied().collect();
     let not_due: Vec<&Quest> = eligible.iter().filter(|q| !q.is_due).copied().collect();
 
-    // Saga steps are always "due" (they're the active step)
     let total_due = due.len() + eligible_saga.len();
     let due_count = total_due;
     let not_due_count = not_due.len();
 
-    // Score due pool (regular + saga steps)
-    // type: (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, quest, saga_name)
-    let mut scored: Vec<(f64, f64, f64, f64, f64, f64, Quest, Option<String>)> = Vec::new();
-    let mut pool_name = "due";
+    let mut results: Vec<ScoredQuest> = Vec::new();
 
     if !due.is_empty() || !eligible_saga.is_empty() {
-        // Score regular due quests
         for (score, overdue, importance, skip, order, membership, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids) {
-            scored.push((score, overdue, importance, skip, order, membership, quest, None));
+            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, pool: "due".to_string(), due_count, not_due_count, saga_name: None });
         }
-        // Score saga steps
         for (quest, saga_name, activated_at, saga_cycle_days) in &eligible_saga {
             let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
             let days_since = (today - activated_days) as f64;
@@ -1908,58 +1898,42 @@ pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap
             let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT;
             let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
             let skip_penalty = skips * (0.5 + quest.importance as f64 * IMPORTANCE_WEIGHT / 2.0);
-            let list_order_bonus = 1.0; // saga steps treated as top-of-list priority
-            let membership_bonus = 0.0; // saga steps get priority from list_order, not membership
+            let list_order_bonus = 1.0;
+            let membership_bonus = 0.0;
             let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
-            scored.push((score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, (*quest).clone(), Some(saga_name.clone())));
+            results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, pool: "due".to_string(), due_count, not_due_count, saga_name: Some(saga_name.clone()) });
         }
     }
 
-    // If due pool is empty or all scores <= 0, include not-due pool
-    let all_skipped = !scored.is_empty() && scored.iter().all(|s| s.0 <= 0.0);
-    if scored.is_empty() || all_skipped {
+    let all_skipped = !results.is_empty() && results.iter().all(|s| s.score <= 0.0);
+    if results.is_empty() || all_skipped {
         let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort, &campaign_quest_ids);
+        let pool = if due_count == 0 { "not_due" } else { "due+not_due" };
         for (score, overdue, importance, skip, order, membership, quest) in not_due_scored {
-            scored.push((score, overdue, importance, skip, order, membership, quest, None));
-        }
-        if due_count == 0 {
-            pool_name = "not_due";
-        } else {
-            pool_name = "due+not_due";
+            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, pool: pool.to_string(), due_count, not_due_count, saga_name: None });
         }
     }
 
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(results)
+}
+
+pub fn get_next_quest(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, exclude_quest_id: Option<&str>) -> Result<Option<ScoredQuest>, String> {
+    let scored = get_quest_scores(conn, skip_counts)?;
     if scored.is_empty() {
         return Ok(None);
     }
 
-    // Sort by score descending (highest first)
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Skip excluded quest if possible (fall back to it if it's the only one)
     let top = if let Some(exc_id) = exclude_quest_id {
         scored.iter()
-            .find(|(_, _, _, _, _, _, q, _)| q.id != exc_id)
+            .find(|s| s.quest.id != exc_id)
             .cloned()
             .unwrap_or_else(|| scored.into_iter().next().unwrap())
     } else {
         scored.into_iter().next().unwrap()
     };
-    let (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, quest, saga_name) = top;
 
-    Ok(Some(ScoredQuest {
-        quest,
-        score,
-        overdue_ratio,
-        importance_boost,
-        skip_penalty,
-        list_order_bonus,
-        membership_bonus,
-        pool: pool_name.to_string(),
-        due_count,
-        not_due_count,
-        saga_name,
-    }))
+    Ok(Some(top))
 }
 
 fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>) -> Vec<(f64, f64, f64, f64, f64, f64, Quest)> {

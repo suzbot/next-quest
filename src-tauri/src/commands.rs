@@ -367,6 +367,21 @@ pub fn reset_completions(state: State<DbState>) -> Result<(), String> {
 // --- Quest Selection ---
 
 #[tauri::command]
+pub fn get_quest_scores(
+    state: State<DbState>,
+    skip_state: State<AppSkipState>,
+) -> Result<Vec<db::ScoredQuest>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    let today = db::local_today_str();
+    if skips.reset_date != today {
+        skips.skip_counts.clear();
+        skips.reset_date = today;
+    }
+    db::get_quest_scores(&conn, &skips.skip_counts)
+}
+
+#[tauri::command]
 pub fn get_next_quest(
     state: State<DbState>,
     skip_state: State<AppSkipState>,
