@@ -4,6 +4,28 @@
     "images/defeat/Bard 3 58 Amiga.gif",
     "images/defeat/Bard 4 10 PC.gif"
   ],
+  "lane1": [
+    "images/lane1/Bard 1 01 Atari.gif",
+    "images/lane1/Bard 1 02 Atari.gif",
+    "images/lane1/Bard 1 04 Atari.gif",
+    "images/lane1/Bard 1 05 Atari.gif",
+    "images/lane1/Bard 1 06 Atari.gif",
+    "images/lane1/Bard 1 10 Atari.gif",
+    "images/lane1/Bard 1 13 Atari.gif",
+    "images/lane1/Bard 1 26 Atari.gif",
+    "images/lane1/Bard 1 48 Atari.gif",
+    "images/lane1/Bard 1 54 Atari.gif",
+    "images/lane1/Bard 1 56 Atari.gif",
+    "images/lane1/Bard 1 57 Atari.gif",
+    "images/lane1/Bard 1 60 Amiga.gif",
+    "images/lane1/Bard 1 61 Atari.gif",
+    "images/lane1/Bard 1 63 Atari.gif",
+    "images/lane1/Bard 2 04 Amiga.gif",
+    "images/lane1/Bard 2 20 Amiga.gif",
+    "images/lane1/Bard 2 50 Amiga.gif"
+  ],
+  "lane2": [],
+  "lane3": [],
   "monsters": [
     "images/monsters/Bard 1 14 Atari.gif",
     "images/monsters/Bard 1 15 Atari.gif",

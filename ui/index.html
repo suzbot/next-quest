@@ -1040,10 +1040,16 @@
     let monsterImages = [];
     let victoryImages = [];
     let defeatImages = [];
+    let lane1Images = [];
+    let lane2Images = [];
+    let lane3Images = [];
 
     let questGiverLines = [
       "Word has reached the guild of a task requiring attention...",
     ];
+    let lane1Lines = ["Word has reached the guild of a task requiring attention..."];
+    let lane2Lines = ["A task awaits beyond the walls..."];
+    let lane3Lines = ["The realm has need of you..."];
 
     let encounterLines = [
       "A trial lays before you...",
@@ -1051,16 +1057,28 @@
 
     async function loadPools() {
       try {
-        const [qgText, encText, manifestText] = await Promise.all([
+        const [qgText, encText, l1Text, l2Text, l3Text, manifestText] = await Promise.all([
           fetch("text/quest-giver-lines.txt").then(r => r.text()),
           fetch("text/encounter-lines.txt").then(r => r.text()),
+          fetch("text/lane1/quest-giver-lines.txt").then(r => r.text()),
+          fetch("text/lane2/quest-giver-lines.txt").then(r => r.text()),
+          fetch("text/lane3/quest-giver-lines.txt").then(r => r.text()),
           fetch("images/manifest.json").then(r => r.json()),
         ]);
         const qgLines = qgText.split("\n").map(l => l.trim()).filter(l => l);
         const encLines = encText.split("\n").map(l => l.trim()).filter(l => l);
         if (qgLines.length > 0) questGiverLines = qgLines;
         if (encLines.length > 0) encounterLines = encLines;
+        const l1 = l1Text.split("\n").map(l => l.trim()).filter(l => l);
+        const l2 = l2Text.split("\n").map(l => l.trim()).filter(l => l);
+        const l3 = l3Text.split("\n").map(l => l.trim()).filter(l => l);
+        if (l1.length > 0) lane1Lines = l1;
+        if (l2.length > 0) lane2Lines = l2;
+        if (l3.length > 0) lane3Lines = l3;
         questGiverImages = manifestText["quest-givers"] || [];
+        lane1Images = manifestText["lane1"] || [];
+        lane2Images = manifestText["lane2"] || [];
+        lane3Images = manifestText["lane3"] || [];
         monsterImages = manifestText["monsters"] || [];
         victoryImages = manifestText["victory"] || [];
         defeatImages = manifestText["defeat"] || [];

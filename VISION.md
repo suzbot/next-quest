@@ -249,16 +249,38 @@ This can later be built on to do things like more complex and dynamic rewards, h
 3. Show kind of XP gained on celebration text?
 4. Show on next step whether its part of a saga, feat, or both
 
-## Phase 2I: "Rewards"
+## Phase 3: "The Three Quest Givers"
 
+The quest giver becomes three quest givers, each with their own personality, images, and flavor text. Quests are separated into lanes by difficulty, so hard things don't compete with trivials. Each lane works identically to the current quest giver (same scoring, same UI pattern).
+
+**Lane 1 — Castle Duties** (Captain of the Guard): Trivial quests. The daily routine — pills, meals, cat care. Always showing, always reliable.
+
+**Lane 2 — Adventures** (The Adventurer's Guild): Easy and Fair quests. The stretch goals — errands, cleaning projects, exercise. Tackle these when you're warmed up.
+
+**Lane 3 — Royal Quests** (The Royal Court): Hard and Epic quests. The big challenges — taxes, doctor appointments, major projects. Visible all day so you can psych up. Do at most one per day.
+
+Key design decisions:
+- All three lanes stacked vertically on the Next Quest tab, Castle Duties on top
+- Each lane has its own quest giver images (`ui/images/lane1/`, `lane2/`, `lane3/`) and flavor text (`ui/text/lane1/`, `lane2/`, `lane3/`) for easy reskinning
+- Same scoring algorithm within each lane — importance, overdue, list order, etc.
+- Saga steps appear in whichever lane matches the saga's difficulty (inferred from hardest step)
+- CTA overlay only surfaces Lane 1 (trivial) quests — no surprise ambush with hard things
+- Quest Now / timer works from any lane (locks all three)
+
+## Phase 4: "Everything Else"
+
+Potential UI reorg:
+- Evaluate: adding quest timer to overlay instead of going into full app?
+- Evaluate: having quest giver view always at the top and tabs expand bottom detail?
+- Show kind of XP gained on celebration text?
+- Show on next step whether its part of a saga, feat, or both
+
+Rewards:
 - Receive coin and items from questing
-- Rewards
 - Buy stuff with gold
 - Rotating fighting text at different skill/attribute levels
 
-## Phase 3: "The Full Party"
-
-- **Difficulty ramping** — start day with easier quests, suggest harder ones after momentum builds
+Polish and systems:
 - **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
 - Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
 - **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
@@ -269,6 +291,4 @@ This can later be built on to do things like more complex and dynamic rewards, h
 - Character image with visual progression
 - Novelty engine
 - Template Sagas
-- Training / Patrolling / Battling Modes
 - Bounded reward system (computer time earning)
-- Multiple quest givers — different NPCs with different personalities

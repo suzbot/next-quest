@@ -1,45 +1,83 @@
-# Step Spec: Phase 2H.1-3f — Skip penalty rework
+# Step Spec: Phase 3-1 — Asset structure for lane images and text
 
 ## Goal
 
-Replace the subtractive skip penalty with a divisive model for importance. Instead of subtracting `skips × (0.5 + importance × weight/2)`, divide the importance boost by `(1 + skips)` and keep a small base penalty for 0! quests.
+Create the directory structure for lane-specific quest giver images and flavor text. Move existing quest giver images to lane1. Update build.rs to generate the manifest with lane entries. User can start adding images and text in parallel with code work.
 
 ---
 
-## Substep 1: Backend — formula change in all three scoring paths
+## Substep 1: Directory structure and text files
 
-**Old formula:**
+Create directories:
 ```
-importance_boost = importance × IMPORTANCE_WEIGHT
-skip_penalty = skips × (0.5 + importance × IMPORTANCE_WEIGHT / 2.0)
-score = overdue + importance_boost - skip_penalty + order + membership + balance
-```
-
-**New formula:**
-```
-importance_boost = importance × IMPORTANCE_WEIGHT / (1.0 + skips)
-skip_penalty = skips × 0.5
-score = overdue + importance_boost - skip_penalty + order + membership + balance
+ui/images/lane1/
+ui/images/lane2/
+ui/images/lane3/
+ui/text/lane1/
+ui/text/lane2/
+ui/text/lane3/
 ```
 
-The `importance_boost` field in `ScoredQuest` now reflects the skip-adjusted value (what the quest actually got, not the raw importance). This keeps the debug display honest — you can see how skips eroded importance.
+Move all files from `ui/images/quest-givers/` to `ui/images/lane1/`.
 
-**Three locations to update:**
-1. `score_quests_due`
-2. `score_quests_not_due`
-3. Saga step scoring block in `get_quest_scores`
+Create placeholder flavor text files:
+- `ui/text/lane1/quest-giver-lines.txt` — copy content from existing `ui/text/quest-giver-lines.txt`
+- `ui/text/lane2/quest-giver-lines.txt` — single placeholder line (e.g., "A task awaits beyond the walls...")
+- `ui/text/lane3/quest-giver-lines.txt` — single placeholder line (e.g., "The realm has need of you...")
 
-**Update existing skip penalty tests:**
-- `skip_penalty_scales_with_importance` — now skip_penalty is 0.5 regardless of importance. Importance boost is halved instead. Update assertions.
-- `skip_penalty_zero_importance` — unchanged (0.5 base still works).
-
-**New test:**
-1. `skip_diminishes_importance_not_craters` — Create a 5! quest. Skip it 3 times. Verify score is still positive. Verify importance_boost ≈ 150 / 4 = 37.5. Verify skip_penalty = 1.5.
-
-**Testing checkpoint:** `cargo test` — all existing + new tests pass.
+Keep existing `ui/text/quest-giver-lines.txt` and `ui/images/quest-givers/` for now (removed in a later step when the frontend switches over).
 
 ---
+
+## Substep 2: Update build.rs manifest
+
+Add three new categories to the manifest scan:
+
+```rust
+("lane1", "lane1"),
+("lane2", "lane2"),
+("lane3", "lane3"),
+```
+
+Keep existing `("quest-givers", "quest-givers")` entry for now so current frontend still works.
+
+The manifest.json will now include `lane1`, `lane2`, `lane3` keys alongside the existing `quest-givers` key.
+
+---
+
+## Substep 3: Update frontend loadPools to load lane assets
+
+Add lane-specific image and text arrays:
+
+```javascript
+let lane1Images = [];
+let lane2Images = [];
+let lane3Images = [];
+let lane1Lines = [];
+let lane2Lines = [];
+let lane3Lines = [];
+```
+
+In `loadPools`, fetch the three lane text files and read the three lane image arrays from the manifest:
+
+```javascript
+lane1Images = manifestText["lane1"] || [];
+lane2Images = manifestText["lane2"] || [];
+lane3Images = manifestText["lane3"] || [];
+```
+
+Keep existing `questGiverImages` loading so current quest giver still works until step 2 switches it.
+
+**Testing checkpoint:** Build app. Current quest giver works unchanged. No visual difference. Console shows lane arrays loading (verify via debug if needed).
+
+---
+
+## NOT in this step
+
+- Lane filtering in scoring (step 2)
+- Three-lane quest giver UI (step 3)
+- Skip/overlay fixes (step 4)
 
 ## Done When
 
-Skip penalty uses divisive model for importance. High-importance quests diminish gracefully with skips instead of cratering into negatives. `cargo test` passes.
+Lane directories exist. Existing quest giver images copied to lane1. Build.rs generates manifest with lane1/lane2/lane3 keys. Frontend loads lane-specific pools at startup. Current quest giver still works unchanged. Build succeeds.

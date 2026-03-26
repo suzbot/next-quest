@@ -23,6 +23,9 @@ fn main() {
 
     let categories = [
         ("quest-givers", "quest-givers"),
+        ("lane1", "lane1"),
+        ("lane2", "lane2"),
+        ("lane3", "lane3"),
         ("monsters", "monsters"),
         ("victory", "victory"),
         ("defeat", "defeat"),
