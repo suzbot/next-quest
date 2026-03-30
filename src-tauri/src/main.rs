@@ -205,10 +205,10 @@ fn show_overlay(app: &tauri::AppHandle) {
     use tauri::WebviewWindowBuilder;
 
     if let Some(overlay) = app.get_webview_window("overlay") {
-        // Already exists (off-screen) — move back and force to front
+        // Already exists (hidden) — refresh, show, and force to front
         let _ = overlay.emit("overlay-refresh", ());
+        let _ = overlay.show();
         let _ = overlay.center();
-        let _ = overlay.set_always_on_top(false);
         let _ = overlay.set_always_on_top(true);
         let _ = overlay.set_focus();
         return;

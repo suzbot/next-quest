@@ -280,7 +280,14 @@ Key design decisions:
 
 2. **Show XP type on celebration text** — "Cooking +25 XP, Health +25 XP" instead of just "+25 XP". Richer RPG feedback on completion.
 
-## Phase 5: "Portfolio and Polish"
+## Phase 5A: "Usability"
+
+1. **Fix stale overlay bug** — Overlay appears on window maximize/unmaximize showing ineligible quests and interrupting when it shouldn't.
+2. **Difficulty + importance filters** — Add difficulty and importance dropdowns to the quest list filter bar. "Show me all trivial things" or "show me all 3!+ quests."
+3. **Fuzzy string search** — Replace the attribute/skill filter dropdowns (which turned out not to be useful) with a single text search field that fuzzy-matches against quest name, linked attributes, and linked skills. Makes it easy to find a specific quest in a long list.
+4. **Saga reordering + scoring** — Ability to reorder sagas (like quest reordering), and have saga order affect the scoring algorithm. Design TBD.
+
+## Phase 5B: "Portfolio and Polish"
 
 1. **GitHub readme** — User-facing showcase of what makes this app unique, and how AI was leveraged to build it:
    - No streaks, no failure punishment

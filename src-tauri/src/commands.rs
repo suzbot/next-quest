@@ -619,9 +619,10 @@ pub fn dismiss_overlay(
 ) -> Result<(), String> {
     use tauri::Manager;
 
-    // Move overlay off-screen (avoids macOS focusing the main window)
+    // Hide overlay and disable always-on-top to prevent stale appearances
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.set_position(tauri::LogicalPosition::new(-9999.0, -9999.0));
+        let _ = overlay.set_always_on_top(false);
+        let _ = overlay.hide();
     }
 
     match action.as_str() {
