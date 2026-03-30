@@ -244,6 +244,14 @@ pub struct LevelUp {
     pub new_level: i32,
 }
 
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct XpAward {
+    pub name: String,
+    pub xp: i64,
+    pub award_type: String,
+}
+
 #[derive(Serialize, Debug)]
 pub struct Completion {
     pub id: String,
@@ -252,6 +260,7 @@ pub struct Completion {
     pub completed_at: String,
     pub xp_earned: i64,
     pub level_ups: Vec<LevelUp>,
+    pub xp_awards: Vec<XpAward>,
 }
 
 #[derive(Serialize, Debug)]
@@ -2106,6 +2115,7 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
                 completed_at: row.get(3)?,
                 level_ups: Vec::new(),
                 xp_earned: row.get(4)?,
+                xp_awards: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -2417,6 +2427,24 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         }
     }
 
+    // Build XP awards list
+    let mut xp_awards = vec![XpAward {
+        name: "Character".into(),
+        xp: xp_earned,
+        award_type: "character".into(),
+    }];
+    let (linked_skill_ids, linked_attr_ids) = load_quest_link_ids(conn, &quest_id)?;
+    for (id, name, _) in &attr_levels_before {
+        if linked_attr_ids.contains(id) {
+            xp_awards.push(XpAward { name: name.clone(), xp: xp_earned, award_type: "attribute".into() });
+        }
+    }
+    for (id, name, _) in &skill_levels_before {
+        if linked_skill_ids.contains(id) {
+            xp_awards.push(XpAward { name: name.clone(), xp: xp_earned, award_type: "skill".into() });
+        }
+    }
+
     Ok(Completion {
         id: completion_id,
         quest_id: Some(quest_id),
@@ -2424,6 +2452,7 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         completed_at,
         xp_earned,
         level_ups,
+        xp_awards,
     })
 }
 
@@ -5842,5 +5871,34 @@ mod tests {
         assert_eq!(stats.avg_xp_per_day, 0.0);
         assert_eq!(stats.high_score_xp, 0);
         assert!(stats.all_time_xp == 0);
+    }
+
+    // --- XP awards tests ---
+
+    #[test]
+    fn completion_xp_awards_with_links() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Linked Quest");
+        let skills = get_skills(&conn).unwrap();
+        let attrs = get_attributes(&conn).unwrap();
+        set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![attrs[0].id.clone()]).unwrap();
+
+        let completion = complete_quest(&conn, q.id).unwrap();
+        assert_eq!(completion.xp_awards.len(), 3); // character + attribute + skill
+        assert!(completion.xp_awards.iter().any(|a| a.award_type == "character"));
+        assert!(completion.xp_awards.iter().any(|a| a.award_type == "attribute" && a.name == attrs[0].name));
+        assert!(completion.xp_awards.iter().any(|a| a.award_type == "skill" && a.name == skills[0].name));
+        // All should have the same XP amount
+        let xp = completion.xp_earned;
+        assert!(completion.xp_awards.iter().all(|a| a.xp == xp));
+    }
+
+    #[test]
+    fn completion_xp_awards_no_links() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Solo Quest");
+        let completion = complete_quest(&conn, q.id).unwrap();
+        assert_eq!(completion.xp_awards.len(), 1);
+        assert_eq!(completion.xp_awards[0].award_type, "character");
     }
 }

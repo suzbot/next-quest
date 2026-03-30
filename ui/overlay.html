@@ -233,6 +233,17 @@
       }).join("");
     }
 
+    function xpAwardsHtml(awards, defaultColor) {
+      if (!awards || awards.length === 0) return "";
+      if (awards.length === 1) {
+        return `<span class="xp-flash" style="color: ${defaultColor}">+${awards[0].xp} XP</span>`;
+      }
+      return awards.map(a => {
+        const color = a.awardType === "character" ? (defaultColor || "#111") : levelUpColor(a.name);
+        return `<span class="xp-flash" style="color: ${color}">+${a.xp} ${escapeHtml(a.name)}</span>`;
+      }).join("  ");
+    }
+
     let monsterImages = [];
 
     let encounterLines = [
@@ -329,7 +340,7 @@
 
       let textHtml = `<div class="quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        textHtml += `<div class="xp-flash fading-in" style="color: ${color}">+${completion.xp_earned} XP</div>`;
+        textHtml += `<div class="xp-flash fading-in">${xpAwardsHtml(completion.xp_awards, color)}</div>`;
       }
       textHtml += levelUpHtml(completion.level_ups);
       if (sagaResult?.completed) {

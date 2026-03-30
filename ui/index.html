@@ -1036,6 +1036,17 @@
       ).join("");
     }
 
+    function xpAwardsHtml(awards, defaultColor) {
+      if (!awards || awards.length === 0) return "";
+      if (awards.length === 1) {
+        return `<span class="xp-flash" style="color: ${defaultColor}">+${awards[0].xp} XP</span>`;
+      }
+      return awards.map(a => {
+        const color = a.awardType === "character" ? (defaultColor || "#111") : levelUpColor(a.name);
+        return `<span class="xp-flash" style="color: ${color}">+${a.xp} ${escapeHtml(a.name)}</span>`;
+      }).join("  ");
+    }
+
     function campaignCelebrationHtml(results) {
       if (!results) return "";
       return results.filter(r => r.completed).map(r => {
@@ -1572,7 +1583,7 @@
         feedbackDiv.style.marginLeft = "4px";
         let feedbackHtml = "";
         if (completion.xp_earned > 0) {
-          feedbackHtml += `<span class="xp-flash" style="color: ${color}">+${completion.xp_earned} XP</span>`;
+          feedbackHtml += xpAwardsHtml(completion.xp_awards, color);
         }
         if (completion.level_ups?.length > 0) {
           feedbackHtml += levelUpHtml(completion.level_ups);
@@ -2067,7 +2078,7 @@
 
       let textHtml = `<div class="qg-quest-name pulsing" style="font-size: 18px;">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        textHtml += `<div class="qg-xp-flash pulsing">+${completion.xp_earned} XP</div>`;
+        textHtml += `<div class="qg-xp-flash pulsing">${xpAwardsHtml(completion.xp_awards, "#1a6e1a")}</div>`;
       }
       textHtml += levelUpHtml(completion.level_ups);
       if (sagaResult?.completed) {
@@ -2130,7 +2141,7 @@
       // Show completion feedback within the lane
       let textHtml = `<div class="qg-quest-name pulsing">${escapeHtml(completion.quest_title)}</div>`;
       if (completion.xp_earned > 0) {
-        textHtml += `<div class="qg-xp-flash pulsing" style="color: ${color}">+${completion.xp_earned} XP</div>`;
+        textHtml += `<div class="qg-xp-flash pulsing">${xpAwardsHtml(completion.xp_awards, color)}</div>`;
       }
       textHtml += levelUpHtml(completion.level_ups);
       if (sagaResult?.completed) {
@@ -3150,7 +3161,7 @@
         feedbackDiv.style.marginLeft = "4px";
         let feedbackHtml = "";
         if (completion.xp_earned > 0) {
-          feedbackHtml += `<span class="xp-flash" style="color: ${color}">+${completion.xp_earned} XP</span>`;
+          feedbackHtml += xpAwardsHtml(completion.xp_awards, color);
         }
         if (completion.level_ups?.length > 0) {
           feedbackHtml += levelUpHtml(completion.level_ups);
