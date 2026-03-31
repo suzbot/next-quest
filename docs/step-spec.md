@@ -1,90 +1,110 @@
-# Step Spec: Phase 4-3 — XP distribution on celebrations ✅
+# Step Spec: Phase 5A-2 — Fuzzy search + difficulty + importance filters ✅
 
 ## Goal
 
-Completion celebrations show which skills and attributes received XP, each in its attribute color. Instead of just "+25 XP", show "+25 Character  +25 Cooking  +25 Health".
+Replace the attribute/skill filter dropdowns with a fuzzy text search field. Add difficulty and importance exact-match dropdowns. Search covers quest title, linked skill/attribute names, difficulty label, and importance marks.
 
 ---
 
-## Substep 1: Backend — add xp_awards to Completion struct
+## Substep 1: HTML — replace filter bar
 
-**New struct:**
+Remove `filter-attr` and `filter-skill` selects. Add search input and two new dropdowns:
 
-```rust
-#[derive(Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct XpAward {
-    pub name: String,
-    pub xp: i64,
-    pub award_type: String, // "character", "attribute", or "skill"
-}
+```html
+<div id="filter-bar">
+  <input type="text" id="filter-search" placeholder="Search quests..." oninput="applyFilters()">
+  <select id="filter-difficulty" onchange="applyFilters()">
+    <option value="">All Difficulties</option>
+    <option value="trivial">Trivial</option>
+    <option value="easy">Easy</option>
+    <option value="moderate">Fair</option>
+    <option value="challenging">Hard</option>
+    <option value="epic">Epic</option>
+  </select>
+  <select id="filter-importance" onchange="applyFilters()">
+    <option value="">All Importance</option>
+    <option value="0">—</option>
+    <option value="1">!</option>
+    <option value="2">!!</option>
+    <option value="3">!!!</option>
+    <option value="4">!!!!</option>
+    <option value="5">!!!!!</option>
+  </select>
+  <select id="filter-tod" onchange="applyFilters()">...</select>
+  <select id="filter-dow" onchange="applyFilters()">...</select>
+  <label><input type="checkbox" id="filter-due" onchange="applyFilters()"> Due</label>
+  <button type="button" onclick="clearFilters()">Clear</button>
+</div>
 ```
 
-**Add to `Completion`:** `pub xp_awards: Vec<XpAward>`
-
-**Build in `complete_quest`:** After `award_xp` and before creating the completion record, build the awards list:
-
-1. Always: `XpAward { name: character.name, xp: xp_earned, award_type: "character" }`
-2. For each linked attribute: look up name, `XpAward { name, xp: xp_earned, award_type: "attribute" }`
-3. For each linked skill: look up name, `XpAward { name, xp: xp_earned, award_type: "skill" }`
-
-The quest's linked skill/attribute IDs are already available — `award_xp` loads them internally. Either refactor `award_xp` to return the names, or look up names separately in `complete_quest`. Looking up separately is simpler (just query attribute/skill name by ID).
-
-**Tests:**
-
-1. `completion_xp_awards_with_links` — Create a quest linked to a skill and attribute. Complete it. Verify `xp_awards` has 3 entries (character + attribute + skill) with correct names and XP.
-2. `completion_xp_awards_no_links` — Complete a quest with no links. Verify `xp_awards` has 1 entry (character only).
-
-**Testing checkpoint:** `cargo test` passes.
+**CSS:** Search input gets `flex: 1` to fill available space. Font matches existing filter elements (Silkscreen 10px).
 
 ---
 
-## Substep 2: Frontend — colored XP display at all completion paths
+## Substep 2: JS — search text builder + filter logic
 
-**Helper function** (index.html and overlay.html):
+**Build searchable text per quest:**
 
 ```javascript
-function xpAwardsHtml(awards, defaultColor) {
-  if (!awards || awards.length === 0) return "";
-  if (awards.length === 1) {
-    return `<span class="xp-flash" style="color: ${defaultColor}">+${awards[0].xp} XP</span>`;
-  }
-  return awards.map(a => {
-    const color = awardColor(a);
-    return `<span class="xp-flash" style="color: ${color}">+${a.xp} ${a.name}</span>`;
-  }).join("  ");
+function buildSearchText(q) {
+  const parts = [q.title];
+  q.skill_ids.forEach(id => { if (skillNameMap[id]) parts.push(skillNameMap[id]); });
+  q.attribute_ids.forEach(id => { if (attrNameMap[id]) parts.push(attrNameMap[id]); });
+  parts.push(difficultyLabel(q.difficulty));
+  if (q.importance > 0) parts.push("!".repeat(q.importance));
+  return parts.join(" ").toLowerCase();
 }
 ```
 
-**Color logic (`awardColor`):**
-- `award_type: "character"` → default text color (#111)
-- `award_type: "attribute"` → attribute's text color from `attrTextColors` (looked up by name)
-- `award_type: "skill"` → parent attribute's text color (looked up via `skillAttrMap` by name)
+**Update `passesFilters`:**
 
-Both index.html and overlay.html have the attribute color infrastructure. The overlay has `skillAttrMap` and `attrTextColors` already loaded.
+Replace attribute/skill filter checks with:
+```javascript
+const searchVal = filterSearch.value.trim().toLowerCase();
+if (searchVal && !buildSearchText(q).includes(searchVal)) return false;
+if (filterDifficulty.value && q.difficulty !== filterDifficulty.value) return false;
+if (filterImportance.value !== "" && q.importance !== parseInt(filterImportance.value)) return false;
+```
 
-**Replace single XP display at all five completion paths:**
+Keep existing TOD, DOW, Due checks unchanged.
 
-Currently: `+${completion.xp_earned} XP`
-Replace with: `xpAwardsHtml(completion.xpAwards, color)`
+**Update `clearFilters`:**
 
-Paths to update:
-1. `completeQuest()` (quest list) — feedbackHtml XP line
-2. `laneDone()` (quest giver lanes) — textHtml XP line
-3. `timerDone()` — textHtml XP line
-4. `completeSagaStep()` (saga tab) — feedbackHtml XP line
-5. `questDone()` (overlay) — textHtml XP line
+Remove `filterAttr.value = ""` and `filterSkill.value = ""`. Add:
+```javascript
+filterSearch.value = "";
+filterDifficulty.value = "";
+filterImportance.value = "";
+```
 
-**Saga/campaign bonus celebrations:** These already show "+N bonus XP". For saga bonus, the distribution goes to character + final step's linked skills/attributes — but the `SagaCompletionResult` doesn't currently include award details. Leave saga/campaign bonus display as-is for now (just the total). The per-skill breakdown is most valuable for regular quest completions.
+**Update filter state references:**
 
-**Testing checkpoint:** Build app. Complete a quest with linked skills — see "+25 Cooking  +25 Health  +25 Character" in attribute colors. Complete a quest with no links — see "+25 XP" (simple format). Works from quest list, quest giver, timer, saga tab, overlay.
+Remove `filterAttr` and `filterSkill` const declarations. Add `filterSearch`, `filterDifficulty`, `filterImportance`.
+
+**Remove `populateFilterDropdowns` attr/skill logic** — no longer needed. The function can be simplified or removed if its only purpose was populating those dropdowns. Check if it does anything else (it also sets up `attrIndexById` etc. — keep that, just remove the dropdown population).
+
+---
+
+## Testing checkpoint
+
+Build app. Quest list filter bar shows: search field, difficulty dropdown, importance dropdown, TOD, DOW, Due, Clear.
+
+- Type "vac" → only Vacuuming visible
+- Type "cook" → quests linked to Cooking skill visible
+- Type "health" → quests linked to Health attribute visible
+- Type "!!!" → quests with importance 3, 4, 5 visible
+- Type "trivial" → trivial quests visible (via search)
+- Select Trivial in difficulty dropdown → only trivial quests
+- Select !!! in importance dropdown → only importance 3 quests (exact match)
+- Combine: search "cat" + difficulty Trivial → only trivial cat-related quests
+- Clear → all filters reset
 
 ---
 
 ## NOT in this step
 
-- Saga/campaign bonus XP distribution detail (future enhancement)
+- Category tags (step 2)
 
 ## Done When
 
-Quest completion celebrations show per-skill/attribute XP in attribute colors. All five paths updated. Quests with no links show simple "+N XP". `cargo test` passes.
+Fuzzy search field works across quest title, skill names, attribute names, difficulty, importance. Difficulty and importance dropdowns filter by exact match. Attribute/skill dropdowns removed. All filters combine via AND. Clear resets all. No backend changes.

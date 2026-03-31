@@ -354,6 +354,13 @@
       margin-bottom: 4px;
       font-size: 10px;
     }
+    #filter-bar input[type="text"] {
+      font-family: 'Silkscreen', monospace;
+      font-size: 10px;
+      flex: 1;
+      min-width: 140px;
+      padding: 2px 4px;
+    }
     #filter-bar select {
       font-size: 10px;
     }
@@ -777,8 +784,24 @@
   <div id="add-links-row" class="hidden"></div>
 
   <div id="filter-bar">
-    <select id="filter-attr" onchange="applyFilters()"></select>
-    <select id="filter-skill" onchange="applyFilters()"></select>
+    <input type="text" id="filter-search" placeholder="Search quests..." oninput="applyFilters()">
+    <select id="filter-difficulty" onchange="applyFilters()">
+      <option value="">All Difficulties</option>
+      <option value="trivial">Trivial</option>
+      <option value="easy">Easy</option>
+      <option value="moderate">Fair</option>
+      <option value="challenging">Hard</option>
+      <option value="epic">Epic</option>
+    </select>
+    <select id="filter-importance" onchange="applyFilters()">
+      <option value="">All Importance</option>
+      <option value="0">—</option>
+      <option value="1">!</option>
+      <option value="2">!!</option>
+      <option value="3">!!!</option>
+      <option value="4">!!!!</option>
+      <option value="5">!!!!!</option>
+    </select>
     <select id="filter-tod" onchange="applyFilters()">
       <option value="">All Times</option>
       <option value="1">Morning</option>
@@ -1173,21 +1196,15 @@
     }
 
     // Filter state
-    const filterAttr = document.getElementById("filter-attr");
-    const filterSkill = document.getElementById("filter-skill");
+    const filterSearch = document.getElementById("filter-search");
+    const filterDifficulty = document.getElementById("filter-difficulty");
+    const filterImportance = document.getElementById("filter-importance");
     const filterTod = document.getElementById("filter-tod");
     const filterDow = document.getElementById("filter-dow");
     const filterDue = document.getElementById("filter-due");
 
     function populateFilterDropdowns() {
-      const attrVal = filterAttr.value;
-      const skillVal = filterSkill.value;
-      filterAttr.innerHTML = '<option value="">All Attributes</option>' +
-        cachedAttributes.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
-      filterSkill.innerHTML = '<option value="">All Skills</option>' +
-        cachedSkills.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
-      filterAttr.value = attrVal;
-      filterSkill.value = skillVal;
+      // No dynamic dropdowns needed — search replaces attr/skill filters
     }
 
     function applyFilters() {
@@ -1195,17 +1212,29 @@
     }
 
     function clearFilters() {
-      filterAttr.value = "";
-      filterSkill.value = "";
+      filterSearch.value = "";
+      filterDifficulty.value = "";
+      filterImportance.value = "";
       filterTod.value = "";
       filterDow.value = "";
       filterDue.checked = false;
       applyFilters();
     }
 
+    function buildSearchText(q) {
+      const parts = [q.title];
+      (q.skill_ids || []).forEach(id => { if (skillNameMap[id]) parts.push(skillNameMap[id]); });
+      (q.attribute_ids || []).forEach(id => { if (attrNameMap[id]) parts.push(attrNameMap[id]); });
+      parts.push(difficultyLabel(q.difficulty));
+      if (q.importance > 0) parts.push("!".repeat(q.importance));
+      return parts.join(" ").toLowerCase();
+    }
+
     function passesFilters(q) {
-      if (filterAttr.value && !(q.attribute_ids || []).includes(filterAttr.value)) return false;
-      if (filterSkill.value && !(q.skill_ids || []).includes(filterSkill.value)) return false;
+      const searchVal = filterSearch.value.trim().toLowerCase();
+      if (searchVal && !buildSearchText(q).includes(searchVal)) return false;
+      if (filterDifficulty.value && q.difficulty !== filterDifficulty.value) return false;
+      if (filterImportance.value !== "" && q.importance !== parseInt(filterImportance.value)) return false;
       if (filterTod.value) {
         const bit = parseInt(filterTod.value, 10);
         const mask = q.time_of_day ?? 15;

@@ -282,10 +282,11 @@ Key design decisions:
 
 ## Phase 5A: "Usability"
 
-1. **Fix stale overlay bug** — Overlay appears on window maximize/unmaximize showing ineligible quests and interrupting when it shouldn't.
+1. ~~**Fix stale overlay bug**~~ ✅
 2. **Difficulty + importance filters** — Add difficulty and importance dropdowns to the quest list filter bar. "Show me all trivial things" or "show me all 3!+ quests."
 3. **Fuzzy string search** — Replace the attribute/skill filter dropdowns (which turned out not to be useful) with a single text search field that fuzzy-matches against quest name, linked attributes, and linked skills. Makes it easy to find a specific quest in a long list.
-4. **Saga reordering + scoring** — Ability to reorder sagas (like quest reordering), and have saga order affect the scoring algorithm. Design TBD.
+4. **Category tags** — Ability to customize and apply category tags to quests (e.g., Outside, Computer). Filter by tags or include them in the string search. "I'm at the computer, show me all computer tasks."
+5. **Saga reordering + scoring** — Ability to reorder sagas (like quest reordering), and have saga order affect the scoring algorithm. Design TBD.
 
 ## Phase 5B: "Portfolio and Polish"
 
@@ -297,9 +298,17 @@ Key design decisions:
    - Three lanes of tasks — you only see 3 at once so you're never overwhelmed, and you have advance notice of the bigger items you might need to psych yourself up for
    - A very clever algorithm that looks at a lot of factors, so you can just brain dump all the things you might ever want to do into the list, and the system will raise them to you at the right time
 
-2. **Quest giver images** — More variety, including women characters. Explore AI image generation.
+2. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
 
-3. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+3. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
+
+4. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+
+5. **Quest giver images** — More variety, including women characters. Explore AI image generation.
+   - Update `build.rs` to scan for `.png` files in addition to `.gif` (flexibility during iteration)
+   - See `docs/image-generation-workflow.md` for the Stable Diffusion + GIMP workflow
+
+6. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
 
 ## Phase 6: "Everything Else"
 

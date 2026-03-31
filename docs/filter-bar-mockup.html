@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Filter Bar Mockup — Phase 5A</title>
+  <style>
+    @font-face {
+      font-family: 'Silkscreen';
+      font-weight: 400;
+      src: url('../ui/fonts/Silkscreen-Regular.ttf') format('truetype');
+    }
+    @font-face {
+      font-family: 'Silkscreen';
+      font-weight: 700;
+      src: url('../ui/fonts/Silkscreen-Bold.ttf') format('truetype');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #b4b4b4;
+      color: #111;
+      font-family: 'Silkscreen', monospace;
+      font-size: 11px;
+      padding: 20px;
+    }
+
+    h2 { margin-bottom: 12px; font-size: 14px; }
+    h3 { margin: 20px 0 8px; font-size: 12px; color: #444; }
+
+    .content-box {
+      border: 1px solid #888;
+      outline: 1px solid #444;
+      padding: 12px;
+      background: #b4b4b4;
+      max-width: 1000px;
+    }
+
+    /* --- Current filter bar (before) --- */
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      margin-bottom: 4px;
+      background: #aaa;
+      border: 1px solid #888;
+    }
+    .filter-bar select { font-family: 'Silkscreen', monospace; font-size: 10px; }
+    .filter-bar label { font-size: 10px; white-space: nowrap; }
+    .filter-bar button { font-family: 'Silkscreen', monospace; font-size: 10px; padding: 1px 6px; }
+    .filter-bar input[type="text"] {
+      font-family: 'Silkscreen', monospace;
+      font-size: 10px;
+      flex: 1;
+      min-width: 180px;
+      padding: 2px 4px;
+    }
+    .filter-bar input[type="checkbox"] { margin-right: 2px; }
+
+    /* --- Quest row examples --- */
+    .quest-list { list-style: none; padding: 0; margin: 0; }
+    .quest-item {
+      display: flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-bottom: 1px solid #999;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .quest-item.dimmed { opacity: 0.5; }
+    .quest-title { flex: 1; }
+    .quest-importance { color: #a85; font-size: 10px; margin-left: 2px; }
+    .quest-tags { font-size: 9px; color: #666; }
+    .quest-meta { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #555; flex-shrink: 0; }
+    .meta-difficulty { font-size: 10px; }
+
+    .section-label { font-size: 9px; color: #777; margin: 16px 0 4px; text-transform: uppercase; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+
+<h2>Filter Bar Mockup — Phase 5A-2/3/4</h2>
+
+<h3>BEFORE (current)</h3>
+<div class="content-box">
+  <div class="filter-bar">
+    <select><option>All Attributes</option></select>
+    <select><option>All Skills</option></select>
+    <select>
+      <option>All Times</option>
+      <option>Morning</option>
+      <option>Afternoon</option>
+      <option>Evening</option>
+      <option>Night</option>
+    </select>
+    <select>
+      <option>All Days</option>
+      <option>Mon</option>
+    </select>
+    <label><input type="checkbox"> Due</label>
+    <button>Clear</button>
+  </div>
+</div>
+
+<h3>AFTER (new)</h3>
+<div class="content-box">
+  <div class="filter-bar">
+    <input type="text" placeholder="Search quests, skills, attributes, tags...">
+    <select>
+      <option>All Difficulties</option>
+      <option>Trivial</option>
+      <option>Easy</option>
+      <option>Fair</option>
+      <option>Hard</option>
+      <option>Epic</option>
+    </select>
+    <select>
+      <option>All Importance</option>
+      <option>! +</option>
+      <option>!! +</option>
+      <option>!!! +</option>
+      <option>!!!! +</option>
+      <option>!!!!! +</option>
+    </select>
+    <select>
+      <option>All Times</option>
+      <option>Morning</option>
+      <option>Afternoon</option>
+      <option>Evening</option>
+      <option>Night</option>
+    </select>
+    <select>
+      <option>All Days</option>
+      <option>Mon</option>
+    </select>
+    <label><input type="checkbox"> Due</label>
+    <button>Clear</button>
+  </div>
+
+  <div class="section-label">Example results — searching "cook" with Trivial difficulty filter</div>
+  <ul class="quest-list">
+    <li class="quest-item">
+      <span class="quest-title">Cook Dinner</span>
+      <span class="quest-importance">!!</span>
+      <span class="quest-tags">[Kitchen]</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #2244aa">Trivial</span>
+      </span>
+    </li>
+    <li class="quest-item">
+      <span class="quest-title">Clean Stovetop</span>
+      <span class="quest-importance">!</span>
+      <span class="quest-tags">[Kitchen]</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #2244aa">Trivial</span>
+      </span>
+    </li>
+  </ul>
+
+  <div class="section-label">Example results — searching "outside"</div>
+  <ul class="quest-list">
+    <li class="quest-item">
+      <span class="quest-title">Walk Outside</span>
+      <span class="quest-importance">!</span>
+      <span class="quest-tags">[Outside]</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #1a6e1a">Easy</span>
+      </span>
+    </li>
+    <li class="quest-item">
+      <span class="quest-title">Take Out Garbage</span>
+      <span class="quest-tags">[Outside]</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #1a6e1a">Easy</span>
+      </span>
+    </li>
+    <li class="quest-item">
+      <span class="quest-title">Yoga Class</span>
+      <span class="quest-tags">[Outside]</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #1a6e1a">Easy</span>
+      </span>
+    </li>
+  </ul>
+
+  <div class="section-label">Example — importance filter "!!! +" (importance >= 3)</div>
+  <ul class="quest-list">
+    <li class="quest-item">
+      <span class="quest-title">7:30 AM Pills (Metro)</span>
+      <span class="quest-importance">!!!!!</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #2244aa">Trivial</span>
+      </span>
+    </li>
+    <li class="quest-item">
+      <span class="quest-title">Take Vitamins and Ritalin</span>
+      <span class="quest-importance">!!!!!</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #2244aa">Trivial</span>
+      </span>
+    </li>
+    <li class="quest-item">
+      <span class="quest-title">Feed Cats AM Wet Food</span>
+      <span class="quest-importance">!!!!</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #2244aa">Trivial</span>
+      </span>
+    </li>
+    <li class="quest-item">
+      <span class="quest-title">Drink Water AM</span>
+      <span class="quest-importance">!!!</span>
+      <span class="quest-meta">
+        <span class="meta-difficulty" style="color: #2244aa">Trivial</span>
+      </span>
+    </li>
+  </ul>
+</div>
+
+</body>
+</html>
