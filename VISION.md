@@ -286,7 +286,11 @@ Key design decisions:
 2. ~~**Difficulty + importance filters**~~ ✅
 3. ~~**Fuzzy string search**~~ ✅ — Replaced attribute/skill dropdowns with a single text search field. Searches quest name, skills, attributes, category tags, difficulty, importance.
 4. ~~**Category tags**~~ ✅ — User-defined tags (e.g., Computer, Outside) applied via Tags section in add/edit mode. Searchable via fuzzy search.
-5. **Saga reordering + scoring** — Ability to reorder sagas (like quest reordering), and have saga order affect the scoring algorithm. Design TBD.
+5. ~~**Debug scoring on saga tab**~~ ✅
+6. **Saga reordering + scoring** — Ability to reorder sagas (like quest reordering), and have saga order affect the scoring algorithm.
+7. **Saga steps on quest list** — Active saga steps appear as read-only rows on the quest list, filterable and searchable alongside regular quests. Edit links to saga tab.
+8. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
+9. *(Deferred)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
 
 ## Phase 5B: "Portfolio and Polish"
 
@@ -325,7 +329,7 @@ Polish and systems:
 - Reset behavior rethink (what does "Reset Char" mean with custom skills/attributes?)
   - Seed data guard rework (seed_data() skips if character exists, needs rethinking)
   - SQLite WAL cleanup (WAL/SHM files must be deleted alongside DB file on reset)
-- Evaluate: adding quest timer to overlay instead of going into full app?
+- Expand campaign types (when a concrete need arises)
 - Expand campaign types (when a concrete need arises)
 
 Smart insights (data-driven, low priority):

@@ -2921,7 +2921,7 @@
                         onkeydown="handleStepKey(event, '${step.id}', '${saga.id}')"
                         onpointerdown="onStepPointerDown(event, '${step.id}', '${saga.id}')">
               <div class="quest-row-top">
-                <span class="expand-toggle" onclick="toggleDetail(this)">${stepLinks ? '▸' : ''}</span>
+                <span class="expand-toggle" onclick="toggleDetail(this)">${(stepLinks || debugScoring) ? '▸' : ''}</span>
                 <span class="step-number">${i + 1}.</span>
                 <span class="quest-title" onclick="startStepEdit('${step.id}')">${escapeHtml(step.title)}</span>${step.importance > 0 ? `<span class="quest-importance">${"!".repeat(step.importance)}</span>` : ''}
                 <span class="quest-meta">
@@ -2933,7 +2933,7 @@
                 <button class="action-btn" onclick="sagaStepQuestNow('${step.id}')">⚔</button>
                 <button class="action-btn done-btn" onclick="completeSagaStep('${step.id}', '${saga.id}')">✓</button>
               </div>
-              ${stepLinks ? `<div class="quest-detail" style="display:none"><span class="quest-links">${escapeHtml(stepLinks)}</span></div>` : ''}
+              ${(stepLinks || debugScoring) ? `<div class="quest-detail" style="display:none">${stepLinks ? `<span class="quest-links">${escapeHtml(stepLinks)}</span>` : ''}${debugScoring && questScoreMap[step.id] ? `<div class="quest-debug">${formatScoreDebug(questScoreMap[step.id])}</div>` : ''}</div>` : ''}
             </li>`;
           }
         });
