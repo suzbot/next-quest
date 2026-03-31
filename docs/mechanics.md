@@ -164,6 +164,22 @@ of a **Moderate one-off quest** (currently 150 XP). This is computed from the
 formula, not hardcoded — if base XP or difficulty multipliers change, the bump
 changes with them.
 
+## Quest List Filters
+
+The quest list has a filter bar with:
+
+- **Fuzzy search** — substring match against quest title, linked skill names, attribute names, category tag names, difficulty label, and importance marks. Case-insensitive. "cook" finds quests linked to Cooking. "!!!" finds importance 3+. "computer" finds quests tagged Computer.
+- **Difficulty filter** — exact match dropdown (Trivial, Easy, Fair, Hard, Epic)
+- **Importance filter** — exact match dropdown (0–5)
+- **Time-of-day filter** — matches quests available in the selected window
+- **Day-of-week filter** — matches quests available on the selected day
+- **Due filter** — shows only currently due quests
+- All filters combine via AND logic. Clear resets all.
+
+### Category Tags
+
+User-defined labels (e.g., "Computer", "Outside", "Phone") applied to quests via the Tags section in add/edit mode. Created inline — type a new name and it's auto-created. Searchable via fuzzy search. No effect on quest scoring.
+
 ## Quest Giver Lanes
 
 The Next Quest tab shows three stacked quest givers, each filtering by difficulty:

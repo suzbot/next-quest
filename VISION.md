@@ -283,9 +283,9 @@ Key design decisions:
 ## Phase 5A: "Usability"
 
 1. ~~**Fix stale overlay bug**~~ ✅
-2. **Difficulty + importance filters** — Add difficulty and importance dropdowns to the quest list filter bar. "Show me all trivial things" or "show me all 3!+ quests."
-3. **Fuzzy string search** — Replace the attribute/skill filter dropdowns (which turned out not to be useful) with a single text search field that fuzzy-matches against quest name, linked attributes, and linked skills. Makes it easy to find a specific quest in a long list.
-4. **Category tags** — Ability to customize and apply category tags to quests (e.g., Outside, Computer). Filter by tags or include them in the string search. "I'm at the computer, show me all computer tasks."
+2. ~~**Difficulty + importance filters**~~ ✅
+3. ~~**Fuzzy string search**~~ ✅ — Replaced attribute/skill dropdowns with a single text search field. Searches quest name, skills, attributes, category tags, difficulty, importance.
+4. ~~**Category tags**~~ ✅ — User-defined tags (e.g., Computer, Outside) applied via Tags section in add/edit mode. Searchable via fuzzy search.
 5. **Saga reordering + scoring** — Ability to reorder sagas (like quest reordering), and have saga order affect the scoring algorithm. Design TBD.
 
 ## Phase 5B: "Portfolio and Polish"

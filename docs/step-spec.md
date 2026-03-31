@@ -1,110 +1,126 @@
-# Step Spec: Phase 5A-2 — Fuzzy search + difficulty + importance filters ✅
+# Step Spec: Phase 5A-3 — Category tags ✅
 
 ## Goal
 
-Replace the attribute/skill filter dropdowns with a fuzzy text search field. Add difficulty and importance exact-match dropdowns. Search covers quest title, linked skill/attribute names, difficulty label, and importance marks.
+Users can create custom tags (e.g., "Computer", "Outside"), apply them to quests and saga steps, and find tagged quests via the fuzzy search. Full vertical slice: backend schema + CRUD, frontend tag selector in add and edit mode, search integration.
 
 ---
 
-## Substep 1: HTML — replace filter bar
+## Substep 1: Backend — schema, CRUD, Quest struct
 
-Remove `filter-attr` and `filter-skill` selects. Add search input and two new dropdowns:
+**Migration** (`db.rs` → `migrate()`):
 
-```html
-<div id="filter-bar">
-  <input type="text" id="filter-search" placeholder="Search quests..." oninput="applyFilters()">
-  <select id="filter-difficulty" onchange="applyFilters()">
-    <option value="">All Difficulties</option>
-    <option value="trivial">Trivial</option>
-    <option value="easy">Easy</option>
-    <option value="moderate">Fair</option>
-    <option value="challenging">Hard</option>
-    <option value="epic">Epic</option>
-  </select>
-  <select id="filter-importance" onchange="applyFilters()">
-    <option value="">All Importance</option>
-    <option value="0">—</option>
-    <option value="1">!</option>
-    <option value="2">!!</option>
-    <option value="3">!!!</option>
-    <option value="4">!!!!</option>
-    <option value="5">!!!!!</option>
-  </select>
-  <select id="filter-tod" onchange="applyFilters()">...</select>
-  <select id="filter-dow" onchange="applyFilters()">...</select>
-  <label><input type="checkbox" id="filter-due" onchange="applyFilters()"> Due</label>
-  <button type="button" onclick="clearFilters()">Clear</button>
-</div>
+```sql
+CREATE TABLE IF NOT EXISTS tag (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quest_tag (
+    quest_id  TEXT NOT NULL REFERENCES quest(id),
+    tag_id    TEXT NOT NULL REFERENCES tag(id),
+    PRIMARY KEY (quest_id, tag_id)
+);
 ```
 
-**CSS:** Search input gets `flex: 1` to fill available space. Font matches existing filter elements (Silkscreen 10px).
+Detection: check if tag table exists.
 
----
+**Schema** — add to `create_tables` for test DB.
 
-## Substep 2: JS — search text builder + filter logic
+**Tag struct:**
 
-**Build searchable text per quest:**
-
-```javascript
-function buildSearchText(q) {
-  const parts = [q.title];
-  q.skill_ids.forEach(id => { if (skillNameMap[id]) parts.push(skillNameMap[id]); });
-  q.attribute_ids.forEach(id => { if (attrNameMap[id]) parts.push(attrNameMap[id]); });
-  parts.push(difficultyLabel(q.difficulty));
-  if (q.importance > 0) parts.push("!".repeat(q.importance));
-  return parts.join(" ").toLowerCase();
+```rust
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+    pub sort_order: i32,
 }
 ```
 
-**Update `passesFilters`:**
+**CRUD functions:**
 
-Replace attribute/skill filter checks with:
-```javascript
-const searchVal = filterSearch.value.trim().toLowerCase();
-if (searchVal && !buildSearchText(q).includes(searchVal)) return false;
-if (filterDifficulty.value && q.difficulty !== filterDifficulty.value) return false;
-if (filterImportance.value !== "" && q.importance !== parseInt(filterImportance.value)) return false;
-```
+- `get_tags(conn) -> Vec<Tag>` — all tags ordered by sort_order
+- `add_tag(conn, name: String) -> Tag` — create with auto sort_order. Returns error if name already exists.
+- `delete_tag(conn, id: String)` — deletes tag and all quest_tag links
+- `set_quest_tags(conn, quest_id: String, tag_ids: Vec<String>)` — replace all tags for a quest (DELETE + INSERT, same pattern as `set_quest_links`)
 
-Keep existing TOD, DOW, Due checks unchanged.
+**Batch loading:**
 
-**Update `clearFilters`:**
+- `load_all_quest_tags(conn) -> HashMap<String, Vec<String>>` — same pattern as `load_all_quest_skills`. Maps quest_id → vec of tag_ids.
 
-Remove `filterAttr.value = ""` and `filterSkill.value = ""`. Add:
-```javascript
-filterSearch.value = "";
-filterDifficulty.value = "";
-filterImportance.value = "";
-```
+**Quest struct:** Add `tag_ids: Vec<String>`. Populate in `get_quests` via batch load (same as skill_ids, attribute_ids). Also populate in `get_saga_steps` and `query_single_quest`.
 
-**Update filter state references:**
+**`add_quest` and `add_saga_step` return values:** Set `tag_ids: Vec::new()` (tags applied via `set_quest_tags` after creation, same as links).
 
-Remove `filterAttr` and `filterSkill` const declarations. Add `filterSearch`, `filterDifficulty`, `filterImportance`.
+**Cleanup on deletion:**
 
-**Remove `populateFilterDropdowns` attr/skill logic** — no longer needed. The function can be simplified or removed if its only purpose was populating those dropdowns. Check if it does anything else (it also sets up `attrIndexById` etc. — keep that, just remove the dropdown population).
+- `delete_quest`: add `DELETE FROM quest_tag WHERE quest_id = ?1`
+- `delete_saga` (which deletes saga steps): add `DELETE FROM quest_tag WHERE quest_id IN (SELECT id FROM quest WHERE saga_id = ?1)`
+
+**Commands:** `get_tags`, `add_tag`, `delete_tag`, `set_quest_tags` wrappers. Register in main.rs.
+
+**Tests:**
+
+1. `add_and_get_tags` — Create two tags, verify get_tags returns both in order.
+2. `add_duplicate_tag_errors` — Create a tag, try to create same name again, verify error.
+3. `set_quest_tags_and_load` — Create tags, apply to a quest, verify tag_ids on the quest.
+4. `delete_tag_removes_links` — Apply tag to quest, delete the tag, verify quest's tag_ids no longer includes it.
+5. `delete_quest_removes_tag_links` — Apply tag to quest, delete quest, verify quest_tag rows gone.
+
+**Testing checkpoint:** `cargo test` passes.
 
 ---
 
-## Testing checkpoint
+## Substep 2: Frontend — tag loading, add/edit tag selector, search integration
 
-Build app. Quest list filter bar shows: search field, difficulty dropdown, importance dropdown, TOD, DOW, Due, Clear.
+**Tag data loading:**
 
-- Type "vac" → only Vacuuming visible
-- Type "cook" → quests linked to Cooking skill visible
-- Type "health" → quests linked to Health attribute visible
-- Type "!!!" → quests with importance 3, 4, 5 visible
-- Type "trivial" → trivial quests visible (via search)
-- Select Trivial in difficulty dropdown → only trivial quests
-- Select !!! in importance dropdown → only importance 3 quests (exact match)
-- Combine: search "cat" + difficulty Trivial → only trivial cat-related quests
-- Clear → all filters reset
+In `loadAll`, add `invoke("get_tags")` to parallel fetches. Store in `cachedTags`. Build `tagNameMap` (id → name), same pattern as skillNameMap/attrNameMap.
+
+**Search integration:**
+
+Update `buildSearchText` to include tag names:
+
+```javascript
+(q.tag_ids || []).forEach(id => { if (tagNameMap[id]) parts.push(tagNameMap[id]); });
+```
+
+Tags immediately work in fuzzy search.
+
+**Category selector in the Tags row (quest add form, quest edit mode, saga step add/edit):**
+
+The existing "Tags" button toggles a row that shows attribute and skill selectors. Add a third section for categories:
+
+```
+[Tags button]
+  Attributes: Health ✕  Pluck ✕  | + attribute dropdown
+  Skills: Cooking ✕  Cleaning ✕  | + skill dropdown
+  Categories: Computer ✕  Outside ✕  | [add category...]
+```
+
+- Shows current categories as chips with ✕ to remove
+- Text input for adding: type a name, press Enter
+  - If name matches an existing category (case-insensitive) → apply it
+  - If new → call `add_tag` to create, then apply
+- On quest save: call `set_quest_tags` with current category IDs (same as `set_quest_links` call)
+- "Category" is a type of tag — the entity is `tag` in the database, displayed as "Categories" in the UI
+
+**Quest detail row display:**
+
+Append tag names to the existing links text in the expanded detail row.
+
+**Testing checkpoint:** Build app. Add a quest with tag "Computer" from the add form. Edit another quest, add tag "Outside". Search "computer" — first quest appears. Search "outside" — second quest appears. Remove a tag from a quest — no longer matches that search.
 
 ---
 
 ## NOT in this step
 
-- Category tags (step 2)
+- Saga reordering (5A-4)
+- Tag management UI in Settings (future — tags created inline, orphaned tags harmless)
 
 ## Done When
 
-Fuzzy search field works across quest title, skill names, attribute names, difficulty, importance. Difficulty and importance dropdowns filter by exact match. Attribute/skill dropdowns removed. All filters combine via AND. Clear resets all. No backend changes.
+Tags can be created inline, applied to quests/saga steps from add and edit forms, and found via fuzzy search. Tag data loads with quests. Cleanup on quest/tag deletion. `cargo test` passes.

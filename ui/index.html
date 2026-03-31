@@ -341,7 +341,7 @@
       cursor: pointer;
     }
 
-    .link-tag.selected { border-color: #444; color: #111; background: #ddd; }
+    .link-tag.selected { border-color: #333; color: #fff; background: #555; font-weight: 700; }
     .link-tag:hover { border-color: #666; color: #333; }
 
     #add-links-row { margin-bottom: 12px; }
@@ -1178,8 +1178,10 @@
     let draggedId = null;
     let cachedSkills = [];
     let cachedAttributes = [];
+    let cachedTags = [];
     let skillNameMap = {};
     let attrNameMap = {};
+    let tagNameMap = {};
 
     // Quest Giver state
     // Skip tracking now lives in backend (AppSkipState)
@@ -1225,6 +1227,7 @@
       const parts = [q.title];
       (q.skill_ids || []).forEach(id => { if (skillNameMap[id]) parts.push(skillNameMap[id]); });
       (q.attribute_ids || []).forEach(id => { if (attrNameMap[id]) parts.push(attrNameMap[id]); });
+      (q.tag_ids || []).forEach(id => { if (tagNameMap[id]) parts.push(tagNameMap[id]); });
       parts.push(difficultyLabel(q.difficulty));
       if (q.importance > 0) parts.push("!".repeat(q.importance));
       return parts.join(" ").toLowerCase();
@@ -1258,10 +1261,10 @@
     }
 
     function renderAddLinkTags() {
-      addLinksRow.innerHTML = renderLinkTagsHtml("add", [], []);
+      addLinksRow.innerHTML = renderLinkTagsHtml("add", [], [], []);
     }
 
-    function renderLinkTagsHtml(prefix, selectedSkillIds, selectedAttrIds) {
+    function renderLinkTagsHtml(prefix, selectedSkillIds, selectedAttrIds, selectedTagIds) {
       const skillTags = cachedSkills.map(s => {
         const sel = selectedSkillIds.includes(s.id) ? "selected" : "";
         return `<button type="button" class="link-tag ${sel}"
@@ -1276,10 +1279,22 @@
                   onclick="toggleLinkTag(this)">${escapeHtml(a.name)}</button>`;
       }).join("");
 
+      const catTags = cachedTags.map(t => {
+        const sel = (selectedTagIds || []).includes(t.id) ? "selected" : "";
+        return `<button type="button" class="link-tag ${sel}"
+                  data-id="${t.id}" data-kind="tag"
+                  onclick="toggleLinkTag(this)">${escapeHtml(t.name)}</button>`;
+      }).join("");
+
       return `<div class="link-tags-row">
         <span class="link-group-label">Skills</span>${skillTags}
         <span class="link-separator"></span>
         <span class="link-group-label">Attrs</span>${attrTags}
+        <span class="link-separator"></span>
+        <span class="link-group-label">Categories</span>${catTags}
+        <input type="text" class="category-add-input" placeholder="+ new" data-prefix="${prefix}"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();addCategoryInline(this)}"
+               style="width: 60px; font-size: 9px;">
       </div>`;
     }
 
@@ -1287,31 +1302,60 @@
       btn.classList.toggle("selected");
     }
 
+    async function addCategoryInline(input) {
+      const name = input.value.trim();
+      if (!name) return;
+      // Check if tag already exists (case-insensitive)
+      let tag = cachedTags.find(t => t.name.toLowerCase() === name.toLowerCase());
+      if (!tag) {
+        tag = await invoke("add_tag", { name });
+        cachedTags.push(tag);
+        tagNameMap[tag.id] = tag.name;
+      }
+      input.value = "";
+      // Add a selected button for this tag in the same container
+      const container = input.closest(".link-tags-row");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "link-tag selected";
+      btn.dataset.id = tag.id;
+      btn.dataset.kind = "tag";
+      btn.textContent = tag.name;
+      btn.onclick = function() { toggleLinkTag(this); };
+      input.before(btn);
+    }
+
     function getSelectedLinkIds(container) {
       const skillIds = [];
       const attributeIds = [];
+      const tagIds = [];
       container.querySelectorAll(".link-tag.selected").forEach(btn => {
         if (btn.dataset.kind === "skill") skillIds.push(btn.dataset.id);
-        else attributeIds.push(btn.dataset.id);
+        else if (btn.dataset.kind === "attr") attributeIds.push(btn.dataset.id);
+        else if (btn.dataset.kind === "tag") tagIds.push(btn.dataset.id);
       });
-      return { skillIds, attributeIds };
+      return { skillIds, attributeIds, tagIds };
     }
 
     function linkNamesText(q) {
       const names = [];
       q.skill_ids.forEach(id => { if (skillNameMap[id]) names.push(skillNameMap[id]); });
       q.attribute_ids.forEach(id => { if (attrNameMap[id]) names.push(attrNameMap[id]); });
+      (q.tag_ids || []).forEach(id => { if (tagNameMap[id]) names.push(tagNameMap[id]); });
       return names.join(", ");
     }
 
     async function loadAll() {
-      const fetches = [invoke("get_quests"), invoke("get_completions"), invoke("get_campaigns")];
+      const fetches = [invoke("get_quests"), invoke("get_completions"), invoke("get_campaigns"), invoke("get_tags")];
       if (cachedSkills.length === 0) {
         fetches.push(invoke("get_skills"), invoke("get_attributes"));
       }
       const results = await Promise.all(fetches);
-      const extraStart = 3; // index where skills/attributes start
-      if (results.length === 5) {
+      cachedTags = results[3];
+      tagNameMap = {};
+      cachedTags.forEach(t => tagNameMap[t.id] = t.name);
+      const extraStart = 4; // index where skills/attributes start
+      if (results.length === 6) {
         cachedSkills = results[extraStart];
         cachedAttributes = results[extraStart + 1];
         skillNameMap = {};
@@ -1488,7 +1532,7 @@
         <span class="close-x" onclick="cancelEdit()">✕</span>
       </li>
       <li class="quest-edit-links" id="edit-links-container">
-        ${renderLinkTagsHtml("edit", q.skill_ids || [], q.attribute_ids || [])}
+        ${renderLinkTagsHtml("edit", q.skill_ids || [], q.attribute_ids || [], q.tag_ids || [])}
       </li>`;
     }
 
@@ -1583,8 +1627,9 @@
 
       const linksContainer = document.getElementById("edit-links-container");
       if (linksContainer) {
-        const { skillIds, attributeIds } = getSelectedLinkIds(linksContainer);
+        const { skillIds, attributeIds, tagIds } = getSelectedLinkIds(linksContainer);
         await invoke("set_quest_links", { questId: id, skillIds, attributeIds });
+        await invoke("set_quest_tags", { questId: id, tagIds });
       }
 
       editingId = null;
@@ -1813,9 +1858,12 @@
 
       const quest = await invoke("add_quest", { quest: questParams });
 
-      const { skillIds, attributeIds } = getSelectedLinkIds(addLinksRow);
+      const { skillIds, attributeIds, tagIds } = getSelectedLinkIds(addLinksRow);
       if (skillIds.length > 0 || attributeIds.length > 0) {
         await invoke("set_quest_links", { questId: quest.id, skillIds, attributeIds });
+      }
+      if (tagIds.length > 0) {
+        await invoke("set_quest_tags", { questId: quest.id, tagIds });
       }
 
       titleInput.value = "";
@@ -2816,7 +2864,7 @@
       // Initialize step add form controls
       if (expandedSagaId) {
         const stepLinksRow = document.getElementById("step-add-links-" + expandedSagaId);
-        if (stepLinksRow && !stepLinksRow.innerHTML) stepLinksRow.innerHTML = renderLinkTagsHtml("step-add", [], []);
+        if (stepLinksRow && !stepLinksRow.innerHTML) stepLinksRow.innerHTML = renderLinkTagsHtml("step-add", [], [], []);
         const todEl = document.getElementById("step-tod-" + expandedSagaId);
         const dowEl = document.getElementById("step-dow-" + expandedSagaId);
         if (todEl && !todEl.hasChildNodes()) renderCheckDropdown(todEl, 15, TOD_FULL, todSummary);
@@ -2922,7 +2970,7 @@
         <span class="close-x" onclick="cancelStepEdit()">✕</span>
       </li>
       <li class="quest-edit-links" id="step-edit-links-container">
-        ${renderLinkTagsHtml("step-edit", step.skill_ids || [], step.attribute_ids || [])}
+        ${renderLinkTagsHtml("step-edit", step.skill_ids || [], step.attribute_ids || [], step.tag_ids || [])}
       </li>`;
     }
 
@@ -3103,9 +3151,12 @@
 
       const linksRow = document.getElementById("step-add-links-" + sagaId);
       if (linksRow) {
-        const { skillIds, attributeIds } = getSelectedLinkIds(linksRow);
+        const { skillIds, attributeIds, tagIds } = getSelectedLinkIds(linksRow);
         if (skillIds.length > 0 || attributeIds.length > 0) {
           await invoke("set_quest_links", { questId: step.id, skillIds, attributeIds });
+        }
+        if (tagIds.length > 0) {
+          await invoke("set_quest_tags", { questId: step.id, tagIds });
         }
       }
 
@@ -3145,8 +3196,9 @@
 
       const linksContainer = document.getElementById("step-edit-links-container");
       if (linksContainer) {
-        const { skillIds, attributeIds } = getSelectedLinkIds(linksContainer);
+        const { skillIds, attributeIds, tagIds } = getSelectedLinkIds(linksContainer);
         await invoke("set_quest_links", { questId: id, skillIds, attributeIds });
+        await invoke("set_quest_tags", { questId: id, tagIds });
       }
       editingStepId = null;
       if (expandedSagaId) {

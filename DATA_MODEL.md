@@ -26,6 +26,7 @@ A template for something you do. Can be recurring or one-off.
 - `is_due` — whether the quest's cycle has elapsed since last completion
 - `skill_ids` — IDs of linked skills (from quest_skill join table)
 - `attribute_ids` — IDs of linked attributes (from quest_attribute join table)
+- `tag_ids` — IDs of linked tags (from quest_tag join table)
 
 **Rules:**
 - Recurring quests stay active after completion and refresh after `cycle_days` elapse.
@@ -192,12 +193,35 @@ Many-to-many join table between quests and attributes.
 | quest_id | UUID (text) | FK to Quest |
 | attribute_id | UUID (text) | FK to Attribute |
 
+### Tag (Category)
+A user-defined label for organizing quests by context (e.g., "Computer", "Outside", "Phone").
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID (text) | Unique identifier |
+| name | String | Tag display name (unique) |
+| sort_order | Integer | Display/creation order |
+
+**Rules:**
+- Tags are created inline when first applied to a quest.
+- Deleting a tag removes all quest-tag links.
+- Tags are searchable via the fuzzy search field on the quest list.
+
+### Quest-Tag Link (quest_tag)
+Many-to-many join table between quests and tags.
+
+| Field | Type | Description |
+|---|---|---|
+| quest_id | UUID (text) | FK to Quest |
+| tag_id | UUID (text) | FK to Tag |
+
 ## Relationships
 
 ```
 Quest (1) ──── has many ──── Completion
 Quest (M) ──── many-to-many ──── Skill       (via quest_skill)
 Quest (M) ──── many-to-many ──── Attribute   (via quest_attribute)
+Quest (M) ──── many-to-many ──── Tag          (via quest_tag)
 Saga (1) ──── has many ──── Quest            (via quest.saga_id)
 Campaign (1) ──── has many ──── Campaign Criterion
 Campaign (1) ──── has many ──── Accomplishment

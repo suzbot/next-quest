@@ -197,6 +197,7 @@ pub struct Quest {
     pub attribute_ids: Vec<String>,
     pub saga_id: Option<String>,
     pub importance: i32,
+    pub tag_ids: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -311,6 +312,14 @@ pub struct XpStats {
     pub avg_xp_per_day: f64,
     pub high_score_xp: i64,
     pub all_time_xp: i64,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+    pub sort_order: i32,
 }
 
 // --- Campaign structs ---
@@ -437,6 +446,18 @@ fn create_tables(conn: &Connection) {
             quest_id      TEXT NOT NULL REFERENCES quest(id),
             attribute_id  TEXT NOT NULL REFERENCES attribute(id),
             PRIMARY KEY (quest_id, attribute_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS tag (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS quest_tag (
+            quest_id  TEXT NOT NULL REFERENCES quest(id),
+            tag_id    TEXT NOT NULL REFERENCES tag(id),
+            PRIMARY KEY (quest_id, tag_id)
         );
 
         CREATE TABLE IF NOT EXISTS saga (
@@ -723,6 +744,26 @@ fn migrate(conn: &Connection) {
         conn.execute_batch(
             "ALTER TABLE quest ADD COLUMN importance INTEGER NOT NULL DEFAULT 0;"
         ).expect("Failed to add importance column");
+    }
+
+    // Migration: create tag tables if missing
+    let has_tag: bool = conn
+        .prepare("SELECT id FROM tag LIMIT 0")
+        .is_ok();
+
+    if !has_tag {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tag (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS quest_tag (
+                quest_id  TEXT NOT NULL REFERENCES quest(id),
+                tag_id    TEXT NOT NULL REFERENCES tag(id),
+                PRIMARY KEY (quest_id, tag_id)
+            );"
+        ).expect("Failed to create tag tables");
     }
 
     // Migration: create campaign tables if missing
@@ -1025,6 +1066,11 @@ pub fn delete_saga(conn: &Connection, saga_id: String) -> Result<(), String> {
         rusqlite::params![saga_id],
     ).map_err(|e| e.to_string())?;
 
+    conn.execute(
+        "DELETE FROM quest_tag WHERE quest_id IN (SELECT id FROM quest WHERE saga_id = ?1)",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
     // Orphan completions (set quest_id to NULL) for saga steps
     conn.execute(
         "UPDATE quest_completion SET quest_id = NULL WHERE quest_id IN (SELECT id FROM quest WHERE saga_id = ?1)",
@@ -1085,6 +1131,7 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
                 attribute_ids: Vec::new(),
                 saga_id: Some(saga_id.to_string()),
                 importance: row.get(12)?,
+                tag_ids: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -1094,12 +1141,16 @@ pub fn get_saga_steps(conn: &Connection, saga_id: &str) -> Result<Vec<Quest>, St
     // Batch-load links
     let skill_links = load_all_quest_skills(conn)?;
     let attr_links = load_all_quest_attributes(conn)?;
+    let tag_links = load_all_quest_tags(conn)?;
     for s in &mut steps {
         if let Some(sids) = skill_links.get(&s.id) {
             s.skill_ids = sids.clone();
         }
         if let Some(aids) = attr_links.get(&s.id) {
             s.attribute_ids = aids.clone();
+        }
+        if let Some(tids) = tag_links.get(&s.id) {
+            s.tag_ids = tids.clone();
         }
     }
 
@@ -1162,6 +1213,7 @@ pub fn add_saga_step(conn: &Connection, s: NewSagaStep) -> Result<Quest, String>
         attribute_ids: Vec::new(),
         saga_id: Some(saga_id),
         importance,
+        tag_ids: Vec::new(),
     })
 }
 
@@ -1893,6 +1945,7 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
                 attribute_ids: Vec::new(),
                 saga_id: None,
                 importance: row.get(11)?,
+                tag_ids: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -1902,12 +1955,16 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     // Batch-load links
     let skill_links = load_all_quest_skills(conn)?;
     let attr_links = load_all_quest_attributes(conn)?;
+    let tag_links = load_all_quest_tags(conn)?;
     for q in &mut quests {
         if let Some(sids) = skill_links.get(&q.id) {
             q.skill_ids = sids.clone();
         }
         if let Some(aids) = attr_links.get(&q.id) {
             q.attribute_ids = aids.clone();
+        }
+        if let Some(tids) = tag_links.get(&q.id) {
+            q.tag_ids = tids.clone();
         }
     }
 
@@ -2174,6 +2231,7 @@ pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
         attribute_ids: Vec::new(),
         saga_id: None,
         importance,
+        tag_ids: Vec::new(),
     })
 }
 
@@ -2583,6 +2641,12 @@ pub fn delete_quest(conn: &Connection, quest_id: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     conn.execute(
+        "DELETE FROM quest_tag WHERE quest_id = ?1",
+        rusqlite::params![quest_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
         "DELETE FROM quest WHERE id = ?1",
         rusqlite::params![quest_id],
     )
@@ -2789,6 +2853,83 @@ fn load_all_quest_attributes(conn: &Connection) -> Result<std::collections::Hash
     Ok(map)
 }
 
+fn load_all_quest_tags(conn: &Connection) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let mut stmt = conn
+        .prepare("SELECT quest_id, tag_id FROM quest_tag")
+        .map_err(|e| e.to_string())?;
+    let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (qid, tid) = row.map_err(|e| e.to_string())?;
+        map.entry(qid).or_default().push(tid);
+    }
+    Ok(map)
+}
+
+// --- Tag CRUD ---
+
+pub fn get_tags(conn: &Connection) -> Result<Vec<Tag>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, name, sort_order FROM tag ORDER BY sort_order ASC")
+        .map_err(|e| e.to_string())?;
+    let tags = stmt
+        .query_map([], |row| Ok(Tag {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            sort_order: row.get(2)?,
+        }))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(tags)
+}
+
+pub fn add_tag(conn: &Connection, name: String) -> Result<Tag, String> {
+    let id = Uuid::new_v4().to_string();
+    let max_order: i32 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM tag", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    let sort_order = max_order + 1;
+
+    conn.execute(
+        "INSERT INTO tag (id, name, sort_order) VALUES (?1, ?2, ?3)",
+        rusqlite::params![id, name, sort_order],
+    ).map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            format!("Tag '{}' already exists", name)
+        } else {
+            e.to_string()
+        }
+    })?;
+
+    Ok(Tag { id, name, sort_order })
+}
+
+pub fn delete_tag(conn: &Connection, id: String) -> Result<(), String> {
+    conn.execute("DELETE FROM quest_tag WHERE tag_id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    let rows = conn.execute("DELETE FROM tag WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    if rows == 0 {
+        return Err(format!("Tag not found: {}", id));
+    }
+    Ok(())
+}
+
+pub fn set_quest_tags(conn: &Connection, quest_id: String, tag_ids: Vec<String>) -> Result<(), String> {
+    conn.execute("DELETE FROM quest_tag WHERE quest_id = ?1", rusqlite::params![quest_id])
+        .map_err(|e| e.to_string())?;
+    for tid in &tag_ids {
+        conn.execute(
+            "INSERT INTO quest_tag (quest_id, tag_id) VALUES (?1, ?2)",
+            rusqlite::params![quest_id, tid],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn load_quest_link_ids(conn: &Connection, quest_id: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let mut skill_stmt = conn
         .prepare("SELECT skill_id FROM quest_skill WHERE quest_id = ?1")
@@ -2848,6 +2989,7 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
                 attribute_ids: attribute_ids.clone(),
                 saga_id,
                 importance: row.get(12)?,
+                tag_ids: Vec::new(), // loaded separately
             })
         },
     )
@@ -5900,5 +6042,77 @@ mod tests {
         let completion = complete_quest(&conn, q.id).unwrap();
         assert_eq!(completion.xp_awards.len(), 1);
         assert_eq!(completion.xp_awards[0].award_type, "character");
+    }
+
+    // --- Tag tests ---
+
+    #[test]
+    fn add_and_get_tags() {
+        let conn = test_db();
+        let t1 = add_tag(&conn, "Computer".into()).unwrap();
+        let t2 = add_tag(&conn, "Outside".into()).unwrap();
+
+        let tags = get_tags(&conn).unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].name, "Computer");
+        assert_eq!(tags[1].name, "Outside");
+        assert!(t1.sort_order < t2.sort_order);
+    }
+
+    #[test]
+    fn add_duplicate_tag_errors() {
+        let conn = test_db();
+        add_tag(&conn, "Computer".into()).unwrap();
+        let result = add_tag(&conn, "Computer".into());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already exists"));
+    }
+
+    #[test]
+    fn set_quest_tags_and_load() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Tagged Quest");
+        let t1 = add_tag(&conn, "Computer".into()).unwrap();
+        let t2 = add_tag(&conn, "Inside".into()).unwrap();
+
+        set_quest_tags(&conn, q.id.clone(), vec![t1.id.clone(), t2.id.clone()]).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert_eq!(quest.tag_ids.len(), 2);
+        assert!(quest.tag_ids.contains(&t1.id));
+        assert!(quest.tag_ids.contains(&t2.id));
+    }
+
+    #[test]
+    fn delete_tag_removes_links() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Tagged Quest");
+        let t = add_tag(&conn, "Temp".into()).unwrap();
+        set_quest_tags(&conn, q.id.clone(), vec![t.id.clone()]).unwrap();
+
+        delete_tag(&conn, t.id).unwrap();
+
+        let quests = get_quests(&conn).unwrap();
+        let quest = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert!(quest.tag_ids.is_empty());
+        assert!(get_tags(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_quest_removes_tag_links() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Doomed");
+        let t = add_tag(&conn, "Doomed Tag".into()).unwrap();
+        set_quest_tags(&conn, q.id.clone(), vec![t.id.clone()]).unwrap();
+
+        delete_quest(&conn, q.id).unwrap();
+
+        // Tag still exists, but no quest_tag rows
+        assert_eq!(get_tags(&conn).unwrap().len(), 1);
+        let count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM quest_tag", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
     }
 }

@@ -226,6 +226,36 @@ pub fn delete_accomplishment(
     db::delete_accomplishment(&conn, id)
 }
 
+// --- Tags ---
+
+#[tauri::command]
+pub fn get_tags(state: State<DbState>) -> Result<Vec<db::Tag>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_tags(&conn)
+}
+
+#[tauri::command]
+pub fn add_tag(state: State<DbState>, name: String) -> Result<db::Tag, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::add_tag(&conn, name)
+}
+
+#[tauri::command]
+pub fn delete_tag(state: State<DbState>, id: String) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::delete_tag(&conn, id)
+}
+
+#[tauri::command]
+pub fn set_quest_tags(
+    state: State<DbState>,
+    quest_id: String,
+    tag_ids: Vec<String>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::set_quest_tags(&conn, quest_id, tag_ids)
+}
+
 // --- Completions ---
 
 #[tauri::command]
