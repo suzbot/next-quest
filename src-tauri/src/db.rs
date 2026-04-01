@@ -322,6 +322,30 @@ pub struct Tag {
     pub sort_order: i32,
 }
 
+// --- Quest list structs ---
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SagaSlot {
+    pub saga_id: String,
+    pub saga_name: String,
+    pub saga_cycle_days: Option<i32>,
+    pub step: Quest,
+    pub is_saga_due: bool,
+    pub is_one_off: bool,
+    pub is_completed: bool,
+    pub sort_order: i32,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestListItem {
+    pub item_type: String,
+    pub quest: Option<Quest>,
+    pub saga_slot: Option<SagaSlot>,
+    pub sort_order: i32,
+}
+
 // --- Campaign structs ---
 
 #[derive(Deserialize, Debug, Clone)]
@@ -766,6 +790,21 @@ fn migrate(conn: &Connection) {
         ).expect("Failed to create tag tables");
     }
 
+    // Migration: unify quest and saga sort_order namespaces
+    // Shift saga sort_orders to be after all quest sort_orders
+    let quest_max: i32 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM quest WHERE saga_id IS NULL", [], |row| row.get(0))
+        .unwrap_or(0);
+    let saga_min: i32 = conn
+        .query_row("SELECT COALESCE(MIN(sort_order), 0) FROM saga", [], |row| row.get(0))
+        .unwrap_or(0);
+    if saga_min > 0 && saga_min <= quest_max {
+        conn.execute(
+            "UPDATE saga SET sort_order = sort_order + ?1",
+            rusqlite::params![quest_max],
+        ).expect("Failed to unify sort_order namespaces");
+    }
+
     // Migration: create campaign tables if missing
     let has_campaign: bool = conn
         .prepare("SELECT id FROM campaign LIMIT 0")
@@ -943,7 +982,7 @@ pub fn add_saga(
 
     let max_order: i32 = conn
         .query_row(
-            "SELECT COALESCE(MAX(sort_order), 0) FROM saga",
+            "SELECT MAX(m) FROM (SELECT COALESCE(MAX(sort_order), 0) AS m FROM quest WHERE saga_id IS NULL UNION ALL SELECT COALESCE(MAX(sort_order), 0) FROM saga)",
             [],
             |row| row.get(0),
         )
@@ -1434,8 +1473,8 @@ pub fn get_sagas_with_progress(conn: &Connection) -> Result<Vec<SagaWithProgress
 }
 
 /// Returns one active step per saga (the first due step), along with saga name and activation time.
-pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, String, Option<i32>, Lane)>, String> {
-    // (quest, saga_name, activated_at ISO timestamp, saga_cycle_days, saga_lane)
+pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, String, Option<i32>, Lane, i32)>, String> {
+    // (quest, saga_name, activated_at ISO timestamp, saga_cycle_days, saga_lane, saga_sort_order)
     let sagas = get_sagas(conn)?;
     let mut results = Vec::new();
 
@@ -1463,7 +1502,7 @@ pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, St
 
             if !completed_this_run {
                 // This is the active step
-                results.push((step.clone(), saga.name.clone(), prev_completed_at.clone(), saga.cycle_days, saga_lane.clone()));
+                results.push((step.clone(), saga.name.clone(), prev_completed_at.clone(), saga.cycle_days, saga_lane.clone(), saga.sort_order));
                 break;
             }
 
@@ -1971,6 +2010,90 @@ pub fn get_quests(conn: &Connection) -> Result<Vec<Quest>, String> {
     Ok(quests)
 }
 
+pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
+    let quests = get_quests(conn)?;
+    let sagas_with_progress = get_sagas_with_progress(conn)?;
+    let tag_links = load_all_quest_tags(conn)?;
+    let skill_links = load_all_quest_skills(conn)?;
+    let attr_links = load_all_quest_attributes(conn)?;
+
+    let mut items: Vec<QuestListItem> = Vec::new();
+
+    // Add regular quests
+    for q in quests {
+        let so = q.sort_order;
+        items.push(QuestListItem {
+            item_type: "quest".into(),
+            quest: Some(q),
+            saga_slot: None,
+            sort_order: so,
+        });
+    }
+
+    // Add saga slots
+    for sp in &sagas_with_progress {
+        let saga = &sp.saga;
+        let steps = get_saga_steps(conn, &saga.id)?;
+        if steps.is_empty() { continue; }
+
+        let is_one_off = saga.cycle_days.is_none();
+        let run_start = saga.last_run_completed_at.as_deref()
+            .unwrap_or(&saga.created_at)
+            .to_string();
+
+        // Determine display step: first incomplete in current run, or step 1 if between runs
+        let mut display_step = steps[0].clone();
+        if sp.is_due || sp.completed_steps > 0 {
+            // Active run — find first incomplete step
+            for step in &steps {
+                let completed_this_run = step.last_completed.as_ref()
+                    .map(|lc| lc.as_str() > run_start.as_str())
+                    .unwrap_or(false);
+                if !completed_this_run {
+                    display_step = step.clone();
+                    break;
+                }
+            }
+        }
+        // Otherwise step 1 (default) — between runs or never started
+
+        let is_completed = is_one_off && saga.last_run_completed_at.is_some();
+        let is_saga_due = sp.is_due && !is_completed;
+
+        // Load links for the display step
+        if let Some(sids) = skill_links.get(&display_step.id) {
+            display_step.skill_ids = sids.clone();
+        }
+        if let Some(aids) = attr_links.get(&display_step.id) {
+            display_step.attribute_ids = aids.clone();
+        }
+        if let Some(tids) = tag_links.get(&display_step.id) {
+            display_step.tag_ids = tids.clone();
+        }
+
+        items.push(QuestListItem {
+            item_type: "saga".into(),
+            quest: None,
+            saga_slot: Some(SagaSlot {
+                saga_id: saga.id.clone(),
+                saga_name: saga.name.clone(),
+                saga_cycle_days: saga.cycle_days,
+                step: display_step,
+                is_saga_due,
+                is_one_off,
+                is_completed,
+                sort_order: saga.sort_order,
+            }),
+            sort_order: saga.sort_order,
+        });
+    }
+
+    // Sort by sort_order descending (same as quest list)
+    items.sort_by(|a, b| b.sort_order.cmp(&a.sort_order));
+
+    Ok(items)
+}
+
 const IMPORTANCE_WEIGHT: f64 = 30.0;
 
 pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashMap<String, i32>, lane: &Lane) -> Result<Vec<ScoredQuest>, String> {
@@ -1978,7 +2101,11 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
     let today = local_today_days();
     let hour = local_hour();
     let weekday = local_weekday();
-    let global_max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(1) as f64;
+    let quest_max_sort = quests.iter().map(|q| q.sort_order).max().unwrap_or(0);
+    let saga_max_sort: i32 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM saga", [], |row| row.get(0))
+        .unwrap_or(0);
+    let global_max_sort = quest_max_sort.max(saga_max_sort).max(1) as f64;
 
     // Load attribute/skill levels for balance bonus
     let attributes = get_attributes(conn)?;
@@ -2016,10 +2143,10 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
 
     // Get active saga steps and apply same hard filters + lane filter
     let saga_steps = get_active_saga_steps(conn).unwrap_or_default();
-    let eligible_saga: Vec<&(Quest, String, String, Option<i32>, Lane)> = saga_steps.iter()
-        .filter(|(_, _, _, _, saga_lane)| saga_lane == lane)
-        .filter(|(q, _, _, _, _)| matches_time_of_day(q.time_of_day, hour))
-        .filter(|(q, _, _, _, _)| matches_day_of_week(q.days_of_week, weekday))
+    let eligible_saga: Vec<&(Quest, String, String, Option<i32>, Lane, i32)> = saga_steps.iter()
+        .filter(|(_, _, _, _, saga_lane, _)| saga_lane == lane)
+        .filter(|(q, _, _, _, _, _)| matches_time_of_day(q.time_of_day, hour))
+        .filter(|(q, _, _, _, _, _)| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
     let due: Vec<&Quest> = eligible.iter().filter(|q| q.is_due).copied().collect();
@@ -2035,7 +2162,7 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
         for (score, overdue, importance, skip, order, membership, balance, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map) {
             results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, pool: "due".to_string(), due_count, not_due_count, saga_name: None });
         }
-        for (quest, saga_name, activated_at, saga_cycle_days, _saga_lane) in &eligible_saga {
+        for (quest, saga_name, activated_at, saga_cycle_days, _saga_lane, saga_sort_order) in &eligible_saga {
             let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
             let days_since = (today - activated_days) as f64;
             let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
@@ -2043,7 +2170,7 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
             let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
             let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
             let skip_penalty = skips * 0.5;
-            let list_order_bonus = 1.0;
+            let list_order_bonus = *saga_sort_order as f64 / global_max_sort;
             let membership_bonus = 0.0;
             let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
             results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus: 0.0, pool: "due".to_string(), due_count, not_due_count, saga_name: Some(saga_name.clone()) });
@@ -2195,7 +2322,7 @@ pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
 
     let max_order: i32 = conn
         .query_row(
-            "SELECT COALESCE(MAX(sort_order), 0) FROM quest",
+            "SELECT MAX(m) FROM (SELECT COALESCE(MAX(sort_order), 0) AS m FROM quest WHERE saga_id IS NULL UNION ALL SELECT COALESCE(MAX(sort_order), 0) FROM saga)",
             [],
             |row| row.get(0),
         )
@@ -6114,5 +6241,172 @@ mod tests {
             "SELECT COUNT(*) FROM quest_tag", [], |row| row.get(0)
         ).unwrap();
         assert_eq!(count, 0);
+    }
+
+    // --- Unified sort_order tests ---
+
+    #[test]
+    fn unified_sort_order_no_collision() {
+        let conn = test_db();
+        test_quest(&conn, "Quest 1");
+        test_quest(&conn, "Quest 2");
+        test_quest(&conn, "Quest 3");
+        let s = add_saga(&conn, "Saga 1".into(), Some(1)).unwrap();
+
+        // Saga sort_order should be higher than all quest sort_orders
+        let quest_max: i32 = conn.query_row(
+            "SELECT MAX(sort_order) FROM quest WHERE saga_id IS NULL", [], |row| row.get(0)
+        ).unwrap();
+        assert!(s.sort_order > quest_max);
+    }
+
+    #[test]
+    fn saga_sort_order_affects_scoring() {
+        let conn = test_db();
+        let s1 = add_saga(&conn, "Top Saga".into(), Some(1)).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s1.id.clone(),
+            title: "Top Step".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        let s2 = add_saga(&conn, "Bottom Saga".into(), Some(1)).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s2.id.clone(),
+            title: "Bottom Step".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        // Backdate both so steps are active
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z'", []).unwrap();
+
+        // s1 has lower sort_order than s2 (created first)
+        // So s2 (created second, higher sort_order) should get higher list_order_bonus
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let top = scores.iter().find(|s| s.saga_name.as_deref() == Some("Top Saga")).unwrap();
+        let bottom = scores.iter().find(|s| s.saga_name.as_deref() == Some("Bottom Saga")).unwrap();
+        assert!(bottom.list_order_bonus > top.list_order_bonus);
+    }
+
+    #[test]
+    fn global_max_considers_both() {
+        let conn = test_db();
+        test_quest(&conn, "Quest");
+        let s = add_saga(&conn, "Saga".into(), Some(1)).unwrap();
+
+        // Saga sort_order should be higher (added after quest)
+        let quest_max: i32 = conn.query_row(
+            "SELECT MAX(sort_order) FROM quest WHERE saga_id IS NULL", [], |row| row.get(0)
+        ).unwrap();
+        assert!(s.sort_order > quest_max);
+
+        // Verify the quest's list_order_bonus is < 1.0 (saga has the max)
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        if let Some(quest_score) = scores.first() {
+            assert!(quest_score.list_order_bonus < 1.0);
+        }
+    }
+
+    // --- Quest list tests ---
+
+    #[test]
+    fn quest_list_includes_saga_slots() {
+        let conn = test_db();
+        test_quest(&conn, "Regular Quest");
+        let s = add_saga(&conn, "Test Saga".into(), Some(1)).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 1".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        let items = get_quest_list(&conn).unwrap();
+        let quest_items: Vec<_> = items.iter().filter(|i| i.item_type == "quest").collect();
+        let saga_items: Vec<_> = items.iter().filter(|i| i.item_type == "saga").collect();
+        assert!(!quest_items.is_empty());
+        assert!(!saga_items.is_empty());
+        assert_eq!(saga_items[0].saga_slot.as_ref().unwrap().saga_name, "Test Saga");
+    }
+
+    #[test]
+    fn saga_slot_shows_active_step() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Multi Step".into(), Some(1)).unwrap();
+        let step1 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 1".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 2".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        // Backdate saga so completions are after created_at
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+
+        // Before completion: should show step 1
+        let items = get_quest_list(&conn).unwrap();
+        let slot = items.iter().find(|i| i.item_type == "saga").unwrap().saga_slot.as_ref().unwrap();
+        assert_eq!(slot.step.title, "Step 1");
+
+        // Complete step 1
+        complete_quest(&conn, step1.id).unwrap();
+
+        // Now should show step 2
+        let items = get_quest_list(&conn).unwrap();
+        let slot = items.iter().find(|i| i.item_type == "saga").unwrap().saga_slot.as_ref().unwrap();
+        assert_eq!(slot.step.title, "Step 2");
+    }
+
+    #[test]
+    fn saga_slot_not_due_shows_step_1() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Recurring".into(), Some(7)).unwrap();
+        let step1 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 1".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Step 2".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        // Backdate and complete the run
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+        complete_quest(&conn, step1.id.clone()).unwrap();
+        // Complete step 2 to finish the run
+        let steps = get_saga_steps(&conn, &s.id).unwrap();
+        complete_quest(&conn, steps[1].id.clone()).unwrap();
+        check_saga_completion(&conn, &s.id).unwrap();
+
+        // Now saga is between runs (just completed, cycle=7). Should show step 1, not due.
+        let items = get_quest_list(&conn).unwrap();
+        let slot = items.iter().find(|i| i.item_type == "saga").unwrap().saga_slot.as_ref().unwrap();
+        assert_eq!(slot.step.title, "Step 1");
+        assert!(!slot.is_saga_due);
+    }
+
+    #[test]
+    fn saga_slot_completed_oneoff() {
+        let conn = test_db();
+        let s = add_saga(&conn, "One-off".into(), None).unwrap();
+        let step1 = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Only Step".into(),
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+        complete_quest(&conn, step1.id).unwrap();
+        check_saga_completion(&conn, &s.id).unwrap();
+
+        let items = get_quest_list(&conn).unwrap();
+        let slot = items.iter().find(|i| i.item_type == "saga").unwrap().saga_slot.as_ref().unwrap();
+        assert!(slot.is_completed);
+        assert!(!slot.is_saga_due);
     }
 }

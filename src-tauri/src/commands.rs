@@ -71,6 +71,12 @@ pub fn get_quests(state: State<DbState>) -> Result<Vec<db::Quest>, String> {
     db::get_quests(&conn)
 }
 
+#[tauri::command]
+pub fn get_quest_list(state: State<DbState>) -> Result<Vec<db::QuestListItem>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::get_quest_list(&conn)
+}
+
 // --- Saga commands ---
 
 #[tauri::command]

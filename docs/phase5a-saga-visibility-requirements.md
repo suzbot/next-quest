@@ -30,30 +30,24 @@ When debug scoring is enabled, expanded saga steps show their score breakdown �
 
 ### User story
 
-> I have several active sagas and I want to control their relative priority. Laundry should come before Taxes in the quest giver. I want to drag sagas into my preferred order, and have that order affect scoring.
+> I have several active sagas and I want to control their relative priority. Laundry should come before Taxes in the quest giver. I want to drag sagas among my regular quests to set their priority.
 
 ### Behavior
 
-- Sagas gain drag-and-drop reordering on the saga tab (same pattern as quest reordering and saga step reordering)
-- Saga `sort_order` feeds into the scoring algorithm for saga steps. Currently saga steps get a fixed `list_order_bonus = 1.0`. Instead, use the saga's sort_order relative to all sagas, same way quest sort_order works relative to all quests.
-- Higher sort_order (top of saga list) = higher list_order_bonus for that saga's active step
+- Sagas appear as slots on the quest list (see section 3). Users drag them up and down among regular quests.
+- The quest list is the single source of truth for priority ordering — both quests and sagas.
+- Saga `sort_order` shares a unified namespace with quest `sort_order` and feeds into scoring (`saga_sort_order / global_max_sort`).
+- The saga tab displays sagas in sort_order but does NOT allow reordering — it has less context about relative position vs quests.
 
 ### What changes
 
-- Sagas already have a `sort_order` field — it just isn't user-editable (set at creation time)
-- Add `reorder_sagas` backend function (same pattern as `reorder_quests`)
-- Frontend: drag-and-drop + Alt+Arrow on the saga tab
-- Scoring: saga step `list_order_bonus` changes from fixed 1.0 to `saga.sort_order / global_max_saga_sort_order`
-
-### Open question
-
-Should the saga list_order_bonus range be 0–1.0 (relative to other sagas) or remain at 1.0 (matching top-of-quest-list)? If relative, a bottom-of-list saga scores lower than a top-of-list regular quest, which might be undesirable. If fixed at 1.0, reordering sagas doesn't actually affect scoring.
-
-Possible approach: `0.5 + 0.5 * (sort_order / max_sort_order)` — ranges from 0.5 to 1.0. Bottom saga still gets a meaningful boost (they're committed work), but top saga gets more.
+- Sort_orders already unified (5A-6a). Sagas already have sort_order that affects scoring.
+- `reorder_list` backend function accepts mixed quest/saga items
+- Frontend: drag-and-drop on quest list handles both row types
 
 ---
 
-## 3. Saga steps on quest list (5A-7)
+## 3. Saga steps on quest list (5A-6)
 
 ### User story
 
@@ -61,12 +55,15 @@ Possible approach: `0.5 + 0.5 * (sort_order / max_sort_order)` — ranges from 0
 
 ### Behavior
 
-- Active saga steps (one per active saga with an active run) appear on the quest list alongside regular quests
-- They are read-only — clicking the title or entering edit mode navigates to the saga tab (or shows a "view on Saga tab" link)
+- Sagas appear as slots on the quest list alongside regular quests, showing their current active step
+- They are read-only — clicking the title navigates to the saga tab
 - They show the same info as regular quests: title, importance, difficulty, TOD, DOW, last done, tags, debug scoring
-- They are filterable and searchable — difficulty filter, importance filter, fuzzy search, TOD, DOW, due filter all apply
-- They have a visual indicator showing they're saga steps (e.g., saga name badge, or different row styling)
+- They have a `[Saga: Name]` badge before the step title
+- They are filterable and searchable — difficulty filter, importance filter, fuzzy search (including saga name), TOD, DOW, due filter all apply
 - The ⚔ and ✓ buttons work (Quest Now starts timer, Done completes the step)
+- When a saga run completes, the slot dims and shows step 1
+- Recurring sagas between runs display like not-due recurring quests
+- One-off completed sagas display like completed one-offs
 
 ### What changes
 
@@ -79,9 +76,10 @@ Possible approach: `0.5 + 0.5 * (sort_order / max_sort_order)` — ranges from 0
 
 ## Implementation order
 
-1. **5A-5: Debug scoring on saga tab** — quick win, no backend changes
-2. **5A-6: Saga reordering** — backend reorder function, frontend drag-and-drop, scoring adjustment
-3. **5A-7: Saga steps on quest list** — backend merge, frontend rendering with read-only rows
+1. ~~**5A-5: Debug scoring on saga tab**~~ ✅
+2. ~~**5A-6a: Unified sort_order + scoring**~~ ✅ — sort_orders share namespace, saga step scoring uses saga sort_order
+3. **5A-6b: Saga slots on quest list** — backend get_quest_list, frontend rendering with saga badge, filtering, ⚔/✓ buttons
+4. **5A-7: Saga reordering on quest list** — backend reorder_list for mixed quest/saga items, frontend drag-and-drop handles both types
 
 ---
 

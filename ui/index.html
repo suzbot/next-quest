@@ -138,6 +138,7 @@
       text-align: right;
     }
     .quest-importance { color: #a85; font-size: 10px; margin-left: 2px; }
+    .saga-badge { font-size: 9px; color: #666; background: #c0c0c0; padding: 1px 4px; border: 1px solid #999; margin-right: 4px; flex-shrink: 0; }
     .quest-debug { font-size: 9px; color: #666; margin-top: 2px; }
     .last-done-picker-wrap { position: relative; flex-shrink: 0; }
     .last-done-picker-icon { font-size: 11px; color: #888; cursor: pointer; }
@@ -1175,6 +1176,7 @@
 
     let editingId = null;
     let cachedQuests = [];
+    let cachedQuestListItems = [];
     let draggedId = null;
     let cachedSkills = [];
     let cachedAttributes = [];
@@ -1210,7 +1212,7 @@
     }
 
     function applyFilters() {
-      renderQuests(cachedQuests);
+      renderQuestList(cachedQuestListItems);
     }
 
     function clearFilters() {
@@ -1221,6 +1223,35 @@
       filterDow.value = "";
       filterDue.checked = false;
       applyFilters();
+    }
+
+    function buildSearchTextSaga(q) {
+      const parts = [q.title, q._sagaName || ""];
+      (q.skill_ids || []).forEach(id => { if (skillNameMap[id]) parts.push(skillNameMap[id]); });
+      (q.attribute_ids || []).forEach(id => { if (attrNameMap[id]) parts.push(attrNameMap[id]); });
+      (q.tag_ids || []).forEach(id => { if (tagNameMap[id]) parts.push(tagNameMap[id]); });
+      parts.push(difficultyLabel(q.difficulty));
+      if (q.importance > 0) parts.push("!".repeat(q.importance));
+      return parts.join(" ").toLowerCase();
+    }
+
+    function passesFiltersSaga(q) {
+      const searchVal = filterSearch.value.trim().toLowerCase();
+      if (searchVal && !buildSearchTextSaga(q).includes(searchVal)) return false;
+      if (filterDifficulty.value && q.difficulty !== filterDifficulty.value) return false;
+      if (filterImportance.value !== "" && q.importance !== parseInt(filterImportance.value)) return false;
+      if (filterTod.value) {
+        const bit = parseInt(filterTod.value, 10);
+        const mask = q.time_of_day ?? 15;
+        if (mask !== 15 && mask !== 0 && !(mask & bit)) return false;
+      }
+      if (filterDow.value !== "") {
+        const day = parseInt(filterDow.value, 10);
+        const mask = q.days_of_week ?? 127;
+        if (!(mask & (1 << day))) return false;
+      }
+      if (filterDue.checked && !q.is_due) return false;
+      return true;
     }
 
     function buildSearchText(q) {
@@ -1346,7 +1377,7 @@
     }
 
     async function loadAll() {
-      const fetches = [invoke("get_quests"), invoke("get_completions"), invoke("get_campaigns"), invoke("get_tags")];
+      const fetches = [invoke("get_quest_list"), invoke("get_completions"), invoke("get_campaigns"), invoke("get_tags"), invoke("get_quests")];
       if (cachedSkills.length === 0) {
         fetches.push(invoke("get_skills"), invoke("get_attributes"));
       }
@@ -1354,8 +1385,9 @@
       cachedTags = results[3];
       tagNameMap = {};
       cachedTags.forEach(t => tagNameMap[t.id] = t.name);
-      const extraStart = 4; // index where skills/attributes start
-      if (results.length === 6) {
+      cachedQuests = results[4]; // still needed for quest giver, campaigns, etc.
+      const extraStart = 5; // index where skills/attributes start
+      if (results.length === 7) {
         cachedSkills = results[extraStart];
         cachedAttributes = results[extraStart + 1];
         skillNameMap = {};
@@ -1367,7 +1399,7 @@
         renderAddLinkTags();
         populateFilterDropdowns();
       }
-      renderQuests(results[0]);
+      renderQuestList(results[0]);
       renderCompletions(results[1]);
       cachedCampaigns = results[2];
       if (!campaignsView.classList.contains("hidden")) {
@@ -1390,21 +1422,36 @@
       }
     }
 
-    function renderQuests(quests) {
-      cachedQuests = quests;
+    function renderQuestList(items) {
+      cachedQuestListItems = items;
 
-      const filtered = quests.filter(passesFilters);
+      const filtered = items.filter(item => {
+        if (item.itemType === "quest") return passesFilters(item.quest);
+        if (item.itemType === "saga") {
+          const slot = item.sagaSlot;
+          // Build a proxy that includes saga name in searchable text
+          const proxy = { ...slot.step, is_due: slot.isSagaDue, _sagaName: slot.sagaName };
+          return passesFiltersSaga(proxy);
+        }
+        return false;
+      });
 
       if (filtered.length === 0) {
-        questList.innerHTML = quests.length === 0
+        questList.innerHTML = items.length === 0
           ? '<li class="empty-state">No quests yet. Add one above.</li>'
           : '<li class="empty-state">No quests match filters.</li>';
         return;
       }
 
-      questList.innerHTML = filtered
-        .map(q => editingId === q.id ? renderEditMode(q) : renderQuestRow(q))
-        .join("");
+      questList.innerHTML = filtered.map(item => {
+        if (item.itemType === "quest") {
+          return editingId === item.quest.id ? renderEditMode(item.quest) : renderQuestRow(item.quest);
+        }
+        if (item.itemType === "saga") {
+          return renderSagaSlotRow(item.sagaSlot);
+        }
+        return "";
+      }).join("");
 
       if (editingId) {
         const el = document.getElementById("edit-title");
@@ -1487,6 +1534,52 @@
           </span>
           <span class="quest-last-done">${lastDone}</span>
           ${lastDonePicker}
+          ${questNowBtn}
+          ${doneBtn}
+        </div>
+        ${(hasDetail || debugScoring) ? `<div class="quest-detail" style="display:none">${links ? `<span class="quest-links">${escapeHtml(links)}</span>` : ''}${debugScoring && questScoreMap[q.id] ? `<div class="quest-debug">${formatScoreDebug(questScoreMap[q.id])}</div>` : ''}</div>` : ''}
+      </li>`;
+    }
+
+    function renderSagaSlotRow(slot) {
+      const q = slot.step;
+      const cycleText = slot.sagaCycleDays ? `↻ ${slot.sagaCycleDays}d` : "One-off";
+      const todDisplay = todText(q.time_of_day ?? 15);
+      const dowLabel = dowText(q.days_of_week ?? 127);
+      const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
+      const links = linkNamesText(q);
+      const hasDetail = !!links;
+
+      let stateClass;
+      if (slot.isCompleted) {
+        stateClass = "quest-cooldown";
+      } else if (slot.isSagaDue) {
+        stateClass = "quest-due";
+      } else {
+        stateClass = "quest-cooldown";
+      }
+
+      const diffColor = slot.isSagaDue ? (diffTextColors[q.difficulty] || '#555') : '#777';
+
+      const questNowBtn = slot.isSagaDue
+        ? `<button class="action-btn" onclick="sagaStepQuestNow('${q.id}')">⚔</button>`
+        : "";
+      const doneBtn = slot.isSagaDue
+        ? `<button class="action-btn done-btn" onclick="completeSagaStep('${q.id}', '${slot.sagaId}')">✓</button>`
+        : "";
+
+      return `<li class="quest-item ${stateClass}" data-id="${slot.sagaId}" data-type="saga" tabindex="0">
+        <div class="quest-row-top">
+          <span class="expand-toggle" onclick="toggleDetail(this)">${(hasDetail || debugScoring) ? '▸' : ''}</span>
+          <span class="saga-badge">[Saga: ${escapeHtml(slot.sagaName)}]</span>
+          <span class="quest-title" onclick="showView('sagas')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
+          <span class="quest-meta">
+            <span class="meta-dow">${dowLabel}</span>
+            <span class="meta-tod">${todDisplay}</span>
+            <span class="meta-cycle">${cycleText}</span>
+            <span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(q.difficulty)}</span>
+          </span>
+          <span class="quest-last-done">${lastDone}</span>
           ${questNowBtn}
           ${doneBtn}
         </div>
