@@ -207,8 +207,10 @@ pub struct QuestLinks {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct QuestOrder {
+#[serde(rename_all = "camelCase")]
+pub struct ListReorderItem {
     pub id: String,
+    pub item_type: String,
     pub sort_order: i32,
 }
 
@@ -949,7 +951,7 @@ pub fn get_sagas(conn: &Connection) -> Result<Vec<Saga>, String> {
         .prepare(
             "SELECT id, name, cycle_days, sort_order, active, created_at, last_run_completed_at
              FROM saga
-             ORDER BY sort_order ASC",
+             ORDER BY sort_order DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -1271,6 +1273,7 @@ pub fn reorder_saga_steps(conn: &Connection, saga_id: &str, step_ids: Vec<String
 #[serde(rename_all = "camelCase")]
 pub struct SagaCompletionResult {
     pub completed: bool,
+    pub saga_id: String,
     pub saga_name: String,
     pub bonus_xp: i64,
     pub level_ups: Vec<LevelUp>,
@@ -1296,6 +1299,7 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCom
     let steps = get_saga_steps(conn, saga_id)?;
     let empty_result = SagaCompletionResult {
         completed: false,
+        saga_id: saga.id.clone(),
         saga_name: saga.name.clone(),
         bonus_xp: 0,
         level_ups: Vec::new(),
@@ -1386,6 +1390,7 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCom
 
     Ok(SagaCompletionResult {
         completed: true,
+        saga_id: saga.id,
         saga_name: saga.name,
         bonus_xp,
         level_ups,
@@ -1407,6 +1412,7 @@ pub fn check_saga_completion_for_quest(conn: &Connection, quest_id: &str) -> Res
         Some(sid) => check_saga_completion(conn, &sid),
         None => Ok(SagaCompletionResult {
             completed: false,
+            saga_id: String::new(),
             saga_name: String::new(),
             bonus_xp: 0,
             level_ups: Vec::new(),
@@ -2119,12 +2125,24 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
     let attr_level_map: std::collections::HashMap<String, i32> = attributes.iter().map(|a| (a.id.clone(), a.level)).collect();
     let skill_level_map: std::collections::HashMap<String, i32> = skills.iter().map(|s| (s.id.clone(), s.level)).collect();
 
-    // Precompute quest IDs referenced by active campaigns
+    // Precompute quest and saga IDs referenced by active campaigns
     let campaign_quest_ids: std::collections::HashSet<String> = {
         let mut stmt = conn.prepare(
             "SELECT DISTINCT cc.target_id FROM campaign_criterion cc
              JOIN campaign c ON c.id = cc.campaign_id
              WHERE c.completed_at IS NULL AND cc.target_type = 'quest_completions'"
+        ).map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt.query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        ids.into_iter().collect()
+    };
+    let campaign_saga_ids: std::collections::HashSet<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT cc.target_id FROM campaign_criterion cc
+             JOIN campaign c ON c.id = cc.campaign_id
+             WHERE c.completed_at IS NULL AND cc.target_type = 'saga_completions'"
         ).map_err(|e| e.to_string())?;
         let ids: Vec<String> = stmt.query_map([], |row| row.get(0))
             .map_err(|e| e.to_string())?
@@ -2171,7 +2189,7 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
             let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
             let skip_penalty = skips * 0.5;
             let list_order_bonus = *saga_sort_order as f64 / global_max_sort;
-            let membership_bonus = 0.0;
+            let membership_bonus = if quest.saga_id.as_ref().map_or(false, |sid| campaign_saga_ids.contains(sid)) { 1.0 } else { 0.0 };
             let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
             results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus: 0.0, pool: "due".to_string(), due_count, not_due_count, saga_name: Some(saga_name.clone()) });
         }
@@ -2805,18 +2823,27 @@ pub fn set_quest_last_done(conn: &Connection, quest_id: String, last_done: Optio
     Ok(())
 }
 
-pub fn reorder_quests(conn: &Connection, orders: Vec<QuestOrder>) -> Result<(), String> {
+pub fn reorder_list(conn: &Connection, items: Vec<ListReorderItem>) -> Result<(), String> {
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     {
-        let mut stmt = tx
-            .prepare("UPDATE quest SET sort_order = ?1 WHERE id = ?2")
+        let mut quest_stmt = tx
+            .prepare("UPDATE quest SET sort_order = ?1 WHERE id = ?2 AND saga_id IS NULL")
             .map_err(|e| e.to_string())?;
-        for o in &orders {
-            let rows = stmt
-                .execute(rusqlite::params![o.sort_order, o.id])
-                .map_err(|e| e.to_string())?;
+        let mut saga_stmt = tx
+            .prepare("UPDATE saga SET sort_order = ?1 WHERE id = ?2")
+            .map_err(|e| e.to_string())?;
+        for item in &items {
+            let rows = match item.item_type.as_str() {
+                "quest" => quest_stmt
+                    .execute(rusqlite::params![item.sort_order, item.id])
+                    .map_err(|e| e.to_string())?,
+                "saga" => saga_stmt
+                    .execute(rusqlite::params![item.sort_order, item.id])
+                    .map_err(|e| e.to_string())?,
+                _ => return Err(format!("Invalid item type: {}", item.item_type)),
+            };
             if rows == 0 {
-                return Err(format!("Quest not found: {}", o.id));
+                return Err(format!("{} not found: {}", item.item_type, item.id));
             }
         }
     }
@@ -3881,33 +3908,51 @@ mod tests {
     // --- Reorder ---
 
     #[test]
-    fn reorder_quests_swaps_order() {
+    fn reorder_list_swaps_quest_and_saga() {
         let conn = test_db();
-        let a = test_quest(&conn, "A");
-        let b = test_quest(&conn, "B");
-        // B has higher sort_order, so it's first in get_quests (DESC)
+        let q = test_quest(&conn, "Quest");
+        let saga = add_saga(&conn, "Saga".into(), Some(7)).unwrap();
+        // Verify initial sort_orders
         let quests = get_quests(&conn).unwrap();
-        assert_eq!(quests[0].title, "B");
-        assert_eq!(quests[1].title, "A");
+        let q_sort = quests.iter().find(|x| x.id == q.id).unwrap().sort_order;
+        let saga_sort = saga.sort_order;
+        assert!(saga_sort > q_sort);
 
         // Swap their sort_orders
-        reorder_quests(&conn, vec![
-            QuestOrder { id: a.id, sort_order: b.sort_order },
-            QuestOrder { id: b.id, sort_order: a.sort_order },
+        reorder_list(&conn, vec![
+            ListReorderItem { id: q.id.clone(), item_type: "quest".into(), sort_order: saga_sort },
+            ListReorderItem { id: saga.id.clone(), item_type: "saga".into(), sort_order: q_sort },
         ]).unwrap();
 
         let quests = get_quests(&conn).unwrap();
-        assert_eq!(quests[0].title, "A");
-        assert_eq!(quests[1].title, "B");
+        let q_after = quests.iter().find(|x| x.id == q.id).unwrap();
+        assert_eq!(q_after.sort_order, saga_sort);
+        let saga_after: i32 = conn.query_row(
+            "SELECT sort_order FROM saga WHERE id = ?1",
+            rusqlite::params![saga.id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(saga_after, q_sort);
     }
 
     #[test]
-    fn reorder_quests_invalid_id_errors() {
+    fn reorder_list_invalid_id_errors() {
         let conn = test_db();
         let q = test_quest(&conn, "Real");
-        let result = reorder_quests(&conn, vec![
-            QuestOrder { id: q.id, sort_order: 5 },
-            QuestOrder { id: "nonexistent".into(), sort_order: 3 },
+        let result = reorder_list(&conn, vec![
+            ListReorderItem { id: q.id, item_type: "quest".into(), sort_order: 5 },
+            ListReorderItem { id: "nonexistent".into(), item_type: "quest".into(), sort_order: 3 },
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reorder_list_invalid_type_errors() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Quest");
+        // Pass a quest ID with type "saga" — should fail (no matching saga row)
+        let result = reorder_list(&conn, vec![
+            ListReorderItem { id: q.id, item_type: "saga".into(), sort_order: 1 },
         ]);
         assert!(result.is_err());
     }
@@ -4725,8 +4770,8 @@ mod tests {
         add_saga(&conn, "Second".into(), Some(7)).unwrap();
         let sagas = get_sagas(&conn).unwrap();
         assert_eq!(sagas.len(), 2);
-        assert_eq!(sagas[0].name, "First");
-        assert_eq!(sagas[1].name, "Second");
+        assert_eq!(sagas[0].name, "Second");
+        assert_eq!(sagas[1].name, "First");
     }
 
     #[test]

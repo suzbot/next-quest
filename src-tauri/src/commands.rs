@@ -318,12 +318,12 @@ pub fn delete_quest(
 }
 
 #[tauri::command]
-pub fn reorder_quests(
+pub fn reorder_list(
     state: State<DbState>,
-    orders: Vec<db::QuestOrder>,
+    items: Vec<db::ListReorderItem>,
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::reorder_quests(&conn, orders)
+    db::reorder_list(&conn, items)
 }
 
 #[tauri::command]

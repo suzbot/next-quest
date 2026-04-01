@@ -287,8 +287,8 @@ Key design decisions:
 3. ~~**Fuzzy string search**~~ ✅ — Replaced attribute/skill dropdowns with a single text search field. Searches quest name, skills, attributes, category tags, difficulty, importance.
 4. ~~**Category tags**~~ ✅ — User-defined tags (e.g., Computer, Outside) applied via Tags section in add/edit mode. Searchable via fuzzy search.
 5. ~~**Debug scoring on saga tab**~~ ✅
-6. **Saga steps on quest list** — Sagas appear as slots on the quest list, showing their current active step. Filterable and searchable alongside regular quests. Edit links to saga tab.
-7. **Saga reordering on quest list** — Drag sagas up and down among quests on the quest list. Position affects scoring. The quest list is the single source of truth for priority ordering. Saga tab displays in sort order but doesn't allow reordering.
+6. ~~**Saga steps on quest list**~~ ✅ — Sagas appear as slots on the quest list, showing their current active step. Filterable and searchable alongside regular quests. Edit links to saga tab. Completable with inline XP feedback.
+7. ~~**Saga reordering on quest list**~~ ✅ — Drag and keyboard-reorder sagas among quests on the quest list. Position affects scoring via unified sort_order namespace. The quest list is the single source of truth for priority ordering. Saga tab displays in sort order but doesn't allow reordering.
 8. **"Not today" button** — Remove a quest from the candidate pool for the rest of the day (resets at midnight). Doesn't count as a skip or affect scoring. For when you know you can't/won't do something today.
 9. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
 10. *(Deferred)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.

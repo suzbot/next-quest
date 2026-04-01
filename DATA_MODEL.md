@@ -35,7 +35,7 @@ A template for something you do. Can be recurring or one-off.
 - Difficulty defaults to `easy`. Display labels: Trivial, Easy, Fair, Hard, Epic.
 - Time-of-day defaults to 7 (all times). All or none selected = anytime.
 - Days-of-week defaults to 127 (every day). All or none selected = every day.
-- Saga steps (`saga_id` set) are excluded from the Quest List tab. They appear in the Saga tab and through the quest giver.
+- Saga steps (`saga_id` set) are not shown as individual rows on the Quest List tab. Instead, each saga appears as a single "saga slot" showing its current active step, interleaved with regular quests by sort_order. Saga steps also appear in the Saga tab and through the quest giver.
 - Saga step XP uses the parent saga's cycle_days (not the one-off multiplier). One-off saga steps use 3x.
 
 ### Completion
@@ -109,7 +109,7 @@ A multi-step goal with ordered sub-quests. Can be one-off or recurring.
 | id | UUID (text) | Unique identifier |
 | name | String | Saga title |
 | cycle_days | Integer? | NULL = one-off, set = recurring (days after run completion before reset) |
-| sort_order | Integer | Display order (creation order) |
+| sort_order | Integer | Display order. Shares a unified namespace with quest sort_order — sagas and quests are interleaved on the quest list by this value. |
 | active | Bool (int) | 1 = active |
 | created_at | Timestamp | ISO 8601 creation time |
 | last_run_completed_at | Timestamp? | Stamped when all steps complete a run. Drives recurring reset and cooldown styling. Not recomputed — permanent once stamped. |
@@ -304,8 +304,8 @@ All factors apply to both due and not-due pools (not-due uses normalized days_si
 
 - **Overdue ratio**: `(days_overdue + cycle) / cycle` for recurring, `(days + 9) / 9` for one-off. Saga steps use their saga's cycle_days (one-off sagas fall back to 9).
 - **Importance boost**: `importance × 30.0 / (1 + skips)`. Importance (0–5) is the dominant scoring signal. Each level ≈ 30 days of daily overdue. Skips diminish importance gracefully rather than subtracting — after many skips, approaches a 0! quest.
-- **List order bonus**: `sort_order / global_max_sort_order` (max 1.0). Uses the full quest list's max, not the candidate pool. Saga steps get 1.0 (treated as top-of-list priority).
-- **Membership bonus**: +1.0 for regular quests referenced as a criterion in any active campaign. Boolean — does not stack across multiple campaigns. Saga steps do not get this bonus (they already have 1.0 from list-order).
+- **List order bonus**: `sort_order / global_max_sort_order` (max 1.0). `global_max_sort_order` is the max across both quest and saga sort_orders. Saga steps use their parent saga's sort_order — same formula as regular quests. Position on the quest list is the priority.
+- **Membership bonus**: +1.0 for quests or saga steps referenced in any active campaign. Regular quests match on `quest_completions` criteria; saga steps match on `saga_completions` criteria targeting their parent saga. Boolean — does not stack across multiple campaigns.
 - **Balance bonus**: `0.5 × max(0, avg_level - linked_level)` per linked attribute/skill, take the max. Gently nudges quests feeding underleveled attributes/skills.
 - **Skip penalty**: `skip_count × 0.5`. Base penalty for non-important quests. For important quests, skips are handled by dividing importance (see above). Resets daily. Recorded on "Something Else" (main) and "Run" (overlay). "Hide in the Shadows" does not count.
 

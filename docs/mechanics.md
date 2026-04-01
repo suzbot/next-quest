@@ -241,11 +241,11 @@ Higher = more urgent.
 
 ### List Order Bonus
 
-`sort_order / global_max_sort_order` (max 1.0). Uses the full quest list's max, not the candidate pool. Saga steps get 1.0 (treated as top-of-list priority).
+`sort_order / global_max_sort_order` (max 1.0). `global_max_sort_order` is the max across both quest and saga sort_orders (unified namespace). Saga steps use their parent saga's sort_order — same formula as regular quests. Position on the quest list is the priority.
 
 ### Membership Bonus
 
-+1.0 for regular quests referenced as a criterion in any active campaign. Boolean — does not stack. Saga steps do not get this (they already have 1.0 from list order).
++1.0 for quests or saga steps referenced in any active campaign. Regular quests get the bonus when referenced as a `quest_completions` criterion. Saga steps get the bonus when their parent saga is referenced as a `saga_completions` criterion. Boolean — does not stack across multiple campaigns.
 
 ### Balance Bonus
 
@@ -292,6 +292,27 @@ A saga is a multi-step goal with ordered sub-quests. Can be one-off or recurring
 **Completion:** When all steps have a completion more recent than the run start (`last_run_completed_at` or `created_at`), the saga's run completes: `last_run_completed_at` is stamped, and a completion bonus is awarded.
 
 **Between runs:** After a run completes and before the next cycle, no steps appear in the quest giver. The saga is "cooling down."
+
+### Quest List Saga Slots
+
+Each saga appears as a single "saga slot" on the quest list, interleaved with regular quests by sort_order (unified namespace — quests and sagas share one sort_order range).
+
+**Display:** The slot shows the current active step (or step 1 if not due/completed), with a `[Saga: Name]` badge. Step metadata (difficulty, importance, TOD, DOW, last done) comes from the step; cycle comes from the saga.
+
+**States and styling:**
+- Active run (saga due, step available): `quest-due` styling. ⚔ and ✓ buttons active. Reorderable.
+- Recurring, between runs (not due): `quest-cooldown` styling (dimmed). Not reorderable. Same as not-due recurring quests.
+- One-off, completed: `quest-cooldown` styling (dimmed). Not reorderable. Same as completed one-off quests.
+
+**Completion from quest list:** The ✓ button completes the step with inline XP feedback and celebration text. The quest list refreshes to show the next step in the saga.
+
+**Quest Now from quest list:** The ⚔ button starts a timer on the quest giver (same flow as regular quest Quest Now). Victory returns to the quest giver.
+
+**Reordering:** Saga slots are reorderable alongside regular quests via drag-and-drop and keyboard (shift+arrow). Non-reorderable saga slots (not due, completed) sit at the bottom and cannot be dragged.
+
+**Filtering and search:** Fuzzy search includes step title, saga name, linked skills/attributes/tags, difficulty label, importance marks. Difficulty/importance filters check the step. Due filter checks the saga's due state.
+
+**Editing:** Clicking the saga slot title navigates to the saga tab. Saga steps are managed there.
 
 ### Lane assignment
 

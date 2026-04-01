@@ -1550,13 +1550,14 @@
       const links = linkNamesText(q);
       const hasDetail = !!links;
 
+      const reorderable = slot.isSagaDue && !slot.isCompleted;
       let stateClass;
       if (slot.isCompleted) {
-        stateClass = "quest-cooldown";
+        stateClass = "quest-cooldown quest-not-reorderable";
       } else if (slot.isSagaDue) {
         stateClass = "quest-due";
       } else {
-        stateClass = "quest-cooldown";
+        stateClass = "quest-cooldown quest-not-reorderable";
       }
 
       const diffColor = slot.isSagaDue ? (diffTextColors[q.difficulty] || '#555') : '#777';
@@ -1565,14 +1566,18 @@
         ? `<button class="action-btn" onclick="sagaStepQuestNow('${q.id}')">⚔</button>`
         : "";
       const doneBtn = slot.isSagaDue
-        ? `<button class="action-btn done-btn" onclick="completeSagaStep('${q.id}', '${slot.sagaId}')">✓</button>`
+        ? `<button class="action-btn done-btn" onclick="completeListSagaStep('${q.id}', '${slot.sagaId}', '${q.difficulty}')">✓</button>`
         : "";
 
-      return `<li class="quest-item ${stateClass}" data-id="${slot.sagaId}" data-type="saga" tabindex="0">
+      const pointerHandler = reorderable ? `onpointerdown="onPointerDown(event, '${slot.sagaId}')"` : '';
+
+      return `<li class="quest-item ${stateClass}" data-id="${slot.sagaId}" data-type="saga" tabindex="0"
+                  onkeydown="handleQuestKey(event, '${slot.sagaId}', '${escapeAttr(slot.sagaName)}')"
+                  ${pointerHandler}>
         <div class="quest-row-top">
           <span class="expand-toggle" onclick="toggleDetail(this)">${(hasDetail || debugScoring) ? '▸' : ''}</span>
           <span class="saga-badge">[Saga: ${escapeHtml(slot.sagaName)}]</span>
-          <span class="quest-title" onclick="showView('sagas')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
+          <span class="quest-title" onclick="navigateToSaga('${slot.sagaId}')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
           <span class="quest-meta">
             <span class="meta-dow">${dowLabel}</span>
             <span class="meta-tod">${todDisplay}</span>
@@ -1786,6 +1791,56 @@
       setTimeout(() => loadAll(), 2500);
     }
 
+    async function completeListSagaStep(questId, sagaId, difficulty) {
+      const completion = await invoke("complete_quest", { questId });
+      const sagaResult = await invoke("check_saga_completion", { sagaId });
+
+      const row = questList.querySelector(`[data-id="${sagaId}"]`);
+      if (row) {
+        const color = diffTextColors[difficulty] || "#1a6e1a";
+        row.style.setProperty("--flash-color", color + "33");
+        row.classList.add("flashing");
+
+        const feedbackDiv = document.createElement("div");
+        feedbackDiv.style.marginLeft = "4px";
+        let feedbackHtml = "";
+        if (completion.xp_earned > 0) {
+          feedbackHtml += xpAwardsHtml(completion.xp_awards, color);
+        }
+        if (completion.level_ups?.length > 0) {
+          feedbackHtml += levelUpHtml(completion.level_ups);
+        }
+        if (sagaResult?.completed) {
+          feedbackHtml += `<div class="saga-celebration pulsing" style="margin-top: 4px;">`;
+          feedbackHtml += `<strong>${escapeHtml(sagaResult.sagaName)} complete!</strong>`;
+          if (sagaResult.bonusXp > 0) {
+            feedbackHtml += ` <span class="xp-flash" style="color: #7a5500">+${sagaResult.bonusXp} bonus XP</span>`;
+          }
+          if (sagaResult.levelUps?.length > 0) {
+            feedbackHtml += levelUpHtml(sagaResult.levelUps);
+          }
+          feedbackHtml += `</div>`;
+        }
+        feedbackDiv.innerHTML = feedbackHtml;
+        row.querySelector(".quest-title")?.after(feedbackDiv);
+      }
+
+      // Campaign progress
+      let campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: questId });
+      if (sagaResult?.completed) {
+        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: sagaId });
+        campaignResults = campaignResults.concat(sagaCampaignResults);
+      }
+      const celebHtml = campaignCelebrationHtml(campaignResults);
+      if (celebHtml && row) {
+        const celebDiv = document.createElement("div");
+        celebDiv.innerHTML = celebHtml;
+        row.querySelector(".quest-title")?.parentElement?.after(celebDiv);
+      }
+
+      setTimeout(() => loadAll(), 2500);
+    }
+
     async function deleteQuest(id, title) {
       try {
         await invoke("delete_quest", { questId: id });
@@ -1822,24 +1877,45 @@
       if (target) target.focus();
     }
 
+    function getListItemById(id) {
+      for (const item of cachedQuestListItems) {
+        if (item.itemType === "quest" && item.quest.id === id) return item;
+        if (item.itemType === "saga" && item.sagaSlot.sagaId === id) return item;
+      }
+      return null;
+    }
+
+    function listItemId(item) {
+      return item.itemType === "quest" ? item.quest.id : item.sagaSlot.sagaId;
+    }
+
+    function listItemSortOrder(item) {
+      return item.sortOrder;
+    }
+
+    function isListItemReorderable(item) {
+      if (item.itemType === "quest") return item.quest.active;
+      if (item.itemType === "saga") return item.sagaSlot.isSagaDue && !item.sagaSlot.isCompleted;
+      return false;
+    }
+
     async function moveQuest(id, direction) {
-      const items = Array.from(questList.querySelectorAll(".quest-item"));
-      const idx = items.findIndex(el => el.dataset.id === id);
+      const domItems = Array.from(questList.querySelectorAll(".quest-item"));
+      const idx = domItems.findIndex(el => el.dataset.id === id);
       const neighborIdx = idx + direction;
 
-      if (neighborIdx < 0 || neighborIdx >= items.length) return;
-      if (items[idx].classList.contains("quest-inactive")) return;
-      if (items[neighborIdx].classList.contains("quest-inactive")) return;
+      if (neighborIdx < 0 || neighborIdx >= domItems.length) return;
 
-      const neighborId = items[neighborIdx].dataset.id;
-      const moving = cachedQuests.find(q => q.id === id);
-      const neighbor = cachedQuests.find(q => q.id === neighborId);
+      const neighborId = domItems[neighborIdx].dataset.id;
+      const moving = getListItemById(id);
+      const neighbor = getListItemById(neighborId);
       if (!moving || !neighbor) return;
+      if (!isListItemReorderable(moving) || !isListItemReorderable(neighbor)) return;
 
-      await invoke("reorder_quests", {
-        orders: [
-          { id: moving.id, sort_order: neighbor.sort_order },
-          { id: neighbor.id, sort_order: moving.sort_order },
+      await invoke("reorder_list", {
+        items: [
+          { id: listItemId(moving), itemType: moving.itemType, sortOrder: listItemSortOrder(neighbor) },
+          { id: listItemId(neighbor), itemType: neighbor.itemType, sortOrder: listItemSortOrder(moving) },
         ]
       });
 
@@ -1889,24 +1965,24 @@
 
         if (!target || target.id === draggedId) { draggedId = null; return; }
 
-        const activeQuests = cachedQuests.filter(q => q.active);
-        const draggedIdx = activeQuests.findIndex(q => q.id === draggedId);
+        const reorderableItems = cachedQuestListItems.filter(isListItemReorderable);
+        const draggedIdx = reorderableItems.findIndex(i => listItemId(i) === draggedId);
         if (draggedIdx === -1) { draggedId = null; return; }
 
         const rect = target.el.getBoundingClientRect();
         const mid = rect.top + rect.height / 2;
-        let targetIdx = activeQuests.findIndex(q => q.id === target.id);
+        let targetIdx = reorderableItems.findIndex(i => listItemId(i) === target.id);
         if (ue.clientY >= mid && targetIdx < draggedIdx) targetIdx++;
         if (ue.clientY < mid && targetIdx > draggedIdx) targetIdx--;
 
-        const reordered = [...activeQuests];
+        const reordered = [...reorderableItems];
         const [moved] = reordered.splice(draggedIdx, 1);
         reordered.splice(targetIdx, 0, moved);
 
-        const sortOrders = activeQuests.map(q => q.sort_order).sort((a, b) => b - a);
-        const orders = reordered.map((q, i) => ({ id: q.id, sort_order: sortOrders[i] }));
+        const sortOrders = reorderableItems.map(i => listItemSortOrder(i)).sort((a, b) => b - a);
+        const items = reordered.map((item, i) => ({ id: listItemId(item), itemType: item.itemType, sortOrder: sortOrders[i] }));
 
-        await invoke("reorder_quests", { orders });
+        await invoke("reorder_list", { items });
         draggedId = null;
         isDragging = false;
         await loadAll();
@@ -1917,7 +1993,7 @@
     }
 
     function getDropTarget(clientY) {
-      const items = Array.from(questList.querySelectorAll(".quest-item:not(.quest-inactive)"));
+      const items = Array.from(questList.querySelectorAll(".quest-item:not(.quest-inactive):not(.quest-not-reorderable)"));
       for (const el of items) {
         const rect = el.getBoundingClientRect();
         if (clientY >= rect.top && clientY <= rect.bottom) {
@@ -2241,7 +2317,6 @@
 
       // Check saga completion if this was a saga step
       let sagaResult = null;
-      const quest = cachedQuests.find(q => q.id === completion.quest_id);
       if (completion.quest_id) {
         sagaResult = await invoke("check_saga_completion_for_quest", { questId: completion.quest_id });
       }
@@ -2268,8 +2343,8 @@
       if (completion.quest_id) {
         campaignResults = await invoke("check_campaign_progress", { targetType: "quest_completions", targetId: completion.quest_id });
       }
-      if (sagaResult?.completed && quest?.saga_id) {
-        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: quest.saga_id });
+      if (sagaResult?.completed && sagaResult?.sagaId) {
+        const sagaCampaignResults = await invoke("check_campaign_progress", { targetType: "saga_completions", targetId: sagaResult.sagaId });
         campaignResults = campaignResults.concat(sagaCampaignResults);
       }
       textHtml += campaignCelebrationHtml(campaignResults);
@@ -3067,6 +3142,12 @@
       </li>`;
     }
 
+    async function navigateToSaga(sagaId) {
+      expandedSagaId = sagaId;
+      sagaSteps[sagaId] = await invoke("get_saga_steps", { sagaId });
+      showView('sagas');
+    }
+
     async function toggleSagaExpand(sagaId) {
       if (expandedSagaId === sagaId) {
         expandedSagaId = null;
@@ -3078,16 +3159,7 @@
     }
 
     async function sagaStepQuestNow(questId) {
-      // Same flow as listQuestNow — switch to quest giver, start timer
-      currentMonsterImage = randomFromExcluding(monsterImages, currentMonsterImage);
-      currentEncounterLine = randomFromExcluding(encounterLines, currentEncounterLine);
-      await invoke("start_timer", { questId, monsterImage: currentMonsterImage, encounterLine: currentEncounterLine });
-      timerStartLocal = Date.now();
-      const timerState = await invoke("get_timer_state");
-      timerTitleLocal = timerState.questTitle;
-      timerInterval = setInterval(updateTimerDisplay, 1000);
-      setTabsLocked(true);
-      showView("quest-giver");
+      await listQuestNow(questId);
     }
 
     // --- Step resequencing ---

@@ -152,8 +152,8 @@ pub struct SagaSlot {
 - `[Saga: Name]` badge before the step title
 - Step metadata (importance, difficulty, TOD, DOW, last done from the step)
 - Cycle from the saga (not the step)
-- ⚔ button calls `sagaStepQuestNow(stepId)`
-- ✓ button calls `completeSagaStep(stepId, sagaId)`
+- ⚔ button starts timer and shows quest giver (see section 7 for victory flow fix)
+- ✓ button completes step with inline feedback on quest list (see section 6 for fix)
 - Title click navigates to saga tab
 - Due/cooldown styling based on saga due state
 - Expand shows step links + debug scoring
@@ -175,14 +175,122 @@ Unchanged — still used for:
 
 The saga tab displays sagas in sort_order but does NOT allow reordering of sagas themselves. The quest list is the single source of truth for priority ordering — sagas are reordered there, among quests. The saga tab reflects the quest list's ordering.
 
+## 6. Saga slot completion from quest list
+
+### Problem
+
+The quest list saga slot's ✓ button calls `completeSagaStep`, which is the saga *tab's* completion function. It updates saga tab DOM elements (progress bar, step rows in `sagaList`) that don't exist when the user is on the quest list. The backend `complete_quest` call succeeds, but the user sees no XP feedback, no celebration text, and the quest list doesn't refresh to show the next step. It looks broken.
+
+### Fix
+
+The quest list saga slot's ✓ button needs its own completion path that mirrors `completeQuest` (the regular quest list completion function) but is saga-aware:
+
+1. Call `complete_quest` backend
+2. Show XP feedback on the quest list row (find row by `data-id="${sagaId}"`, not the step's quest ID)
+3. Check saga completion via `check_saga_completion`
+4. If saga completed, show celebration text inline on the quest list (same pattern as saga completion in `completeQuest`)
+5. Check campaign progress for both the quest completion and (if saga completed) the saga completion
+6. After feedback delay, reload quest list (not saga tab) — the slot automatically updates to show the next step
+
+The saga tab's `completeSagaStep` remains unchanged for completions done from the saga tab.
+
+## 7. Victory flow for saga steps started from quest list
+
+### Problem
+
+When the user clicks ⚔ on a saga slot from the quest list, `sagaStepQuestNow` starts the timer and shows the quest giver. The victory celebration (XP, saga completion text) displays correctly. However, after the victory celebration fades, the user is not returned to the quest giver view as expected.
+
+The normal flow after victory: `timerDone` shows the victory screen, then after 3.4s `loadAll()` runs (not awaited — inside nested `setTimeout`), which calls `renderQuestGiver()` to show the lane display. This works for regular quests but fails for saga steps — needs investigation during implementation to identify the specific cause (possible silent error in the async chain, rendering issue, or view state problem).
+
+### Secondary issue: campaign progress for saga completions
+
+`timerDone` does `cachedQuests.find(q => q.id === completion.quest_id)` to get `saga_id` for campaign progress checks. Saga steps aren't in `cachedQuests` (filtered by `saga_id IS NULL`), so `quest?.saga_id` is undefined and campaign progress for saga completions is skipped. Fix: derive saga ID from the `check_saga_completion_for_quest` result (which already runs and returns saga info) instead of looking up `cachedQuests`.
+
+## 8. Mixed reordering on quest list
+
+### Reorderability rules
+
+Saga slots follow the same rules as their quest equivalents:
+
+- **Active saga with current run** → reorderable (like an active quest)
+- **Recurring saga between runs (not due)** → NOT reorderable, sits at bottom with cooldown styling (like a not-due recurring quest)
+- **Completed one-off saga** → NOT reorderable, sits at bottom with dimmed styling (like a completed one-off quest)
+
+### Backend: `reorder_list`
+
+New struct and function replacing `reorder_quests`:
+
+```rust
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ListReorderItem {
+    pub id: String,
+    pub item_type: String, // "quest" or "saga"
+    pub sort_order: i32,
+}
+
+pub fn reorder_list(conn: &Connection, items: Vec<ListReorderItem>) -> Result<(), String>
+```
+
+For each item, updates `quest.sort_order` or `saga.sort_order` based on `item_type`. Validates that each ID exists in its respective table. Runs in a single transaction.
+
+`reorder_quests` is removed — all call sites switch to `reorder_list`.
+
+### Frontend: unified cached list for reordering
+
+Both drag-and-drop and keyboard reordering currently operate on `cachedQuests`, which only contains regular quests (from `get_quests`). Saga slots are absent, so reordering ignores them — dragging redistributes sort_orders among quests only, potentially colliding with saga sort_orders.
+
+**Fix:** Maintain a `cachedListItems` array alongside `cachedQuests`. This is populated from `get_quest_list` results and holds the unified list with both quests and saga slots. Each item has:
+- `id` — quest ID or saga ID
+- `itemType` — "quest" or "saga"
+- `sortOrder` — unified sort_order
+- `isReorderable` — true for active quests and due sagas; false for inactive/cooldown/completed items
+
+Both keyboard and drag reordering operate on `cachedListItems` instead of `cachedQuests`. The `reorder_list` backend call sends `{id, itemType, sortOrder}` triples.
+
+`cachedQuests` is still populated from `get_quests` (needed for quest giver, campaigns, etc.) but is NOT used for quest list reordering.
+
+### Keyboard reordering (`moveQuest`)
+
+Currently swaps sort_orders of two adjacent items using `cachedQuests` and `reorder_quests`. Updated to:
+
+1. Look up both items (the moving item and its neighbor) in `cachedListItems`
+2. Skip if either item is not reorderable
+3. Swap their sort_orders
+4. Call `reorder_list` with `[{id, itemType, sortOrder}]` for the two swapped items
+5. Reload and refocus
+
+Works identically for quest-quest, quest-saga, and saga-saga adjacencies.
+
+### Drag-and-drop reordering
+
+Currently builds reordered list from `cachedQuests.filter(q => q.active)`. Updated to:
+
+1. Build reordered list from `cachedListItems.filter(i => i.isReorderable)`
+2. After drop, redistribute the existing sort_orders across the new positions (same algorithm as current)
+3. Call `reorder_list` with the full reordered list of `{id, itemType, sortOrder}` triples
+4. Reload
+
+Saga slot rows already have `data-id="${sagaId}" data-type="saga"` — `getDropTarget` and `onPointerDown` need to read both attributes.
+
+### `onPointerDown` on saga slot rows
+
+Saga slot rows need the `onpointerdown` handler for dragging, same as quest rows. Only added when the saga slot is reorderable (due saga). Not-due and completed saga slots get no drag handler (same as inactive quests).
+
+### Keyboard navigation on saga slot rows
+
+Saga slot rows need the `onkeydown` handler for arrow-key focus movement and shift+arrow reordering. Same handler as quest rows, but passing the saga ID and type.
+
 ## Implementation order
 
 1. ~~**Unified sort_order + scoring**~~ ✅ — Sort_orders share one namespace. Saga step scoring uses `saga.sort_order / global_max_sort`. `global_max_sort` considers both tables.
 
-2. **Saga slots on quest list** — `SagaSlot` struct. `get_quest_list` returns merged quests + saga slots sorted by unified sort_order. Frontend renders saga slots with `[Saga: Name]` badge, step metadata, ⚔/✓, due/cooldown styling. Title click navigates to saga tab. Filtering/searching works on step data + saga name. Testing: see saga slots interleaved on quest list, filter by difficulty or search by saga name, complete a step from the quest list.
+2. ~~**Saga slots on quest list**~~ ✅ — `SagaSlot` struct. `get_quest_list` returns merged quests + saga slots sorted by unified sort_order. Frontend renders saga slots with `[Saga: Name]` badge, step metadata, ⚔/✓, due/cooldown styling. Title click navigates to saga tab. Filtering/searching works on step data + saga name.
 
-3. **Mixed drag-and-drop on quest list** — `reorder_list` backend function accepts mixed quest/saga items. Frontend drag-and-drop handles both row types. Testing: drag a saga slot above a quest, verify sort_orders update, verify scoring reflects new position.
+3. ~~**Bug fixes (sections 6–7)**~~ ✅ — New `completeListSagaStep` for quest list saga step completions with inline XP feedback. `sagaStepQuestNow` delegates to `listQuestNow` to fix victory navigation. Added `saga_id` to `SagaCompletionResult` for campaign progress on saga completions.
+
+4. ~~**Mixed reordering (section 8)**~~ ✅ — `reorder_list` backend replacing `reorder_quests`, handles mixed `{id, itemType, sortOrder}` items. `cachedQuestListItems` as unified data source with helper functions (`getListItemById`, `isListItemReorderable`, etc.). Both drag-and-drop and keyboard reordering handle mixed quest/saga items. `quest-not-reorderable` class on non-reorderable saga slots. Reorderability rules match quest equivalents.
 
 ### Summary
 
-Three vertical slices. Step 1 is done (scoring). Step 2 shows saga slots on the quest list (visible, filterable, completable). Step 3 enables mixed reordering (drag sagas among quests). Saga tab does NOT allow reordering — quest list is the single source of truth.
+Four vertical slices, all complete. Sagas appear as slots on the quest list, interleaved with regular quests. Completable with inline XP feedback. Reorderable via drag-and-drop and keyboard in a unified sort_order namespace. Saga tab does NOT allow reordering — quest list is the single source of truth.

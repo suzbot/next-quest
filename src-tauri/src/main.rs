@@ -75,7 +75,7 @@ fn main() {
             commands::update_quest,
             commands::delete_quest,
             commands::delete_completion,
-            commands::reorder_quests,
+            commands::reorder_list,
             commands::get_character,
             commands::get_xp_stats,
             commands::update_character,
