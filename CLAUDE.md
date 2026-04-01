@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** Phase 5A-6/7 complete. Next: Phase 5A-8 ("Not today" button)
+**Current phase:** Phase 5A-8 complete. Next: Phase 5B-1 (GitHub readme)
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 

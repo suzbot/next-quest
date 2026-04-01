@@ -279,6 +279,20 @@ Higher = more urgent.
 
 Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Default 127 = every day.
 
+## Not Today
+
+The "⏾ Not Today" button on the quest giver removes a quest from the candidate pool for the rest of the day. Unlike "Something Else" (which counts as a skip and pushes the quest down), "Not Today" fully excludes the quest — it won't appear in any lane until midnight reset.
+
+**Persistence:** Stored in the `not_today` table with the local date. Survives app restart. Stale entries (date before today) are cleaned up on startup.
+
+**Quest list:** Dismissed quests show ⏾ icon with cooldown styling. Action buttons remain available — completing a dismissed quest from the quest list works normally. Dismissed quests are excluded from the "Due" filter.
+
+**Scoring:** No effect. No skip counted. The quest simply isn't in the candidate pool.
+
+**Saga steps:** Dismissing a saga step dismisses it from the quest giver. Since the next step can't activate until the current one completes, this effectively dismisses the saga for the day.
+
+**Reordering:** Dismissed quests and saga slots remain reorderable on the quest list.
+
 ## Sagas
 
 ### Saga Lifecycle

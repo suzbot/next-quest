@@ -582,6 +582,7 @@
 
     .qg-actions { display: flex; gap: 10px; }
     .qg-actions button { padding: 6px 16px; font-size: 12px; }
+    .not-today-icon { color: #888; margin-right: 3px; font-size: 12px; }
 
     .qg-empty {
       color: #777;
@@ -1426,6 +1427,8 @@
       cachedQuestListItems = items;
 
       const filtered = items.filter(item => {
+        // Due filter excludes dismissed quests (they're functionally not due today)
+        if (filterDue.checked && item.dismissedToday) return false;
         if (item.itemType === "quest") return passesFilters(item.quest);
         if (item.itemType === "saga") {
           const slot = item.sagaSlot;
@@ -1445,10 +1448,10 @@
 
       questList.innerHTML = filtered.map(item => {
         if (item.itemType === "quest") {
-          return editingId === item.quest.id ? renderEditMode(item.quest) : renderQuestRow(item.quest);
+          return editingId === item.quest.id ? renderEditMode(item.quest) : renderQuestRow(item.quest, item.dismissedToday);
         }
         if (item.itemType === "saga") {
-          return renderSagaSlotRow(item.sagaSlot);
+          return renderSagaSlotRow(item.sagaSlot, item.dismissedToday);
         }
         return "";
       }).join("");
@@ -1480,7 +1483,7 @@
       el.textContent = hidden ? "▾" : "▸";
     }
 
-    function renderQuestRow(q) {
+    function renderQuestRow(q, dismissedToday) {
       const cycleText = q.quest_type === "recurring"
         ? `↻ ${q.cycle_days}d`
         : "One-off";
@@ -1490,11 +1493,15 @@
       let stateClass;
       if (!q.active) {
         stateClass = "quest-inactive";
+      } else if (dismissedToday) {
+        stateClass = "quest-cooldown";
       } else if (q.is_due) {
         stateClass = "quest-due";
       } else {
         stateClass = "quest-cooldown";
       }
+
+      const notTodayIcon = dismissedToday ? '<span class="not-today-icon">⏾</span>' : '';
 
       const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
       const lastDoneDate = q.last_completed ? q.last_completed.substring(0, 10) : "";
@@ -1525,7 +1532,7 @@
                   onpointerdown="${q.active ? `onPointerDown(event, '${q.id}')` : ''}">
         <div class="quest-row-top">
           <span class="expand-toggle" onclick="toggleDetail(this)">${(hasDetail || debugScoring) ? '▸' : ''}</span>
-          <span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
+          ${notTodayIcon}<span class="quest-title" onclick="startEdit('${q.id}')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
           <span class="quest-meta">
             <span class="meta-dow">${dowLabel}</span>
             <span class="meta-tod">${todDisplay}</span>
@@ -1541,7 +1548,7 @@
       </li>`;
     }
 
-    function renderSagaSlotRow(slot) {
+    function renderSagaSlotRow(slot, dismissedToday) {
       const q = slot.step;
       const cycleText = slot.sagaCycleDays ? `↻ ${slot.sagaCycleDays}d` : "One-off";
       const todDisplay = todText(q.time_of_day ?? 15);
@@ -1549,10 +1556,13 @@
       const lastDone = q.last_completed ? formatTimestamp(q.last_completed) : "";
       const links = linkNamesText(q);
       const hasDetail = !!links;
+      const notTodayIcon = dismissedToday ? '<span class="not-today-icon">⏾</span>' : '';
 
-      const reorderable = slot.isSagaDue && !slot.isCompleted;
+      const reorderable = (slot.isSagaDue || dismissedToday) && !slot.isCompleted;
       let stateClass;
-      if (slot.isCompleted) {
+      if (dismissedToday) {
+        stateClass = "quest-cooldown";
+      } else if (slot.isCompleted) {
         stateClass = "quest-cooldown quest-not-reorderable";
       } else if (slot.isSagaDue) {
         stateClass = "quest-due";
@@ -1576,7 +1586,7 @@
                   ${pointerHandler}>
         <div class="quest-row-top">
           <span class="expand-toggle" onclick="toggleDetail(this)">${(hasDetail || debugScoring) ? '▸' : ''}</span>
-          <span class="saga-badge">[Saga: ${escapeHtml(slot.sagaName)}]</span>
+          ${notTodayIcon}<span class="saga-badge">${escapeHtml(slot.sagaName)}</span>
           <span class="quest-title" onclick="navigateToSaga('${slot.sagaId}')">${escapeHtml(q.title)}</span>${q.importance > 0 ? `<span class="quest-importance">${"!".repeat(q.importance)}</span>` : ''}
           <span class="quest-meta">
             <span class="meta-dow">${dowLabel}</span>
@@ -1895,7 +1905,7 @@
 
     function isListItemReorderable(item) {
       if (item.itemType === "quest") return item.quest.active;
-      if (item.itemType === "saga") return item.sagaSlot.isSagaDue && !item.sagaSlot.isCompleted;
+      if (item.itemType === "saga") return (item.sagaSlot.isSagaDue || item.dismissedToday) && !item.sagaSlot.isCompleted;
       return false;
     }
 
@@ -2199,6 +2209,7 @@
               <button onclick="laneDone('${lane.key}', '${quest.id}', '${quest.difficulty}', ${quest.saga_id ? `'${quest.saga_id}'` : 'null'})">Done</button>
               <button onclick="laneQuestNow('${lane.key}', '${quest.id}')">Quest Now</button>
               <button onclick="laneSomethingElse('${lane.key}', '${quest.id}')">Something Else</button>
+              <button onclick="notTodayWithConfirm(this, '${lane.key}', '${quest.id}')">⏾ Not Today</button>
             </div>
           </div>
         </div>
@@ -2435,6 +2446,35 @@
       laneLines[laneKey] = randomFromExcluding(getLaneLinePool(laneKey), laneLines[laneKey]);
       const lane = laneConfig.find(l => l.key === laneKey);
       await renderLane(lane, true, questId);
+    }
+
+    function notTodayWithConfirm(btn, laneKey, questId) {
+      if (btn.dataset.confirming) {
+        btn.dataset.confirming = "";
+        laneNotToday(laneKey, questId);
+        return;
+      }
+      btn.dataset.confirming = "true";
+      btn.dataset.original = btn.textContent;
+      btn.textContent = "Sure?";
+      btn.classList.add("confirm");
+      setTimeout(() => {
+        if (btn.dataset.confirming) {
+          btn.dataset.confirming = "";
+          btn.textContent = btn.dataset.original;
+          btn.classList.remove("confirm");
+        }
+      }, 2000);
+    }
+
+    async function laneNotToday(laneKey, questId) {
+      await invoke("dismiss_quest_today", { questId });
+      laneCurrentQuestId[laneKey] = null;
+      laneImages[laneKey] = randomFromExcluding(getLaneImagePool(laneKey), laneImages[laneKey]);
+      laneLines[laneKey] = randomFromExcluding(getLaneLinePool(laneKey), laneLines[laneKey]);
+      const lane = laneConfig.find(l => l.key === laneKey);
+      await renderLane(lane, true);
+      await loadAll();
     }
 
     // Quest Now from list view

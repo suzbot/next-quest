@@ -289,9 +289,7 @@ Key design decisions:
 5. ~~**Debug scoring on saga tab**~~ ✅
 6. ~~**Saga steps on quest list**~~ ✅ — Sagas appear as slots on the quest list, showing their current active step. Filterable and searchable alongside regular quests. Edit links to saga tab. Completable with inline XP feedback.
 7. ~~**Saga reordering on quest list**~~ ✅ — Drag and keyboard-reorder sagas among quests on the quest list. Position affects scoring via unified sort_order namespace. The quest list is the single source of truth for priority ordering. Saga tab displays in sort order but doesn't allow reordering.
-8. **"Not today" button** — Remove a quest from the candidate pool for the rest of the day (resets at midnight). Doesn't count as a skip or affect scoring. For when you know you can't/won't do something today.
-9. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
-10. *(Deferred)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+8. ~~**"Not today" button**~~ ✅ — "⏾ Not Today" on quest giver removes a quest from the candidate pool for the rest of the day. Persisted in DB, resets at midnight. Shows ⏾ icon with cooldown styling on quest list. Doesn't count as a skip or affect scoring.
 
 ## Phase 5B: "Portfolio and Polish"
 
@@ -303,17 +301,21 @@ Key design decisions:
    - Three lanes of tasks — you only see 3 at once so you're never overwhelmed, and you have advance notice of the bigger items you might need to psych yourself up for
    - A very clever algorithm that looks at a lot of factors, so you can just brain dump all the things you might ever want to do into the list, and the system will raise them to you at the right time
 
-2. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
+2. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
 
-3. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
+3. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
 
-4. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+4. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
 
-5. **Quest giver images** — More variety, including women characters. Explore AI image generation.
+5. *(Consideration)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+
+6. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+
+7. **Quest giver images** — More variety, including women characters. Explore AI image generation.
    - Update `build.rs` to scan for `.png` files in addition to `.gif` (flexibility during iteration)
    - See `docs/image-generation-workflow.md` for the Stable Diffusion + GIMP workflow
 
-6. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+8. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
 
 ## Phase 6: "Everything Else"
 

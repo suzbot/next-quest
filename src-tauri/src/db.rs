@@ -346,6 +346,7 @@ pub struct QuestListItem {
     pub quest: Option<Quest>,
     pub saga_slot: Option<SagaSlot>,
     pub sort_order: i32,
+    pub dismissed_today: bool,
 }
 
 // --- Campaign structs ---
@@ -403,6 +404,7 @@ pub fn init_db(db_path: &Path) -> Connection {
     create_tables(&conn);
     migrate(&conn);
     seed_data(&conn);
+    clear_stale_dismissals(&conn);
     conn
 }
 
@@ -527,6 +529,10 @@ fn create_tables(conn: &Connection) {
             campaign_name  TEXT NOT NULL,
             completed_at   TEXT NOT NULL,
             bonus_xp       INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS not_today (
+            quest_id       TEXT PRIMARY KEY,
+            dismissed_date TEXT NOT NULL
         );",
     )
     .expect("Failed to create tables");
@@ -792,20 +798,11 @@ fn migrate(conn: &Connection) {
         ).expect("Failed to create tag tables");
     }
 
-    // Migration: unify quest and saga sort_order namespaces
-    // Shift saga sort_orders to be after all quest sort_orders
-    let quest_max: i32 = conn
-        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM quest WHERE saga_id IS NULL", [], |row| row.get(0))
-        .unwrap_or(0);
-    let saga_min: i32 = conn
-        .query_row("SELECT COALESCE(MIN(sort_order), 0) FROM saga", [], |row| row.get(0))
-        .unwrap_or(0);
-    if saga_min > 0 && saga_min <= quest_max {
-        conn.execute(
-            "UPDATE saga SET sort_order = sort_order + ?1",
-            rusqlite::params![quest_max],
-        ).expect("Failed to unify sort_order namespaces");
-    }
+    // Migration: unify quest and saga sort_order namespaces (removed)
+    // This was a one-time migration to shift saga sort_orders after quest sort_orders.
+    // Now that quests and sagas share a unified sort_order namespace and are reorderable
+    // together, the migration condition (saga_min <= quest_max) triggers incorrectly
+    // after mixed reordering. New databases already use unified sort_orders from creation.
 
     // Migration: create campaign tables if missing
     let has_campaign: bool = conn
@@ -2022,17 +2019,20 @@ pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
     let tag_links = load_all_quest_tags(conn)?;
     let skill_links = load_all_quest_skills(conn)?;
     let attr_links = load_all_quest_attributes(conn)?;
+    let dismissed = get_dismissed_today(conn);
 
     let mut items: Vec<QuestListItem> = Vec::new();
 
     // Add regular quests
     for q in quests {
         let so = q.sort_order;
+        let is_dismissed = dismissed.contains(&q.id);
         items.push(QuestListItem {
             item_type: "quest".into(),
             quest: Some(q),
             saga_slot: None,
             sort_order: so,
+            dismissed_today: is_dismissed,
         });
     }
 
@@ -2077,6 +2077,7 @@ pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
             display_step.tag_ids = tids.clone();
         }
 
+        let is_dismissed = dismissed.contains(&display_step.id);
         items.push(QuestListItem {
             item_type: "saga".into(),
             quest: None,
@@ -2090,6 +2091,7 @@ pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
                 is_completed,
                 sort_order: saga.sort_order,
             }),
+            dismissed_today: is_dismissed,
             sort_order: saga.sort_order,
         });
     }
@@ -2098,6 +2100,34 @@ pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
     items.sort_by(|a, b| b.sort_order.cmp(&a.sort_order));
 
     Ok(items)
+}
+
+// --- Not Today dismissals ---
+
+pub fn dismiss_quest_today(conn: &Connection, quest_id: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO not_today (quest_id, dismissed_date) VALUES (?1, ?2)",
+        rusqlite::params![quest_id, local_today_str()],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn get_dismissed_today(conn: &Connection) -> std::collections::HashSet<String> {
+    let mut stmt = conn.prepare(
+        "SELECT quest_id FROM not_today WHERE dismissed_date = ?1"
+    ).unwrap();
+    let ids: Vec<String> = stmt.query_map(
+        rusqlite::params![local_today_str()],
+        |row| row.get(0),
+    ).unwrap().filter_map(|r| r.ok()).collect();
+    ids.into_iter().collect()
+}
+
+fn clear_stale_dismissals(conn: &Connection) {
+    conn.execute(
+        "DELETE FROM not_today WHERE dismissed_date < ?1",
+        rusqlite::params![local_today_str()],
+    ).ok();
 }
 
 const IMPORTANCE_WEIGHT: f64 = 30.0;
@@ -2151,17 +2181,22 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
         ids.into_iter().collect()
     };
 
-    // Hard-filter: active, time-of-day, day-of-week, lane difficulty
+    // Load "not today" dismissals
+    let dismissed = get_dismissed_today(conn);
+
+    // Hard-filter: active, time-of-day, day-of-week, lane difficulty, not dismissed
     let eligible: Vec<&Quest> = quests.iter()
         .filter(|q| q.active)
+        .filter(|q| !dismissed.contains(&q.id))
         .filter(|q| lane.includes_difficulty(&q.difficulty))
         .filter(|q| matches_time_of_day(q.time_of_day, hour))
         .filter(|q| matches_day_of_week(q.days_of_week, weekday))
         .collect();
 
-    // Get active saga steps and apply same hard filters + lane filter
+    // Get active saga steps and apply same hard filters + lane filter + not dismissed
     let saga_steps = get_active_saga_steps(conn).unwrap_or_default();
     let eligible_saga: Vec<&(Quest, String, String, Option<i32>, Lane, i32)> = saga_steps.iter()
+        .filter(|(q, _, _, _, _, _)| !dismissed.contains(&q.id))
         .filter(|(_, _, _, _, saga_lane, _)| saga_lane == lane)
         .filter(|(q, _, _, _, _, _)| matches_time_of_day(q.time_of_day, hour))
         .filter(|(q, _, _, _, _, _)| matches_day_of_week(q.days_of_week, weekday))
@@ -3955,6 +3990,75 @@ mod tests {
             ListReorderItem { id: q.id, item_type: "saga".into(), sort_order: 1 },
         ]);
         assert!(result.is_err());
+    }
+
+    // --- Not Today ---
+
+    #[test]
+    fn dismiss_quest_today_persists() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Dismiss me");
+        dismiss_quest_today(&conn, &q.id).unwrap();
+        let dismissed = get_dismissed_today(&conn);
+        assert!(dismissed.contains(&q.id));
+    }
+
+    #[test]
+    fn dismiss_quest_today_idempotent() {
+        let conn = test_db();
+        let q = test_quest(&conn, "Dismiss twice");
+        dismiss_quest_today(&conn, &q.id).unwrap();
+        dismiss_quest_today(&conn, &q.id).unwrap();
+        let dismissed = get_dismissed_today(&conn);
+        assert!(dismissed.contains(&q.id));
+    }
+
+    #[test]
+    fn stale_dismissals_cleaned() {
+        let conn = test_db();
+        // Insert a stale dismissal with yesterday's date
+        conn.execute(
+            "INSERT INTO not_today (quest_id, dismissed_date) VALUES ('old', '2020-01-01')",
+            [],
+        ).unwrap();
+        let q = test_quest(&conn, "Today");
+        dismiss_quest_today(&conn, &q.id).unwrap();
+
+        clear_stale_dismissals(&conn);
+
+        let dismissed = get_dismissed_today(&conn);
+        assert!(!dismissed.contains(&"old".to_string()));
+        assert!(dismissed.contains(&q.id));
+    }
+
+    #[test]
+    fn dismissed_quest_excluded_from_scores() {
+        let conn = test_db();
+        let a = test_quest(&conn, "Keep");
+        let b = test_quest(&conn, "Dismiss");
+        dismiss_quest_today(&conn, &b.id).unwrap();
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let ids: Vec<&str> = scores.iter().map(|s| s.quest.id.as_str()).collect();
+        assert!(ids.contains(&a.id.as_str()));
+        assert!(!ids.contains(&b.id.as_str()));
+    }
+
+    #[test]
+    fn dismissed_saga_step_excluded_from_scores() {
+        let conn = test_db();
+        let saga = add_saga(&conn, "Test Saga".into(), None).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: saga.id.clone(),
+            title: "Step 1".into(),
+            difficulty: Difficulty::Easy,
+            time_of_day: 15,
+            days_of_week: 127,
+            importance: 0,
+        }).unwrap();
+        dismiss_quest_today(&conn, &step.id).unwrap();
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let ids: Vec<&str> = scores.iter().map(|s| s.quest.id.as_str()).collect();
+        assert!(!ids.contains(&step.id.as_str()));
     }
 
     // --- is_due logic ---

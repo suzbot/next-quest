@@ -263,6 +263,21 @@ Fibonacci-style progression with different seeds per scale:
 
 Each subsequent level costs the sum of the two prior levels (e.g., Character: 300, 500, 800, 1300, 2100...).
 
+### Not Today (not_today)
+Tracks quests dismissed from the quest giver for the current day.
+
+| Field | Type | Description |
+|---|---|---|
+| quest_id | TEXT PRIMARY KEY | FK to Quest (the dismissed quest) |
+| dismissed_date | TEXT | Local date (YYYY-MM-DD) when dismissed |
+
+**Rules:**
+- One row per dismissed quest. Stale rows (date before today) are cleaned up on app startup.
+- Dismissed quests are excluded from the quest giver candidate pool but remain visible on the quest list with ⏾ icon and cooldown styling.
+- Dismissing a saga step effectively dismisses the saga for the day (next step can't activate until current step completes).
+- Action buttons (⚔ ✓) remain available on the quest list — completing a dismissed quest works normally.
+- Does not count as a skip and does not affect scoring.
+
 ### Settings
 App configuration. Single row, seeded on first launch.
 

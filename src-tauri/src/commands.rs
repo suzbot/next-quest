@@ -327,6 +327,15 @@ pub fn reorder_list(
 }
 
 #[tauri::command]
+pub fn dismiss_quest_today(
+    state: State<DbState>,
+    quest_id: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::dismiss_quest_today(&conn, &quest_id)
+}
+
+#[tauri::command]
 pub fn delete_completion(
     state: State<DbState>,
     completion_id: String,
