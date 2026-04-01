@@ -1249,7 +1249,7 @@
       if (filterDow.value !== "") {
         const day = parseInt(filterDow.value, 10);
         const mask = q.days_of_week ?? 127;
-        if (!(mask & (1 << day))) return false;
+        if (mask !== 127 && mask !== 0 && !(mask & (1 << day))) return false;
       }
       if (filterDue.checked && !q.is_due) return false;
       return true;
@@ -1278,7 +1278,7 @@
       if (filterDow.value !== "") {
         const day = parseInt(filterDow.value, 10);
         const mask = q.days_of_week ?? 127;
-        if (!(mask & (1 << day))) return false;
+        if (mask !== 127 && mask !== 0 && !(mask & (1 << day))) return false;
       }
       if (filterDue.checked && !q.is_due) return false;
       return true;
@@ -1459,12 +1459,12 @@
       if (editingId) {
         const el = document.getElementById("edit-title");
         if (el) el.focus();
-        const editQuest = quests.find(q => q.id === editingId);
-        if (editQuest) {
+        const editItem = items.find(i => i.itemType === "quest" && i.quest.id === editingId);
+        if (editItem) {
           const editTod = document.getElementById("edit-tod");
-          if (editTod) renderCheckDropdown(editTod, editQuest.time_of_day ?? 15, TOD_FULL, todSummary);
+          if (editTod) renderCheckDropdown(editTod, editItem.quest.time_of_day ?? 15, TOD_FULL, todSummary);
           const editDow = document.getElementById("edit-dow");
-          if (editDow) renderCheckDropdown(editDow, editQuest.days_of_week ?? 127, DOW_FULL, dowSummary);
+          if (editDow) renderCheckDropdown(editDow, editItem.quest.days_of_week ?? 127, DOW_FULL, dowSummary);
         }
       }
     }
