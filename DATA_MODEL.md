@@ -299,8 +299,8 @@ The quest giver has three lanes, each filtering by difficulty:
 | Lane | Name | Difficulties |
 |---|---|---|
 | 1 | Castle Duties | Trivial |
-| 2 | Adventures | Easy, Moderate |
-| 3 | Royal Quests | Challenging, Epic |
+| 2 | Adventures | Easy |
+| 3 | Royal Quests | Moderate, Challenging, Epic |
 
 Saga steps appear in the lane matching their saga's hardest step difficulty. Each lane has its own quest giver images and flavor text.
 

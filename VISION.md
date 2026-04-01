@@ -315,7 +315,9 @@ Key design decisions:
    - Update `build.rs` to scan for `.png` files in addition to `.gif` (flexibility during iteration)
    - See `docs/image-generation-workflow.md` for the Stable Diffusion + GIMP workflow
 
-8. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+8. **Configurable lane difficulty assignment** — Settings to control which difficulty tiers go in which lane. Currently hardcoded (Trivial → Castle Duties, Easy+Moderate → Adventures, Challenging+Epic → Royal Quests). As capacity grows, the user should be able to reassign — e.g., move Moderate to Royal Quests when the behavioral pattern shifts.
+
+9. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
 
 ## Phase 6: "Everything Else"
 

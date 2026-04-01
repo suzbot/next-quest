@@ -187,8 +187,8 @@ The Next Quest tab shows three stacked quest givers, each filtering by difficult
 | Lane | Name | Difficulties | Images | Text |
 |---|---|---|---|---|
 | 1 | Castle Duties | Trivial | `ui/images/lane1/` | `ui/text/lane1/` |
-| 2 | Adventures | Easy, Moderate | `ui/images/lane2/` | `ui/text/lane2/` |
-| 3 | Royal Quests | Challenging, Epic | `ui/images/lane3/` | `ui/text/lane3/` |
+| 2 | Adventures | Easy | `ui/images/lane2/` | `ui/text/lane2/` |
+| 3 | Royal Quests | Moderate, Challenging, Epic | `ui/images/lane3/` | `ui/text/lane3/` |
 
 Each lane uses the same scoring algorithm independently. "Something Else" skips within a single lane. Quest Now / timer from any lane locks all three.
 

@@ -71,8 +71,8 @@ impl Lane {
     fn includes_difficulty(&self, d: &Difficulty) -> bool {
         match self {
             Lane::CastleDuties => matches!(d, Difficulty::Trivial),
-            Lane::Adventures => matches!(d, Difficulty::Easy | Difficulty::Moderate),
-            Lane::RoyalQuests => matches!(d, Difficulty::Challenging | Difficulty::Epic),
+            Lane::Adventures => matches!(d, Difficulty::Easy),
+            Lane::RoyalQuests => matches!(d, Difficulty::Moderate | Difficulty::Challenging | Difficulty::Epic),
         }
     }
 }
@@ -89,8 +89,8 @@ fn difficulty_rank(d: &Difficulty) -> u8 {
 
 fn lane_for_difficulty_rank(rank: u8) -> Lane {
     match rank {
-        4 | 5 => Lane::RoyalQuests,
-        2 | 3 => Lane::Adventures,
+        3 | 4 | 5 => Lane::RoyalQuests,
+        2 => Lane::Adventures,
         _ => Lane::CastleDuties,
     }
 }
@@ -6073,7 +6073,7 @@ mod tests {
         let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
         let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
         assert!(titles.contains(&"Easy"));
-        assert!(titles.contains(&"Moderate"));
+        assert!(!titles.contains(&"Moderate"));
         assert!(!titles.contains(&"Trivial"));
         assert!(!titles.contains(&"Epic"));
     }
@@ -6082,11 +6082,13 @@ mod tests {
     fn lane_filter_royal() {
         let conn = test_db();
         test_quest(&conn, "Easy"); // default = easy
+        test_quest_with(&conn, "Moderate", |q| { q.difficulty = Difficulty::Moderate; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         test_quest_with(&conn, "Hard", |q| { q.difficulty = Difficulty::Challenging; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
         test_quest_with(&conn, "Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
 
         let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
         let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
+        assert!(titles.contains(&"Moderate"));
         assert!(titles.contains(&"Hard"));
         assert!(titles.contains(&"Epic"));
         assert!(!titles.contains(&"Easy"));
