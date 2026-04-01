@@ -301,17 +301,21 @@ Key design decisions:
    - Three lanes of tasks — you only see 3 at once so you're never overwhelmed, and you have advance notice of the bigger items you might need to psych yourself up for
    - A very clever algorithm that looks at a lot of factors, so you can just brain dump all the things you might ever want to do into the list, and the system will raise them to you at the right time
 
-2. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
+2. **Debug scoring live toggle** — Debug scoring setting takes effect immediately instead of requiring an app restart.
 
-3. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
+3. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
 
-4. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
+4. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
 
-5. *(Consideration)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+5. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
 
-6. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+6. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
 
-7. **Quest giver images** — More variety, including women characters. Explore AI image generation.
+7. *(Consideration)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+
+8. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+
+9. **Quest giver images** — More variety, including women characters. Explore AI image generation.
    - Update `build.rs` to scan for `.png` files in addition to `.gif` (flexibility during iteration)
    - See `docs/image-generation-workflow.md` for the Stable Diffusion + GIMP workflow
 
