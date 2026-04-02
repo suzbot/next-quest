@@ -8,21 +8,17 @@ Built for people who struggle with task initiation, routine maintenance, and the
 
 ## What Makes It Different
 
-**Three things at a time** You have three quests available to you: the next routine task, easy side quests, and bigger undertakings. You always know what's coming without being overwhelmed by it. You choose how to respond and the algorithm adapts accordingly.
+- **Brain dumping.** Easy interface with full keyboard support lets you get everything out of your head and into the app fast.
+- **Smart surfacing.** Multi-factor algorithm surfaces tasks as quests by weighing time past due, importance, time of day, list position, user responses, and more.
+- **Only see 3 things.** Routine tasks, side quests, and bigger undertakings are each offered one at a time by their own quest giver.
+- **No decision paralysis.** Each lane shows one quest for you based on what's overdue, important, and contextually relevant.
+- **Encounters.** Timed overlay interrupts hyperfocus with low-effort tasks.
+- **No punishment.** XP only goes up. Miss a day? Quests resurface naturally. No failure for breaking a streak.
+- **RPG progression.** XP flows to your character, reflecting your actual attainments in personal values (attributes) and directional goals (skills).
+- **Sagas.** Multi-step goals revealed one step at a time.
+- **Campaigns.** Define achievements that are meaningful to you, track progress across quests and sagas, and commemorate accomplishments on your character.
 
-**No decision paralysis.** The app picks your next quest in each tier based on what's overdue, what you've marked as important, what time of day it is, and what you've been avoiding. You don't manage a list — you respond to a quest giver.
-
-**Encounters that interrupt hyperfocus.** A timed overlay pops up with a low-effort task to pull you away from the screen.
-
-**No streaks. No punishment.** XP and levels only go up. Miss a day? The app doesn't care. Quests resurface naturally based on their cycle. The best strategy is doing things on time, but there's no penalty for being human.
-
-**Smart scoring.** A multi-factor algorithm considers time past due, importance, time of day, day of week, list position, campaign membership, and skill balance. You brain-dump everything — daily routines, one-off errands, long-deferred projects — and the system raises them at the right time.
-
-**RPG progression.** Quests earn XP that flows to a character that represents whats important to you in terms of personal values (attributes), and directional goals (skills), allowing you to visualize how you are growing as you accomplish tasks. Everything levels up on a Fibonacci curve. Harder and less frequent tasks earn more. Doing things late earns a bit extra — but not enough to make procrastination a strategy.
-
-**Sagas for multi-step goals.** Break big goals into ordered steps. The app reveals one step at a time, so "deep clean the kitchen" becomes "clear the counters" today and "scrub the stove" tomorrow. Sagas can be one-off or recurring.
-
-**Campaigns for self-defined achievements.** Group quests and sagas into campaigns that track completion counts toward a goal you set. "Read 12 books this year," "Complete spring cleaning," or any milestone meaningful to you. When all criteria are met, the campaign completes and records accomplishment on your character.
+For more detail, see the [Mechanics reference](docs/mechanics.md).
 
 ## How It Was Built
 
@@ -49,24 +45,6 @@ cargo tauri build --debug
 # Run tests
 cd src-tauri && cargo test
 ```
-
-## Usage
-
-**Next Quest tab** — The quest giver. Three lanes show one quest each by difficulty. Accept it, start a timer, skip it, or dismiss it for the day.
-
-**Encounters Overlay** — A small always-on-top window that fires on a configurable interval. Shows a single trivial quest with a quick-complete button. Designed to break hyperfocus cycles without demanding much effort.
-
-**Quest List tab** — All your quests and saga slots in priority order. Add, edit, reorder (drag or shift+arrow), complete, and filter. Search by name, skill, tag, difficulty, or importance.
-
-**Sagas tab** — Create and manage multi-step goals. Add steps, set difficulty and cycle. Sagas appear as slots on the quest list alongside regular quests.
-
-**Character tab** — Your RPG character, attributes, skills, and level progression. Link quests to skills and attributes to direct where XP flows.
-
-**Campaigns tab** — Track progress toward larger goals by combining quest and saga completion criteria.
-
-**Settings** — Configure the Encounters overlay interval and debug scoring display. Reset data.
-
-For more detail, see the [Mechanics reference](docs/mechanics.md).
 
 ## Customization
 
