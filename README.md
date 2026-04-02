@@ -10,8 +10,7 @@ Built for people who struggle with task initiation, routine maintenance, and the
 
 - **Brain dumping.** Easy interface with full keyboard support lets you get everything out of your head and into the app fast.
 - **Smart surfacing.** Multi-factor algorithm surfaces tasks as quests by weighing time past due, importance, time of day, list position, user responses, and more.
-- **Only see 3 things.** Routine tasks, side quests, and bigger undertakings are each offered one at a time by their own quest giver.
-- **No decision paralysis.** Each lane shows one quest for you based on what's overdue, important, and contextually relevant.
+- **Only Three Things.** Routine tasks, side quests, and bigger undertakings are each offered one at a time by their own quest giver.
 - **Encounters.** Timed overlay interrupts hyperfocus with low-effort tasks.
 - **No punishment.** XP only goes up. Miss a day? Quests resurface naturally. No failure for breaking a streak.
 - **RPG progression.** XP flows to your character, reflecting your actual attainments in personal values (attributes) and directional goals (skills).
@@ -53,3 +52,7 @@ Images and flavor text are loaded from external directories — no code changes 
 **Images:** Drop `.gif` files into the folders under `ui/images/`. Each subfolder serves a different context: `quest-givers/`, `monsters/`, `victory/`, `defeat/`, and per-lane folders (`lane1/`, `lane2/`, `lane3/`). Rebuild to regenerate the image manifest.
 
 **Flavor text:** Edit the `.txt` files under `ui/text/`. One line per entry — the app picks randomly. Per-lane folders hold quest giver dialog, and top-level files cover encounter lines and general quest giver lines.
+
+## License
+
+[GPL-3.0](LICENSE)
