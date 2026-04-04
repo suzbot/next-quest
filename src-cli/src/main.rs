@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use nq_core::db;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Parser)]
@@ -64,6 +64,51 @@ enum Commands {
         /// Comma-separated attribute names (must exist)
         #[arg(long)]
         attributes: Option<String>,
+    },
+    /// Create a new saga
+    AddSaga {
+        /// Saga name
+        #[arg(long)]
+        name: String,
+        /// Cycle days (omit for one-off saga, set for recurring)
+        #[arg(long)]
+        cycle_days: Option<i32>,
+    },
+    /// Add a step to an existing saga
+    AddSagaStep {
+        /// Saga ID (UUID)
+        #[arg(long)]
+        saga: String,
+        /// Step title
+        #[arg(long)]
+        title: String,
+        /// Difficulty: trivial, easy, moderate, challenging, epic
+        #[arg(long)]
+        difficulty: String,
+        /// Importance 0-5
+        #[arg(long, default_value = "0")]
+        importance: i32,
+        /// Time of day: morning,afternoon,evening,night,anytime
+        #[arg(long)]
+        time_of_day: Option<String>,
+        /// Days of week: mon,tue,wed,thu,fri,sat,sun,everyday
+        #[arg(long)]
+        days_of_week: Option<String>,
+        /// Comma-separated tag names (auto-created if new)
+        #[arg(long)]
+        tags: Option<String>,
+        /// Comma-separated skill names (must exist)
+        #[arg(long)]
+        skills: Option<String>,
+        /// Comma-separated attribute names (must exist)
+        #[arg(long)]
+        attributes: Option<String>,
+    },
+    /// Create quests in bulk from JSON on stdin
+    AddBatch {
+        /// Validate and preview without creating
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -252,6 +297,23 @@ fn run(command: Commands) -> Result<String, String> {
                 cycle_days, time_of_day, days_of_week,
                 tags, skills, attributes,
             )
+        }
+        Commands::AddSaga { name, cycle_days } => {
+            cmd_add_saga(&conn, name, cycle_days)
+        }
+        Commands::AddSagaStep {
+            saga, title, difficulty, importance,
+            time_of_day, days_of_week,
+            tags, skills, attributes,
+        } => {
+            cmd_add_saga_step(
+                &conn, saga, title, difficulty, importance,
+                time_of_day, days_of_week,
+                tags, skills, attributes,
+            )
+        }
+        Commands::AddBatch { dry_run } => {
+            cmd_add_batch(&conn, dry_run)
         }
     }
 }
@@ -475,6 +537,245 @@ fn cmd_add_quest(
         "skills": resolve_names(&created.skill_ids, &skill_map),
         "attributes": resolve_names(&created.attribute_ids, &attr_map),
         "tags": resolve_names(&created.tag_ids, &tag_map),
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+fn cmd_add_saga(
+    conn: &nq_core::rusqlite::Connection,
+    name: String,
+    cycle_days: Option<i32>,
+) -> Result<String, String> {
+    let saga = db::add_saga(conn, name, cycle_days)?;
+
+    let result = serde_json::json!({
+        "ok": true,
+        "id": saga.id,
+        "name": saga.name,
+        "cycle_days": saga.cycle_days,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+fn cmd_add_saga_step(
+    conn: &nq_core::rusqlite::Connection,
+    saga: String,
+    title: String,
+    difficulty: String,
+    importance: i32,
+    time_of_day: Option<String>,
+    days_of_week: Option<String>,
+    tags: Option<String>,
+    skills: Option<String>,
+    attributes: Option<String>,
+) -> Result<String, String> {
+    let difficulty = db::Difficulty::try_from_str(&difficulty)?;
+
+    if importance < 0 || importance > 5 {
+        return Err(format!("Invalid importance {}. Must be 0-5", importance));
+    }
+
+    let tod = match time_of_day {
+        Some(ref s) => db::parse_time_of_day(s)?,
+        None => 15,
+    };
+    let dow = match days_of_week {
+        Some(ref s) => db::parse_days_of_week(s)?,
+        None => 127,
+    };
+
+    let step = db::NewSagaStep {
+        saga_id: saga,
+        title: title.clone(),
+        difficulty,
+        time_of_day: tod,
+        days_of_week: dow,
+        importance,
+    };
+
+    let tag_names = parse_comma_list(tags);
+    let skill_names = parse_comma_list(skills);
+    let attr_names = parse_comma_list(attributes);
+
+    let result = db::add_saga_step_full(conn, step, tag_names, skill_names, attr_names)?;
+
+    let all_skills = db::get_skills(conn)?;
+    let all_attrs = db::get_attributes(conn)?;
+    let all_tags = db::get_tags(conn)?;
+    let skill_map = build_id_name_map(&all_skills, |s| (s.id.clone(), s.name.clone()));
+    let attr_map = build_id_name_map(&all_attrs, |a| (a.id.clone(), a.name.clone()));
+    let tag_map = build_id_name_map(&all_tags, |t| (t.id.clone(), t.name.clone()));
+
+    let output = serde_json::json!({
+        "ok": true,
+        "id": result.quest.id,
+        "title": result.quest.title,
+        "step_order": result.step_order,
+        "saga_id": result.quest.saga_id,
+        "skills": resolve_names(&result.quest.skill_ids, &skill_map),
+        "attributes": resolve_names(&result.quest.attribute_ids, &attr_map),
+        "tags": resolve_names(&result.quest.tag_ids, &tag_map),
+    });
+
+    serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+}
+
+// --- add-batch ---
+
+#[derive(Deserialize)]
+struct BatchQuestInput {
+    title: String,
+    difficulty: String,
+    quest_type: String,
+    #[serde(default)]
+    importance: i32,
+    cycle_days: Option<i32>,
+    time_of_day: Option<String>,
+    days_of_week: Option<String>,
+    tags: Option<String>,
+    skills: Option<String>,
+    attributes: Option<String>,
+}
+
+fn cmd_add_batch(
+    conn: &nq_core::rusqlite::Connection,
+    dry_run: bool,
+) -> Result<String, String> {
+    // Read JSON from stdin
+    let mut input = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
+        .map_err(|e| format!("Failed to read stdin: {}", e))?;
+
+    let items: Vec<BatchQuestInput> = serde_json::from_str(&input)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    if items.is_empty() {
+        return Err("Empty batch — no quests to create".to_string());
+    }
+
+    // Validation pass — collect all errors
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    let mut validated: Vec<(db::NewQuest, Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
+
+    for (i, item) in items.iter().enumerate() {
+        let mut item_errors: Vec<String> = Vec::new();
+
+        let difficulty = match db::Difficulty::try_from_str(&item.difficulty) {
+            Ok(d) => Some(d),
+            Err(e) => { item_errors.push(e); None }
+        };
+
+        let quest_type = match db::QuestType::try_from_str(&item.quest_type) {
+            Ok(qt) => Some(qt),
+            Err(e) => { item_errors.push(e); None }
+        };
+
+        if item.importance < 0 || item.importance > 5 {
+            item_errors.push(format!("Invalid importance {}. Must be 0-5", item.importance));
+        }
+
+        if let Some(ref qt) = quest_type {
+            if *qt == db::QuestType::Recurring && item.cycle_days.is_none() {
+                item_errors.push("cycle_days is required for recurring quests".to_string());
+            }
+        }
+
+        let tod = match item.time_of_day {
+            Some(ref s) => match db::parse_time_of_day(s) {
+                Ok(v) => v,
+                Err(e) => { item_errors.push(e); 15 }
+            },
+            None => 15,
+        };
+
+        let dow = match item.days_of_week {
+            Some(ref s) => match db::parse_days_of_week(s) {
+                Ok(v) => v,
+                Err(e) => { item_errors.push(e); 127 }
+            },
+            None => 127,
+        };
+
+        // Validate skill/attribute names exist
+        let skill_names = parse_comma_list(item.skills.clone());
+        for name in &skill_names {
+            if let Err(e) = db::resolve_skill_by_name(conn, name) {
+                item_errors.push(e);
+            }
+        }
+
+        let attr_names = parse_comma_list(item.attributes.clone());
+        for name in &attr_names {
+            if let Err(e) = db::resolve_attribute_by_name(conn, name) {
+                item_errors.push(e);
+            }
+        }
+
+        let tag_names = parse_comma_list(item.tags.clone());
+
+        if !item_errors.is_empty() {
+            errors.push(serde_json::json!({
+                "index": i,
+                "error": item_errors.join("; "),
+            }));
+        } else if let (Some(d), Some(qt)) = (difficulty, quest_type) {
+            validated.push((
+                db::NewQuest {
+                    title: item.title.clone(),
+                    quest_type: qt,
+                    cycle_days: item.cycle_days,
+                    difficulty: d,
+                    time_of_day: tod,
+                    days_of_week: dow,
+                    importance: item.importance,
+                },
+                tag_names,
+                skill_names,
+                attr_names,
+            ));
+        }
+    }
+
+    if !errors.is_empty() {
+        let err = serde_json::json!({ "ok": false, "errors": errors });
+        eprintln!("{}", serde_json::to_string_pretty(&err).unwrap());
+        std::process::exit(1);
+    }
+
+    // Dry run — show what would be created
+    if dry_run {
+        let preview: Vec<serde_json::Value> = validated.iter().enumerate().map(|(i, (q, _, _, _))| {
+            serde_json::json!({
+                "index": i,
+                "title": q.title,
+                "difficulty": q.difficulty.as_str(),
+                "quest_type": q.quest_type.as_str(),
+            })
+        }).collect();
+
+        let result = serde_json::json!({
+            "ok": true,
+            "dry_run": true,
+            "would_create": preview,
+        });
+        return serde_json::to_string_pretty(&result).map_err(|e| e.to_string());
+    }
+
+    // Creation pass
+    let mut created: Vec<serde_json::Value> = Vec::new();
+    for (quest, tag_names, skill_names, attr_names) in validated {
+        let q = db::add_quest_full(conn, quest, tag_names, skill_names, attr_names)?;
+        created.push(serde_json::json!({
+            "id": q.id,
+            "title": q.title,
+        }));
+    }
+
+    let result = serde_json::json!({
+        "ok": true,
+        "created": created,
     });
 
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())

@@ -3863,6 +3863,70 @@ pub fn add_quest_full(
     Ok(created)
 }
 
+/// Result of creating a saga step, includes step_order which isn't on the Quest struct.
+#[derive(Debug)]
+pub struct SagaStepResult {
+    pub quest: Quest,
+    pub step_order: i32,
+}
+
+pub fn add_saga_step_full(
+    conn: &Connection,
+    step: NewSagaStep,
+    tag_names: Vec<String>,
+    skill_names: Vec<String>,
+    attribute_names: Vec<String>,
+) -> Result<SagaStepResult, String> {
+    // Resolve all names first (fail fast before creating anything)
+    let mut skill_ids = Vec::new();
+    for name in &skill_names {
+        let skill = resolve_skill_by_name(conn, name)?;
+        skill_ids.push(skill.id);
+    }
+
+    let mut attribute_ids = Vec::new();
+    for name in &attribute_names {
+        let attr = resolve_attribute_by_name(conn, name)?;
+        attribute_ids.push(attr.id);
+    }
+
+    let mut tag_ids = Vec::new();
+    for name in &tag_names {
+        let tag = find_or_create_tag(conn, name)?;
+        tag_ids.push(tag.id);
+    }
+
+    // Create the saga step
+    let mut created = add_saga_step(conn, step)?;
+
+    // Query the step_order that was just assigned
+    let step_order: i32 = conn
+        .query_row(
+            "SELECT step_order FROM quest WHERE id = ?1",
+            rusqlite::params![created.id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Link tags, skills, attributes
+    if !tag_ids.is_empty() {
+        set_quest_tags(conn, created.id.clone(), tag_ids.clone())?;
+    }
+    if !skill_ids.is_empty() || !attribute_ids.is_empty() {
+        set_quest_links(conn, created.id.clone(), skill_ids.clone(), attribute_ids.clone())?;
+    }
+
+    // Populate link IDs on the returned quest
+    created.skill_ids = skill_ids;
+    created.attribute_ids = attribute_ids;
+    created.tag_ids = tag_ids;
+
+    Ok(SagaStepResult {
+        quest: created,
+        step_order,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6944,5 +7008,90 @@ mod tests {
         assert!(created.skill_ids.is_empty());
         assert!(created.attribute_ids.is_empty());
         assert!(created.tag_ids.is_empty());
+    }
+
+    // --- add_saga_step_full ---
+
+    #[test]
+    fn add_saga_step_full_with_links() {
+        let conn = test_db();
+        let saga = add_saga(&conn, "Test Saga".to_string(), None).unwrap();
+
+        let step = NewSagaStep {
+            saga_id: saga.id.clone(),
+            title: "Step 1".to_string(),
+            ..Default::default()
+        };
+        let result = add_saga_step_full(
+            &conn,
+            step,
+            vec!["NewTag".to_string()],
+            vec!["Cleaning".to_string()],
+            vec![],
+        ).unwrap();
+
+        assert_eq!(result.quest.title, "Step 1");
+        assert_eq!(result.quest.saga_id, Some(saga.id));
+        assert_eq!(result.step_order, 1);
+        assert_eq!(result.quest.skill_ids.len(), 1);
+        assert_eq!(result.quest.tag_ids.len(), 1);
+    }
+
+    #[test]
+    fn add_saga_step_full_bad_saga() {
+        let conn = test_db();
+        let step = NewSagaStep {
+            saga_id: "nonexistent".to_string(),
+            title: "Step".to_string(),
+            ..Default::default()
+        };
+        let result = add_saga_step_full(&conn, step, vec![], vec![], vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Saga not found"));
+    }
+
+    #[test]
+    fn add_saga_step_full_bad_skill() {
+        let conn = test_db();
+        let saga = add_saga(&conn, "Test Saga".to_string(), None).unwrap();
+        let saga_id = saga.id.clone();
+        let step = NewSagaStep {
+            saga_id: saga.id,
+            title: "Should Not Exist".to_string(),
+            ..Default::default()
+        };
+        let result = add_saga_step_full(
+            &conn,
+            step,
+            vec![],
+            vec!["Baking".to_string()],
+            vec![],
+        );
+        assert!(result.is_err());
+
+        // No steps should have been created in the saga
+        let steps = get_saga_steps(&conn, &saga_id).unwrap();
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn add_saga_step_full_sequential_ordering() {
+        let conn = test_db();
+        let saga = add_saga(&conn, "Test Saga".to_string(), None).unwrap();
+
+        let s1 = add_saga_step_full(
+            &conn,
+            NewSagaStep { saga_id: saga.id.clone(), title: "Step 1".to_string(), ..Default::default() },
+            vec![], vec![], vec![],
+        ).unwrap();
+
+        let s2 = add_saga_step_full(
+            &conn,
+            NewSagaStep { saga_id: saga.id.clone(), title: "Step 2".to_string(), ..Default::default() },
+            vec![], vec![], vec![],
+        ).unwrap();
+
+        assert_eq!(s1.step_order, 1);
+        assert_eq!(s2.step_order, 2);
     }
 }
