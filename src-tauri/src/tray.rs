@@ -5,7 +5,7 @@ use tauri::{
 };
 
 use crate::commands::{AppTrayState, DbState};
-use crate::db;
+use nq_core::db;
 
 const TRAY_ID: &str = "nq_tray";
 

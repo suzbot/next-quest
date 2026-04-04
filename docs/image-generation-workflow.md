@@ -108,18 +108,27 @@ If the result looks like it belongs in the same app, the pipeline works and it's
 3. `Image → Scale Image` — upscale to 448×352 (4x) using interpolation "None" (keeps pixel-sharp)
 4. Export as PNG to a working folder
 
-### Step 2: Generate in Stable Diffusion (img2img)
+### Step 2: Craft the prompt (Cowork)
 
-1. Open SD WebUI, go to the **img2img** tab
-2. Upload the upscaled reference image
-3. Set prompt:
+Use Claude in Cowork mode to generate a detailed SD prompt from the reference image. Cowork can see images, so it can describe composition, pose, color blocking, and details that generic prompts miss.
 
+1. Open a Cowork session and share the upscaled reference image (or the original — Cowork can view either)
+2. Ask Cowork to describe what it sees and draft an img2img prompt for a female version
+3. Cowork will produce a tailored prompt covering: pose and composition, clothing/armor specifics, color palette and background, what to preserve vs. what to feminize
+4. Review and adjust the prompt before feeding it to SD
+
+This replaces the generic prompt templates below, which are kept as a fallback:
+
+<details>
+<summary>Fallback prompts (if not using Cowork)</summary>
+
+Base prompt structure:
 ```
 pixel art portrait of a woman, retro 16-bit RPG style, limited color palette,
 dark background, bust portrait, [CHARACTER-SPECIFIC DETAILS]
 ```
 
-Character-specific details vary per image:
+Character-specific details:
 - Knight (Bard 1 01): "wearing silver plate armor, strong, short hair"
 - Ranger (Bard 1 05): "wearing green tunic and hood, holding axe, confident"
 - Wizard (Bard 1 06): "wearing blue robes, holding wooden staff, wise elder woman"
@@ -129,6 +138,13 @@ Character-specific details vary per image:
 - Sage (Bard 1 54): "white-haired elder woman, wearing magenta robes, wise"
 - King → Queen (Bard 2 50): "wearing purple royal robes, crown, sitting on throne, holding scepter"
 
+</details>
+
+### Step 3: Generate in Stable Diffusion (img2img)
+
+1. Open SD WebUI, go to the **img2img** tab
+2. Upload the upscaled reference image
+3. Use the prompt from Step 2 (Cowork) or the fallback prompts
 4. Set negative prompt:
 
 ```
@@ -146,14 +162,14 @@ modern style, anime, cartoon
 
 6. Generate several variations (batch of 4–8). Pick the best candidate.
 
-### Step 3: Downscale in GIMP
+### Step 4: Downscale in GIMP
 
 1. Open the selected generated image in GIMP
 2. `Image → Scale Image` → 112×88 pixels
 3. Set interpolation to **"None"** (nearest-neighbor) for crispy pixel look
 4. If the result is too messy at this size, try scaling to 224×176 first (2x), clean up, then scale to 112×88
 
-### Step 4: Apply palette
+### Step 5: Apply palette
 
 1. `Image → Mode → Indexed...`
 2. Select **"Use custom palette"**
@@ -161,20 +177,20 @@ modern style, anime, cartoon
 4. Dithering: try **"Floyd-Steinberg (normal)"** first. If it's too noisy, try **"Positioned"** or **"None"**
 5. Compare with the original male version side-by-side — adjust if the palette mapping looks off
 
-### Step 5: Touch up
+### Step 6: Touch up
 
 1. Zoom to 800%+ and review pixel-by-pixel
 2. Fix any obvious artifacts: stray pixels, broken outlines, garbled features
 3. Use the pencil tool (1px, hard) to touch up — pick colors from the palette
 4. Key areas to check: face/hair, armor/clothing edges, hands, background boundary
 
-### Step 6: Export
+### Step 7: Export
 
 1. `File → Export As...` → name it to match the lane convention, e.g., `Female Knight Lane1.gif`
 2. Format: GIF
 3. Place in the appropriate lane folder (`ui/images/lane1/`, `lane2/`, or `lane3/`)
 
-### Step 7: Verify in app
+### Step 8: Verify in app
 
 1. Rebuild the app (`cargo tauri build --debug`) — build.rs regenerates the manifest
 2. Check the quest giver lane — new image should appear in rotation

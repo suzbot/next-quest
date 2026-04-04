@@ -291,47 +291,55 @@ Key design decisions:
 7. ~~**Saga reordering on quest list**~~ ✅ — Drag and keyboard-reorder sagas among quests on the quest list. Position affects scoring via unified sort_order namespace. The quest list is the single source of truth for priority ordering. Saga tab displays in sort order but doesn't allow reordering.
 8. ~~**"Not today" button**~~ ✅ — "⏾ Not Today" on quest giver removes a quest from the candidate pool for the rest of the day. Persisted in DB, resets at midnight. Shows ⏾ icon with cooldown styling on quest list. Doesn't count as a skip or affect scoring.
 
-## Phase 5B: "Portfolio and Polish"
+## Phase 5B: "Portfolio and Access"
 
-1. **GitHub readme** — User-facing showcase of what makes this app unique, and how AI was leveraged to build it:
-   - No streaks, no failure punishment
-   - XP curve that rewards consistent on-time completion, doing things that have been put off, but doesn't over-reward procrastination. The best strategy to max points is to do things as often as they should be done.
-   - Novelty images and text to keep things fun and interesting
-   - Encounters that break hyperfocus and get you going on things, but don't blindside you with big tasks you'll always avoid
-   - Three lanes of tasks — you only see 3 at once so you're never overwhelmed, and you have advance notice of the bigger items you might need to psych yourself up for
-   - A very clever algorithm that looks at a lot of factors, so you can just brain dump all the things you might ever want to do into the list, and the system will raise them to you at the right time
+1. ~~**GitHub readme**~~ ✅ — User-facing showcase of what makes this app unique, and how AI was leveraged to build it.
 
-2. **Debug scoring live toggle** — Debug scoring setting takes effect immediately instead of requiring an app restart.
+2. **CLI mode** — Command-line interface for adding quests and querying data without opening the app. Enables external tool integration (e.g., Claude analyzing completion history or adding quests on your behalf) while going through the app's business logic rather than raw database writes.
 
-3. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
+## Phase 5C: "Release Pipeline"
 
-4. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
+1. **Release scripts** — Automated release pipeline modeled on petri's relscripts: test → version bump → release build → package → checksums → release notes → GitHub release. Adapted for Tauri (macOS .app bundle, `tauri.conf.json` + `Cargo.toml` versioning).
 
-5. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
+2. **Release build and install** — Produce an optimized release build and establish a permanent install location (e.g., `/Applications` or user-preferred). First official versioned release.
 
-6. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
+## Phase 5D: "Polish and Features"
 
-7. *(Consideration)* **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+1. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
 
-8. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+2. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
 
-9. **Quest giver images** — More variety, including women characters. Explore AI image generation.
+3. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
+
+4. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
+
+5. _(Consideration)_ **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+
+6. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+
+7. **Quest giver images** — More variety, including women characters. Explore AI image generation.
    - Update `build.rs` to scan for `.png` files in addition to `.gif` (flexibility during iteration)
    - See `docs/image-generation-workflow.md` for the Stable Diffusion + GIMP workflow
 
-8. **Configurable lane difficulty assignment** — Settings to control which difficulty tiers go in which lane. Currently hardcoded (Trivial → Castle Duties, Easy+Moderate → Adventures, Challenging+Epic → Royal Quests). As capacity grows, the user should be able to reassign — e.g., move Moderate to Royal Quests when the behavioral pattern shifts.
+8. **Configurable lane difficulty assignment** — Settings to control which difficulty tiers go in which lane. Currently hardcoded (Trivial → Castle Duties, Easy → Adventures, Moderate+Challenging+Epic → Royal Quests). As capacity grows, the user should be able to reassign.
 
-9. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+9. **Reset skips button** — A button on Settings to manually reset all skip counts. Currently skips only reset at midnight. Useful when the quest giver has been skipped into a bad state and you want a fresh slate without restarting the app.
+
+10. **Weather-aware scoring** — Integrate current weather data to influence quest selection. Boost outdoor-tagged quests on nice days, boost indoor quests during rain, suppress outdoor quests in extreme heat/cold. Uses a free weather API with the user's location. Needs design discussion around how much influence weather should have vs. user-set priorities.
+
+11. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
 
 ## Phase 6: "Everything Else"
 
 Rewards:
+
 - Receive coin and items from questing
 - Buy stuff with gold?
 - Rotating fighting text at different skill/attribute levels
 - Receive trophies, medals, equipment from questing?
 
 Polish and systems:
+
 - **Soft preference / fallback relaxation** — time-of-day and day-of-week filters relax when nothing else is available, instead of hard-excluding
 - Ability to 'Undo' a previously completed task, resetting the last done date and xp gains (only the most recent completed, or any?)
 - **Attribute color customization** — store color on the attribute row instead of deriving from position index. User-picks or assignment UI so reordering doesn't change colors.
@@ -342,6 +350,7 @@ Polish and systems:
 - Expand campaign types (when a concrete need arises)
 
 Smart insights (data-driven, low priority):
+
 - "Best time of day" analysis from completion timestamps
 - Lane progress counters ("3/12 Castle Duties done today")
 - Weekly review summary

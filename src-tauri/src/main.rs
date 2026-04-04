@@ -1,25 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
-mod db;
 mod tray;
+
+use nq_core::db;
 
 use commands::{AppSkipState, AppTimerState, AppTrayState, DbState, SkipStateInner, TimerStateInner, TrayStateInner};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, WindowEvent};
 
 fn main() {
-    // Store the database in the app's data directory
-    let db_path = dirs::data_dir()
-        .expect("Could not find data directory")
-        .join("com.nextquest.desktop")
-        .join("next-quest.db");
-
-    // Ensure the directory exists
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).expect("Failed to create data directory");
-    }
-
+    let db_path = nq_core::db_path();
     let conn = db::init_db(&db_path);
 
     // Load persisted settings

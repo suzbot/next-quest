@@ -1,9 +1,9 @@
-use rusqlite::Connection;
+use nq_core::rusqlite::Connection;
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
 
-use crate::db;
+use nq_core::db;
 
 pub struct DbState(pub Mutex<Connection>);
 
@@ -499,7 +499,7 @@ pub fn start_timer(
     // Look up quest title directly (not via get_quests, which excludes saga steps)
     let title: String = conn.query_row(
         "SELECT title FROM quest WHERE id = ?1",
-        rusqlite::params![quest_id],
+        nq_core::rusqlite::params![quest_id],
         |row| row.get(0),
     ).map_err(|_| format!("Quest not found: {}", quest_id))?;
 

@@ -12,7 +12,7 @@ pub enum QuestType {
 }
 
 impl QuestType {
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             QuestType::Recurring => "recurring",
             QuestType::OneOff => "one_off",
@@ -23,6 +23,14 @@ impl QuestType {
         match s {
             "recurring" => QuestType::Recurring,
             _ => QuestType::OneOff,
+        }
+    }
+
+    pub fn try_from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "recurring" => Ok(QuestType::Recurring),
+            "one_off" => Ok(QuestType::OneOff),
+            _ => Err(format!("Invalid quest type '{}'. Valid values: recurring, one_off", s)),
         }
     }
 }
@@ -38,7 +46,7 @@ pub enum Difficulty {
 }
 
 impl Difficulty {
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             Difficulty::Trivial => "trivial",
             Difficulty::Easy => "easy",
@@ -55,6 +63,17 @@ impl Difficulty {
             "challenging" => Difficulty::Challenging,
             "epic" => Difficulty::Epic,
             _ => Difficulty::Easy,
+        }
+    }
+
+    pub fn try_from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "trivial" => Ok(Difficulty::Trivial),
+            "easy" => Ok(Difficulty::Easy),
+            "moderate" => Ok(Difficulty::Moderate),
+            "challenging" => Ok(Difficulty::Challenging),
+            "epic" => Ok(Difficulty::Epic),
+            _ => Err(format!("Invalid difficulty '{}'. Valid values: trivial, easy, moderate, challenging, epic", s)),
         }
     }
 }
@@ -283,7 +302,7 @@ pub struct Character {
     pub xp_into_current_level: i64,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct Attribute {
     pub id: String,
     pub name: String,
@@ -294,7 +313,7 @@ pub struct Attribute {
     pub xp_into_current_level: i64,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct Skill {
     pub id: String,
     pub name: String,
@@ -401,6 +420,8 @@ pub struct Accomplishment {
 
 pub fn init_db(db_path: &Path) -> Connection {
     let conn = Connection::open(db_path).expect("Failed to open database");
+    conn.execute_batch("PRAGMA journal_mode=WAL;").expect("Failed to enable WAL mode");
+    conn.busy_timeout(std::time::Duration::from_secs(5)).expect("Failed to set busy timeout");
     create_tables(&conn);
     migrate(&conn);
     seed_data(&conn);
@@ -2276,24 +2297,21 @@ fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collection
 }
 
 fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>, avg_attr_level: f64, avg_skill_level: f64, attr_level_map: &std::collections::HashMap<String, i32>, skill_level_map: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, f64, f64, Quest)> {
-    let days_since: Vec<f64> = quests.iter().map(|q| {
-        match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
+    quests.iter().map(|q| {
+        let days_since = match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
             Some(d) => (today - d) as f64,
-            None => f64::MAX,
-        }
-    }).collect();
-    let max_days = days_since.iter().cloned().filter(|d| *d < f64::MAX).fold(1.0f64, f64::max);
-
-    quests.iter().enumerate().map(|(i, q)| {
-        let normalized = if days_since[i] == f64::MAX { 1.0 } else { days_since[i] / max_days };
+            None => 0.0, // never completed → treat as just done (maximally not-due)
+        };
+        let cycle = q.cycle_days.unwrap_or(1) as f64;
+        let days_until_due = days_since - cycle; // negative when not due
         let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
         let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
         let skip_penalty = skips * 0.5;
         let list_order_bonus = q.sort_order as f64 / global_max_sort;
         let membership_bonus = if campaign_quest_ids.contains(&q.id) { 1.0 } else { 0.0 };
         let balance_bonus = compute_balance_bonus(q, avg_attr_level, avg_skill_level, attr_level_map, skill_level_map);
-        let score = normalized + importance_boost - skip_penalty + list_order_bonus + membership_bonus + balance_bonus;
-        (score, normalized, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus, (*q).clone())
+        let score = days_until_due + importance_boost - skip_penalty + list_order_bonus + membership_bonus + balance_bonus;
+        (score, days_until_due, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus, (*q).clone())
     }).collect()
 }
 
@@ -3709,6 +3727,142 @@ fn chrono_now() -> String {
     )
 }
 
+// --- Bitmask name parsing ---
+
+pub fn parse_time_of_day(input: &str) -> Result<i32, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(15); // anytime
+    }
+    let mut mask = 0i32;
+    for part in input.split(',') {
+        let name = part.trim().to_lowercase();
+        match name.as_str() {
+            "anytime" => return Ok(15),
+            "morning" => mask |= 1,
+            "afternoon" => mask |= 2,
+            "evening" => mask |= 4,
+            "night" => mask |= 8,
+            _ => return Err(format!(
+                "Invalid time-of-day '{}'. Valid values: morning, afternoon, evening, night, anytime",
+                part.trim()
+            )),
+        }
+    }
+    Ok(mask)
+}
+
+pub fn parse_days_of_week(input: &str) -> Result<i32, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(127); // everyday
+    }
+    let mut mask = 0i32;
+    for part in input.split(',') {
+        let name = part.trim().to_lowercase();
+        match name.as_str() {
+            "everyday" | "every" => return Ok(127),
+            "mon" => mask |= 1,
+            "tue" => mask |= 2,
+            "wed" => mask |= 4,
+            "thu" => mask |= 8,
+            "fri" => mask |= 16,
+            "sat" => mask |= 32,
+            "sun" => mask |= 64,
+            _ => return Err(format!(
+                "Invalid day-of-week '{}'. Valid values: mon, tue, wed, thu, fri, sat, sun, everyday",
+                part.trim()
+            )),
+        }
+    }
+    Ok(mask)
+}
+
+// --- Name-based resolution ---
+
+pub fn resolve_skill_by_name(conn: &Connection, name: &str) -> Result<Skill, String> {
+    let skills = get_skills(conn)?;
+    let name_lower = name.trim().to_lowercase();
+    for skill in &skills {
+        if skill.name.to_lowercase() == name_lower {
+            return Ok(skill.clone());
+        }
+    }
+    let available: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+    Err(format!("Skill '{}' not found. Available: {}", name.trim(), available.join(", ")))
+}
+
+pub fn resolve_attribute_by_name(conn: &Connection, name: &str) -> Result<Attribute, String> {
+    let attributes = get_attributes(conn)?;
+    let name_lower = name.trim().to_lowercase();
+    for attr in &attributes {
+        if attr.name.to_lowercase() == name_lower {
+            return Ok(attr.clone());
+        }
+    }
+    let available: Vec<&str> = attributes.iter().map(|a| a.name.as_str()).collect();
+    Err(format!("Attribute '{}' not found. Available: {}", name.trim(), available.join(", ")))
+}
+
+pub fn find_or_create_tag(conn: &Connection, name: &str) -> Result<Tag, String> {
+    let tags = get_tags(conn)?;
+    let name_lower = name.trim().to_lowercase();
+    for tag in &tags {
+        if tag.name.to_lowercase() == name_lower {
+            return Ok(tag.clone());
+        }
+    }
+    // Not found — create with the provided casing
+    add_tag(conn, name.trim().to_string())
+}
+
+// --- Composite quest creation ---
+
+pub fn add_quest_full(
+    conn: &Connection,
+    quest: NewQuest,
+    tag_names: Vec<String>,
+    skill_names: Vec<String>,
+    attribute_names: Vec<String>,
+) -> Result<Quest, String> {
+    // Resolve all names first (fail fast before creating anything)
+    let mut skill_ids = Vec::new();
+    for name in &skill_names {
+        let skill = resolve_skill_by_name(conn, name)?;
+        skill_ids.push(skill.id);
+    }
+
+    let mut attribute_ids = Vec::new();
+    for name in &attribute_names {
+        let attr = resolve_attribute_by_name(conn, name)?;
+        attribute_ids.push(attr.id);
+    }
+
+    let mut tag_ids = Vec::new();
+    for name in &tag_names {
+        let tag = find_or_create_tag(conn, name)?;
+        tag_ids.push(tag.id);
+    }
+
+    // Create the quest
+    let mut created = add_quest(conn, quest)?;
+
+    // Link tags, skills, attributes
+    if !tag_ids.is_empty() {
+        set_quest_tags(conn, created.id.clone(), tag_ids.clone())?;
+    }
+    if !skill_ids.is_empty() || !attribute_ids.is_empty() {
+        set_quest_links(conn, created.id.clone(), skill_ids.clone(), attribute_ids.clone())?;
+    }
+
+    // Populate link IDs on the returned quest
+    created.skill_ids = skill_ids;
+    created.attribute_ids = attribute_ids;
+    created.tag_ids = tag_ids;
+
+    Ok(created)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4762,7 +4916,7 @@ mod tests {
 
     #[test]
     fn tauri_config_has_global_tauri_enabled() {
-        let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+        let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src-tauri/tauri.conf.json");
         let config_str = std::fs::read_to_string(&config_path)
             .expect("Could not read tauri.conf.json");
         let config: serde_json::Value = serde_json::from_str(&config_str)
@@ -6559,5 +6713,236 @@ mod tests {
         let slot = items.iter().find(|i| i.item_type == "saga").unwrap().saga_slot.as_ref().unwrap();
         assert!(slot.is_completed);
         assert!(!slot.is_saga_due);
+    }
+
+    // --- Bitmask parsing ---
+
+    #[test]
+    fn parse_tod_single() {
+        assert_eq!(parse_time_of_day("morning").unwrap(), 1);
+        assert_eq!(parse_time_of_day("afternoon").unwrap(), 2);
+        assert_eq!(parse_time_of_day("evening").unwrap(), 4);
+        assert_eq!(parse_time_of_day("night").unwrap(), 8);
+    }
+
+    #[test]
+    fn parse_tod_multi() {
+        assert_eq!(parse_time_of_day("morning,evening").unwrap(), 5);
+        assert_eq!(parse_time_of_day("morning, afternoon, evening, night").unwrap(), 15);
+    }
+
+    #[test]
+    fn parse_tod_anytime() {
+        assert_eq!(parse_time_of_day("anytime").unwrap(), 15);
+        assert_eq!(parse_time_of_day("").unwrap(), 15);
+    }
+
+    #[test]
+    fn parse_tod_case_insensitive() {
+        assert_eq!(parse_time_of_day("Morning,EVENING").unwrap(), 5);
+    }
+
+    #[test]
+    fn parse_tod_invalid() {
+        let err = parse_time_of_day("noon").unwrap_err();
+        assert!(err.contains("Invalid time-of-day 'noon'"));
+        assert!(err.contains("morning"));
+    }
+
+    #[test]
+    fn parse_dow_single() {
+        assert_eq!(parse_days_of_week("mon").unwrap(), 1);
+        assert_eq!(parse_days_of_week("fri").unwrap(), 16);
+        assert_eq!(parse_days_of_week("sun").unwrap(), 64);
+    }
+
+    #[test]
+    fn parse_dow_multi() {
+        assert_eq!(parse_days_of_week("mon,wed,fri").unwrap(), 21);
+    }
+
+    #[test]
+    fn parse_dow_everyday() {
+        assert_eq!(parse_days_of_week("everyday").unwrap(), 127);
+        assert_eq!(parse_days_of_week("every").unwrap(), 127);
+        assert_eq!(parse_days_of_week("").unwrap(), 127);
+    }
+
+    #[test]
+    fn parse_dow_case_insensitive() {
+        assert_eq!(parse_days_of_week("Mon,FRI").unwrap(), 17);
+    }
+
+    #[test]
+    fn parse_dow_invalid() {
+        let err = parse_days_of_week("monday").unwrap_err();
+        assert!(err.contains("Invalid day-of-week 'monday'"));
+        assert!(err.contains("mon"));
+    }
+
+    // --- Name resolution ---
+
+    #[test]
+    fn resolve_skill_found() {
+        let conn = test_db();
+        let skill = resolve_skill_by_name(&conn, "Cleaning").unwrap();
+        assert_eq!(skill.name, "Cleaning");
+    }
+
+    #[test]
+    fn resolve_skill_case_insensitive() {
+        let conn = test_db();
+        let skill = resolve_skill_by_name(&conn, "cleaning").unwrap();
+        assert_eq!(skill.name, "Cleaning");
+    }
+
+    #[test]
+    fn resolve_skill_not_found() {
+        let conn = test_db();
+        let err = resolve_skill_by_name(&conn, "Baking").unwrap_err();
+        assert!(err.contains("Skill 'Baking' not found"));
+        assert!(err.contains("Available:"));
+        assert!(err.contains("Cleaning"));
+    }
+
+    #[test]
+    fn resolve_attribute_found() {
+        let conn = test_db();
+        let attr = resolve_attribute_by_name(&conn, "Health").unwrap();
+        assert_eq!(attr.name, "Health");
+    }
+
+    #[test]
+    fn resolve_attribute_case_insensitive() {
+        let conn = test_db();
+        let attr = resolve_attribute_by_name(&conn, "health").unwrap();
+        assert_eq!(attr.name, "Health");
+    }
+
+    #[test]
+    fn resolve_attribute_not_found() {
+        let conn = test_db();
+        let err = resolve_attribute_by_name(&conn, "Charisma").unwrap_err();
+        assert!(err.contains("Attribute 'Charisma' not found"));
+        assert!(err.contains("Available:"));
+    }
+
+    #[test]
+    fn find_or_create_tag_existing() {
+        let conn = test_db();
+        let tag1 = add_tag(&conn, "Outside".to_string()).unwrap();
+        let tag2 = find_or_create_tag(&conn, "outside").unwrap();
+        assert_eq!(tag1.id, tag2.id);
+    }
+
+    #[test]
+    fn find_or_create_tag_new() {
+        let conn = test_db();
+        let tag = find_or_create_tag(&conn, "NewTag").unwrap();
+        assert_eq!(tag.name, "NewTag");
+        // Verify it exists now
+        let tags = get_tags(&conn).unwrap();
+        assert!(tags.iter().any(|t| t.name == "NewTag"));
+    }
+
+    // --- Strict enum parsing ---
+
+    #[test]
+    fn difficulty_try_from_str_valid() {
+        assert_eq!(Difficulty::try_from_str("trivial").unwrap(), Difficulty::Trivial);
+        assert_eq!(Difficulty::try_from_str("easy").unwrap(), Difficulty::Easy);
+        assert_eq!(Difficulty::try_from_str("moderate").unwrap(), Difficulty::Moderate);
+        assert_eq!(Difficulty::try_from_str("challenging").unwrap(), Difficulty::Challenging);
+        assert_eq!(Difficulty::try_from_str("epic").unwrap(), Difficulty::Epic);
+    }
+
+    #[test]
+    fn difficulty_try_from_str_invalid() {
+        let err = Difficulty::try_from_str("hard").unwrap_err();
+        assert!(err.contains("Invalid difficulty 'hard'"));
+        assert!(err.contains("trivial"));
+    }
+
+    #[test]
+    fn quest_type_try_from_str_valid() {
+        assert_eq!(QuestType::try_from_str("recurring").unwrap(), QuestType::Recurring);
+        assert_eq!(QuestType::try_from_str("one_off").unwrap(), QuestType::OneOff);
+    }
+
+    #[test]
+    fn quest_type_try_from_str_invalid() {
+        let err = QuestType::try_from_str("daily").unwrap_err();
+        assert!(err.contains("Invalid quest type 'daily'"));
+    }
+
+    // --- add_quest_full ---
+
+    #[test]
+    fn add_quest_full_with_links() {
+        let conn = test_db();
+        let quest = NewQuest {
+            title: "Full Quest".to_string(),
+            quest_type: QuestType::Recurring,
+            cycle_days: Some(3),
+            ..Default::default()
+        };
+        let created = add_quest_full(
+            &conn,
+            quest,
+            vec!["NewTag".to_string()],
+            vec!["Cleaning".to_string()],
+            vec!["Health".to_string()],
+        ).unwrap();
+
+        assert_eq!(created.title, "Full Quest");
+        assert_eq!(created.skill_ids.len(), 1);
+        assert_eq!(created.attribute_ids.len(), 1);
+        assert_eq!(created.tag_ids.len(), 1);
+
+        // Verify tag was created
+        let tags = get_tags(&conn).unwrap();
+        assert!(tags.iter().any(|t| t.name == "NewTag"));
+    }
+
+    #[test]
+    fn add_quest_full_bad_skill_rolls_back() {
+        let conn = test_db();
+        let quest = NewQuest {
+            title: "Should Not Exist".to_string(),
+            ..Default::default()
+        };
+        let result = add_quest_full(
+            &conn,
+            quest,
+            vec![],
+            vec!["Baking".to_string()],
+            vec![],
+        );
+        assert!(result.is_err());
+
+        // Quest should not have been created
+        let quests = get_quests(&conn).unwrap();
+        assert!(!quests.iter().any(|q| q.title == "Should Not Exist"));
+    }
+
+    #[test]
+    fn add_quest_full_no_links() {
+        let conn = test_db();
+        let quest = NewQuest {
+            title: "Bare Quest".to_string(),
+            ..Default::default()
+        };
+        let created = add_quest_full(
+            &conn,
+            quest,
+            vec![],
+            vec![],
+            vec![],
+        ).unwrap();
+
+        assert_eq!(created.title, "Bare Quest");
+        assert!(created.skill_ids.is_empty());
+        assert!(created.attribute_ids.is_empty());
+        assert!(created.tag_ids.is_empty());
     }
 }
