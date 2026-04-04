@@ -2,6 +2,10 @@
 
 How the app works under the hood. If you want to understand why the quest giver picked a particular quest, how XP is calculated, or what all the numbers mean, then this is the reference for you.
 
+## CLI
+
+The `nq` command-line tool creates quests and queries data through the same business logic as the GUI. Both read and write the same database. See the [CLI Guide](cli-guide.md) for all commands and options.
+
 ## Quests
 
 A quest is something you do. It has a **difficulty** and is either **recurring** (with a cycle in days) or **one-off**.

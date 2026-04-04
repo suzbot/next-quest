@@ -8,7 +8,7 @@ Built for people who struggle with task initiation, routine maintenance, and the
 
 ## What Makes It Different
 
-- **Brain dumping.** Easy interface with full keyboard support lets you get everything out of your head and into the app fast.
+- **Brain dumping.** Easy interface with full keyboard support lets you get everything out of your head and into the app fast. Or use the [CLI](docs/cli-guide.md) to pipe in quests from external tools.
 - **Smart surfacing.** Multi-factor algorithm surfaces tasks as quests by weighing time past due, importance, time of day, list position, user responses, and more.
 - **Only Three Things.** Routine tasks, side quests, and bigger undertakings are each offered one at a time by their own quest giver.
 - **Encounters.** Timed overlay interrupts hyperfocus with low-effort tasks.
@@ -39,11 +39,27 @@ Requires [Rust](https://www.rust-lang.org/tools/install) and the [Tauri 2 CLI](h
 cargo tauri build --debug
 
 # Run
-./src-tauri/target/debug/next-quest
+./target/debug/next-quest
 
 # Run tests
-cd src-tauri && cargo test
+cargo test
 ```
+
+### CLI
+
+A command-line tool (`nq`) for creating quests and querying data without opening the app. Shares the same database and business logic as the GUI.
+
+```bash
+# Build
+cargo build -p nq
+
+# Examples
+./target/debug/nq list-quests --due
+./target/debug/nq add-quest --title "Read a book" --difficulty easy --type one_off
+echo '[{"title":"Q1","difficulty":"easy","quest_type":"one_off"}]' | ./target/debug/nq add-batch
+```
+
+See the full [CLI Guide](docs/cli-guide.md) for all commands and options.
 
 ## Customization
 

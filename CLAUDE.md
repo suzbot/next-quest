@@ -12,32 +12,42 @@ Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a 
 
 ## Quick Commands
 
-Build (debug):
+Build GUI (debug):
 cargo tauri build --debug
 
-Run the built app (user launches manually — don't run `open` or launch it automatically):
-./src-tauri/target/debug/next-quest
+Run the GUI (user launches manually — don't run `open` or launch it automatically):
+./target/debug/next-quest
+
+Build CLI:
+cargo build -p nq
+
+Run CLI:
+./target/debug/nq <command>
 
 Tests:
-cd src-tauri && cargo test
+cargo test
 
 Dev mode (hot reload, when we add a frontend dev server):
 cargo tauri dev
 
 ## Architecture
 
-Tauri app: Rust backend + web frontend.
+Cargo workspace with three crates:
 
-- **Backend (Rust/Tauri):** Data persistence, quest selection logic, system tray, timers, notifications
-- **Frontend (Web):** UI layer, 8-16bit RPG aesthetic, quest display, XP/level feedback
+- **nq-core** (library) — shared data logic, business rules, SQLite access. Used by both the GUI and CLI.
+- **src-tauri** (binary) — Tauri GUI app. Window management, system tray, timers, notifications, web frontend.
+- **src-cli** (binary) — CLI tool (`nq`). Creates quests, queries data. JSON output for programmatic use.
+- **Frontend (Web):** UI layer in `ui/`, 8-16bit RPG aesthetic, quest display, XP/level feedback.
 
 ### File Structure
 
-- `src-tauri/src/db.rs` — all data logic, migrations, and tests
+- `nq-core/src/db.rs` — all data logic, migrations, and tests (shared library)
+- `nq-core/src/lib.rs` — library root, re-exports, db_path()
 - `src-tauri/src/commands.rs` — Tauri command wrappers, timer state, tray state, skip state, settings
 - `src-tauri/src/tray.rs` — system tray icon, menu, and event handling
 - `src-tauri/src/main.rs` — app setup, Encounters polling thread
 - `src-tauri/build.rs` — build-time image manifest generation
+- `src-cli/src/main.rs` — CLI binary (nq), argument parsing, JSON output
 - `ui/index.html` — main app frontend (HTML/CSS/JS)
 - `ui/overlay.html` — Encounters overlay window
 - `ui/images/manifest.json` — auto-generated image list (do not edit by hand)
@@ -99,6 +109,7 @@ Do NOT skip steps or combine them without discussing it first. Do NOT draft docs
 | dirs 6 | Rust | Platform data directory paths | Locate app data folder |
 | libc 0.2 | Rust | C standard library bindings | Local timezone conversion for quest due dates |
 | serde_json 1 | Rust (build only) | JSON serialization | Build-time image manifest generation |
+| clap 4 | Rust (CLI only) | CLI argument parsing with derive macros | Command-line interface |
 
 ## Pacing & Breaks
 
@@ -123,3 +134,4 @@ This is an ADHD productivity app being built by someone with ADHD. The developme
 |---|---|
 | [VISION.md](VISION.md) | Full vision, modes, RPG theme, phased roadmap |
 | [DATA_MODEL.md](DATA_MODEL.md) | MVP entities, relationships, quest selector logic |
+| [docs/cli-guide.md](docs/cli-guide.md) | CLI command reference for the `nq` binary |
