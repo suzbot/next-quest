@@ -209,13 +209,24 @@ Packaging, checksums, and local installation.
 
 **Verify:** Run `package.sh v0.2.0`, extract the archive and confirm contents. Run `checksums.sh`, verify checksums.txt. Run `install.sh`, launch Next Quest from Spotlight, run `nq list-tags` from a new terminal.
 
-### Step 3: release-notes.sh + release.sh + release-all.sh + README update
+### Step 3: App icon and tray icon
+
+Generate a proper `.icns` file from existing PNGs for the app bundle, and ensure the tray icon is included. Without this, the app shows a generic icon in `/Applications`, Spotlight, and the Dock.
+
+**What's needed:**
+- Convert existing PNGs (in `src-tauri/icons/`) to `.icns` format (macOS app icon)
+- Configure Tauri to include the `.icns` in the bundle
+- Verify the system tray icon is bundled correctly
+
+**Verify:** Rebuild with `build.sh`, install, and confirm the app has a proper icon in `/Applications`, the Dock, and the system tray.
+
+### Step 4: release-notes.sh + release.sh + release-all.sh + README update
 
 Release notes generation, GitHub release, orchestrator, and the unsigned app note in README.
 
 **Verify:** Run `release-notes.sh` against existing tags, review output. Do a full `release-all.sh` run for the first versioned release. Verify release appears on GitHub with archive, checksums, and release notes. Verify README has the first-launch workaround note.
 
-### Step 4: Documentation
+### Step 5: Documentation
 
 Update CLAUDE.md Quick Commands section with release pipeline usage (release-all, install, individual scripts). Update README with first-launch workaround note for unsigned app.
 
@@ -223,4 +234,4 @@ Update CLAUDE.md Quick Commands section with release pipeline usage (release-all
 
 ## Summary
 
-Eight scripts, three implementation steps. The pipeline takes you from `./relscripts/release-all.sh v0.2.0` to a published GitHub release with a downloadable archive. Locally, `install.sh` puts the app in `/Applications` and `nq` on your PATH.
+Eight scripts, five implementation steps. The pipeline takes you from `./relscripts/release-all.sh v0.2.0` to a published GitHub release with a downloadable archive. Locally, `install.sh` puts the app in `/Applications` and `nq` on your PATH.

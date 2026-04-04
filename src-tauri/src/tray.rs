@@ -12,8 +12,11 @@ const TRAY_ID: &str = "nq_tray";
 pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let menu = build_menu(app)?;
 
+    let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+    let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)?.to_owned();
+
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(tray_icon)
         .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(true)

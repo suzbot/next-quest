@@ -61,6 +61,10 @@ echo '[{"title":"Q1","difficulty":"easy","quest_type":"one_off"}]' | ./target/de
 
 See the full [CLI Guide](docs/cli-guide.md) for all commands and options.
 
+### First Launch (macOS)
+
+The app isn't code-signed, so macOS will show a warning that says "Apple could not verify 'Next Quest' is free of malware." If you still want to run it, right-click the app → Open → click Open in the dialog. You only need to do this once — after that it launches normally.
+
 ## Customization
 
 Images and flavor text are loaded from external directories — no code changes needed to personalize the app.

@@ -2,7 +2,7 @@
 
 The `nq` CLI creates quests and queries data through the same business logic as the GUI app. Both read and write the same SQLite database. The GUI can be running while the CLI writes.
 
-**Binary location:** `./target/debug/nq` (debug build)
+**Binary location:** `/usr/local/bin/nq` after running `./relscripts/install.sh`, or `./target/debug/nq` for debug builds.
 
 **All output is JSON.** Success goes to stdout. Errors go to stderr with a non-zero exit code.
 

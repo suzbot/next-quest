@@ -15,5 +15,8 @@ dist/
 .idea/
 rust-analyzer.toml
 
+# Image generation working files
+ui/images/sd-references/
+
 # Claude Code
 .claude/
