@@ -514,8 +514,27 @@
     }
 
     .qg-lane { margin-bottom: 4px; border-bottom: 1px solid #999; padding-bottom: 8px; }
-    .qg-lane-header { font-size: 12px; font-weight: 700; color: #444; padding: 4px 8px; background: #c0c0c0; }
-    .qg-lane-content { }
+    .qg-lane-header { font-size: 12px; font-weight: 700; color: #444; padding: 4px 8px; background: #c0c0c0; display: flex; justify-content: space-between; align-items: center; }
+    .qg-lane-content { overflow: hidden; transition: max-height 250ms ease-in-out; max-height: 500px; }
+    .qg-lane-content.lane-hidden { max-height: 0; }
+
+    .qg-lane-toggle {
+      background: none; border: none; font-family: inherit;
+      font-size: 11px; color: #444; cursor: pointer; padding: 0 4px;
+    }
+    .qg-lane-toggle:hover { color: #000; }
+
+    .qg-lane-collapsed-body {
+      overflow: hidden; transition: max-height 250ms ease-in-out; max-height: 200px;
+      padding: 20px 16px; text-align: center; cursor: pointer;
+      background: #b0b0b0; border: 1px solid #999;
+    }
+    .qg-lane-collapsed-body:hover { background: #bcbcbc; }
+    .qg-lane-collapsed-body.lane-hidden { max-height: 0; padding: 0 16px; border: none; }
+
+    .qg-lane-icon { font-size: 32px; line-height: 1; margin-bottom: 10px; color: #555; }
+    .qg-lane-prompt-text { font-size: 16px; color: #222; font-weight: 700; letter-spacing: 1px; margin-bottom: 6px; }
+    .qg-lane-prompt-hint { font-size: 9px; color: #666; font-style: italic; }
 
     /* Split layout */
     .qg-split {
@@ -737,16 +756,40 @@
   <div id="quest-giver-view">
     <div id="qg-timer-content" class="hidden"></div>
     <div id="qg-lane1" class="qg-lane">
-      <div class="qg-lane-header">Castle Duties</div>
+      <div class="qg-lane-header">
+        <span>Castle Duties</span>
+        <button class="qg-lane-toggle" onclick="toggleLane('lane1')" title="Collapse">▲</button>
+      </div>
       <div class="qg-lane-content"></div>
+      <div class="qg-lane-collapsed-body lane-hidden" onclick="toggleLane('lane1')">
+        <div class="qg-lane-icon">♜</div>
+        <div class="qg-lane-prompt-text">Attend to duties</div>
+        <div class="qg-lane-prompt-hint">Click when you're ready</div>
+      </div>
     </div>
     <div id="qg-lane2" class="qg-lane">
-      <div class="qg-lane-header">Adventures</div>
+      <div class="qg-lane-header">
+        <span>Adventures</span>
+        <button class="qg-lane-toggle" onclick="toggleLane('lane2')" title="Collapse">▲</button>
+      </div>
       <div class="qg-lane-content"></div>
+      <div class="qg-lane-collapsed-body lane-hidden" onclick="toggleLane('lane2')">
+        <div class="qg-lane-icon">♞</div>
+        <div class="qg-lane-prompt-text">Ask around town</div>
+        <div class="qg-lane-prompt-hint">Click when you're ready</div>
+      </div>
     </div>
     <div id="qg-lane3" class="qg-lane">
-      <div class="qg-lane-header">Royal Quests</div>
+      <div class="qg-lane-header">
+        <span>Royal Quests</span>
+        <button class="qg-lane-toggle" onclick="toggleLane('lane3')" title="Collapse">▲</button>
+      </div>
       <div class="qg-lane-content"></div>
+      <div class="qg-lane-collapsed-body lane-hidden" onclick="toggleLane('lane3')">
+        <div class="qg-lane-icon">♚</div>
+        <div class="qg-lane-prompt-text">Approach the throne</div>
+        <div class="qg-lane-prompt-hint">Click when you're ready</div>
+      </div>
     </div>
   </div>
 
@@ -1160,6 +1203,38 @@
     const laneImages = { castle_duties: null, adventures: null, royal_quests: null };
     const laneLines = { castle_duties: null, adventures: null, royal_quests: null };
     const laneCurrentQuestId = { castle_duties: null, adventures: null, royal_quests: null };
+
+    // Lane collapse state — session only, resets on app relaunch
+    const laneCollapsed = { lane1: false, lane2: true, lane3: true };
+
+    function applyLaneState(lane) {
+      const container = document.getElementById(`qg-${lane}`);
+      const content = container.querySelector(".qg-lane-content");
+      const collapsed = container.querySelector(".qg-lane-collapsed-body");
+      const toggle = container.querySelector(".qg-lane-toggle");
+
+      if (laneCollapsed[lane]) {
+        content.classList.add("lane-hidden");
+        collapsed.classList.remove("lane-hidden");
+        toggle.textContent = "▼";
+        toggle.title = "Expand";
+      } else {
+        content.classList.remove("lane-hidden");
+        collapsed.classList.add("lane-hidden");
+        toggle.textContent = "▲";
+        toggle.title = "Collapse";
+      }
+    }
+
+    function toggleLane(lane) {
+      laneCollapsed[lane] = !laneCollapsed[lane];
+      applyLaneState(lane);
+      // If expanding, refresh the lane's quest in case scoring changed
+      if (!laneCollapsed[lane]) {
+        const cfg = laneConfig.find(l => l.containerId === `qg-${lane}`);
+        if (cfg) renderLane(cfg, true);
+      }
+    }
 
     function getLaneImagePool(key) {
       if (key === "castle_duties") return lane1Images.length > 0 ? lane1Images : questGiverImages;
@@ -2151,9 +2226,17 @@
       document.getElementById("qg-timer-content").classList.add("hidden");
       laneConfig.forEach(l => document.getElementById(l.containerId).classList.remove("hidden"));
 
-      // Render all three lanes
+      // Apply collapse state
+      applyLaneState("lane1");
+      applyLaneState("lane2");
+      applyLaneState("lane3");
+
+      // Render expanded lanes only
       for (const lane of laneConfig) {
-        await renderLane(lane);
+        const laneId = lane.containerId.replace("qg-", "");
+        if (!laneCollapsed[laneId]) {
+          await renderLane(lane);
+        }
       }
     }
 

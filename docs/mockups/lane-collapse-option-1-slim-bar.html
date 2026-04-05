@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Lane Collapse — Option 1: Slim Bar</title>
+<style>
+  @font-face {
+    font-family: 'Silkscreen';
+    src: url('../../ui/fonts/Silkscreen-Regular.ttf') format('truetype');
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: 'Silkscreen';
+    src: url('../../ui/fonts/Silkscreen-Bold.ttf') format('truetype');
+    font-weight: 700;
+  }
+
+  body {
+    background: #b4b4b4;
+    color: #111;
+    font-family: 'Silkscreen', monospace;
+    font-size: 13px;
+    padding: 0;
+    margin: 0;
+  }
+
+  .app-border {
+    background:
+      repeating-linear-gradient(45deg, transparent, transparent 4px, #9a9a9a 4px, #9a9a9a 5px),
+      repeating-linear-gradient(-45deg, transparent, transparent 4px, #9a9a9a 4px, #9a9a9a 5px);
+    background-color: #b4b4b4;
+    padding: 10px;
+    border: 2px solid #444;
+    min-height: 100vh;
+  }
+
+  .content-box {
+    background: #b4b4b4;
+    padding: 16px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  h1 { font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; }
+
+  /* Lane base */
+  .qg-lane { margin-bottom: 4px; border-bottom: 1px solid #999; padding-bottom: 8px; }
+
+  .qg-lane-header {
+    font-size: 12px;
+    font-weight: 700;
+    color: #444;
+    padding: 4px 8px;
+    background: #c0c0c0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .qg-lane-collapse-btn {
+    background: none;
+    border: none;
+    font-family: inherit;
+    font-size: 11px;
+    color: #444;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .qg-lane-collapse-btn:hover { color: #000; }
+
+  /* Expanded lane content (sample) */
+  .qg-split {
+    display: flex;
+    min-height: 160px;
+    padding-top: 16px;
+  }
+  .qg-split-image {
+    min-width: 180px;
+    padding: 0 0 0 8px;
+  }
+  .qg-split-image .placeholder {
+    width: 170px;
+    height: 140px;
+    background: #888;
+    border: 1px solid #888;
+    outline: 1px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ccc;
+    font-size: 10px;
+  }
+  .qg-split-text {
+    flex: 1;
+    padding: 0 16px;
+  }
+  .qg-flavor {
+    font-size: 11px;
+    color: #555;
+    margin-bottom: 10px;
+    font-style: italic;
+  }
+  .qg-prompt {
+    font-size: 10px;
+    color: #555;
+    margin-bottom: 8px;
+  }
+  .qg-quest-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 16px;
+  }
+  .qg-actions { display: flex; gap: 10px; }
+  .qg-actions button {
+    padding: 6px 16px;
+    font-size: 12px;
+    font-family: inherit;
+    background: #c0c0c0;
+    border: 2px outset #888;
+    cursor: pointer;
+  }
+
+  /* COLLAPSED LANE — OPTION 1: SLIM BAR */
+  .qg-lane-collapsed {
+    border: 1px solid #888;
+    background: #c8c8c8;
+    padding: 14px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .qg-lane-collapsed:hover {
+    background: #d0d0d0;
+  }
+  .qg-lane-collapsed-text {
+    font-family: 'Silkscreen', monospace;
+    font-size: 14px;
+    color: #333;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+
+  /* Annotations (mockup only) */
+  .annotation {
+    font-family: 'Silkscreen', monospace;
+    font-size: 10px;
+    color: #c0392b;
+    margin: 4px 8px 8px;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+<div class="app-border">
+  <div class="content-box">
+    <h1>Next Quest — Mockup: Option 1 (Slim Bar)</h1>
+
+    <p class="annotation">Lane 1 expanded (default). Lanes 2 &amp; 3 collapsed to slim bars.</p>
+
+    <!-- Lane 1: EXPANDED -->
+    <div class="qg-lane">
+      <div class="qg-lane-header">
+        <span>Castle Duties</span>
+        <button class="qg-lane-collapse-btn" title="Collapse">▲</button>
+      </div>
+      <div class="qg-lane-content">
+        <div class="qg-split">
+          <div class="qg-split-image">
+            <div class="placeholder">(quest giver image)</div>
+          </div>
+          <div class="qg-split-text">
+            <div class="qg-flavor">"The cat won't scoop itself, adventurer."</div>
+            <div class="qg-prompt">Your next quest:</div>
+            <div class="qg-quest-name">Scoop Kitty Litter</div>
+            <div class="qg-actions">
+              <button>Done</button>
+              <button>Quest Now</button>
+              <button>Something Else</button>
+              <button>⏾ Not Today</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lane 2: COLLAPSED (slim bar) -->
+    <div class="qg-lane-collapsed">
+      <span class="qg-lane-collapsed-text">Ask around town</span>
+    </div>
+
+    <!-- Lane 3: COLLAPSED (slim bar) -->
+    <div class="qg-lane-collapsed">
+      <span class="qg-lane-collapsed-text">Approach the throne</span>
+    </div>
+
+    <p class="annotation" style="margin-top: 24px;">Alternate view — all three collapsed:</p>
+
+    <div class="qg-lane-collapsed">
+      <span class="qg-lane-collapsed-text">Attend to duties</span>
+    </div>
+    <div class="qg-lane-collapsed">
+      <span class="qg-lane-collapsed-text">Ask around town</span>
+    </div>
+    <div class="qg-lane-collapsed">
+      <span class="qg-lane-collapsed-text">Approach the throne</span>
+    </div>
+
+    <p class="annotation" style="margin-top: 24px;">
+      Slim horizontal bar, ~44px tall. Clicking anywhere on the bar expands the lane.
+      Hover state slightly lightens the background. The ▲ caret in the expanded lane's
+      header collapses it.
+    </p>
+  </div>
+</div>
+</body>
+</html>
