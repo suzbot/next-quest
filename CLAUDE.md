@@ -12,11 +12,10 @@ Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a 
 
 ## Quick Commands
 
-Build GUI (debug):
-cargo tauri build --debug
+Build and run GUI (debug):
+cargo tauri build --debug && ./target/debug/next-quest
 
-Run the GUI (user launches manually — don't run `open` or launch it automatically):
-./target/debug/next-quest
+(User launches manually — don't run `open` or launch it automatically.)
 
 Build CLI:
 cargo build -p nq

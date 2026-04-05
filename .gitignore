@@ -17,6 +17,7 @@ rust-analyzer.toml
 
 # Image generation working files
 ui/images/sd-references/
+reference.png
 
 # Claude Code
 .claude/

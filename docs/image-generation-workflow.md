@@ -2,251 +2,192 @@
 
 ## Goal
 
-Create female versions of existing Bard's Tale pixel art quest giver portraits using Stable Diffusion (img2img) and GIMP for post-processing.
+Create female versions of existing Bard's Tale pixel art quest giver portraits. Source images come from free web-based image generators; a Python/Pillow pipeline handles the mechanical post-processing (crop, flatten, pixelate) and GIMP handles the final hand touch-up.
 
 ---
 
-## Step 0: Install ImageMagick + prep all references (bulk)
+## Palette rules
 
-### Install ImageMagick
+Every generated image must follow the same palette constraints as the original Bard's Tale Atari ST portraits:
+
+1. **Per-image limit: 16 colors max.** Each original portrait uses at most 16 colors (some as few as 8). Generated images must stay within this limit. This is a hard constraint — it's what makes these look like authentic indexed-color pixel art rather than modern approximations.
+
+2. **Master palette: 172 colors.** The 16 colors for each image must be drawn from the 172-color master palette in `ui/images/sd-references/palette.png`. These are the exact colors the original Bard's Tale artists chose across all Atari ST portraits. Every value sits on the Atari ST's 3-bit-per-channel hardware grid (8 levels per channel: 0, 36, 73, 109, 146, 182, 219, 255).
+
+3. **No off-grid colors.** Any color not in the 172-color palette — or not on the ST's 8-level grid — is wrong. The palette reduction step must map to these exact values, not approximate them.
+
+A visual reference swatch is at `ui/images/sd-references/palette-swatch.png`.
+
+---
+
+## Pipeline overview
+
+Generation and post-processing are two distinct phases:
+
+1. **Generate reference images** using any free web tool (Bing Image Creator, Copilot, etc.). Aim for portraits with the subject near the top of the frame and a simple background.
+2. **Run the Pillow pipeline** (two Python scripts) to crop, boost contrast, flatten to the master palette, and pixelate to 112×88.
+3. **Hand touch-up in GIMP** to clean remaining artifacts.
+4. **Export and drop into the lane folder.**
+
+Why two scripts instead of one: the flatten step runs on the full-resolution image first, so contrast/saturation/palette-swap can do their work with all the source data, and the pixelate step runs last so nearest-neighbor sampling picks from an already-flattened image. Doing it in this order avoids noisy backgrounds and detail loss that showed up when resize happened first.
+
+---
+
+## Step 1: Generate reference images
+
+Use any free web-based image generator that accepts text prompts. What we want:
+
+1. **Bust or upper-body portrait** with the subject's head near the top of the frame (the pipeline's crop anchors to the top edge).
+2. **Simple, mostly-solid background.** Busy backgrounds eat palette budget and produce artifacts.
+3. **High contrast, saturated colors.** The pipeline will boost these further, but a washed-out source stays washed out.
+4. **Save as JPEG or PNG** into the matching lane folder: `ui/images/sd-references/lane1/`, `lane2/`, or `lane3/`.
+
+Generate many, keep many — the pipeline runs on everything in the folder, so it's cheap to evaluate lots of candidates in parallel.
+
+---
+
+## Step 2: Flatten (full-resolution palette swap)
+
+Run the step 1 script from the `ui/images/sd-references/` directory:
 
 ```bash
-brew install imagemagick
+cd ui/images/sd-references
+python3 process_refs_v2_step1.py                    # all lanes
+python3 process_refs_v2_step1.py lane1              # one lane
+python3 process_refs_v2_step1.py lane1 lane2        # multiple lanes
 ```
 
-Verify: `convert --version` should show ImageMagick 7.x.
+For each JPEG/JPG in the target lane folders, this script:
 
-### Upscale all existing images to 4x as SD references
+1. **Top-anchored crop** to 1.27:1 aspect ratio (112:88). Vertical crops trim the bottom only, preserving the topline — this keeps heads intact when the subject is near the top of the frame.
+2. **Contrast ×1.4, saturation ×1.1** to push the source toward decisive color blocking before palette mapping.
+3. **Median filter, radius 2** (5×5 kernel) to kill JPEG noise in flat areas. This is what prevents "solid" backgrounds from fragmenting into near-identical palette entries. Radius 3 was too aggressive — faces looked oversmoothed.
+4. **Map every pixel to the 172-color master palette** using squared-RGB nearest-neighbor matching.
+5. **Reduce to the top-16 most-used colors** for the image, then remap any non-top-16 pixels to their nearest neighbor within those 16.
+6. **Save as PNG** at full source resolution to `<lane>/step1_flattened/`.
+
+Output is a full-res PNG that already uses exactly the 16 colors the final GIF will have. This is the right moment to review — if a background still looks noisy or a face tone has been swapped to the wrong shade, it's cheaper to re-tune the settings here than to fix artifacts after pixelation.
+
+### Tuning knobs (top of the script)
+
+1. `CONTRAST` — currently 1.4. Higher flattens more regions but risks losing fine detail.
+2. `SATURATION` — currently 1.1. Higher makes faces more vivid but can push skin tones off toward cartoonish reds.
+3. `MEDIAN_RADIUS` — currently 2. Radius 3 was too aggressive (over-smoothed faces); radius 1 was not enough to clean JPEG artifacts in backgrounds.
+
+---
+
+## Step 3: Review step 1 output
+
+Open `lane{1,2,3}/step1_flattened/*.png` and check:
+
+1. **Heads intact** — is the top of the head visible in every image?
+2. **Backgrounds flat** — has each "solid" background landed on a single color, or are there still speckles?
+3. **Face tones correct** — has any face color been snapped to a background color? This usually means the background is eating too much palette budget.
+4. **Details preserved** — are weapon edges, eyes, hair lines still readable at full res?
+
+If any of these fail, tune the knobs in `process_refs_v2_step1.py` and rerun. Common fixes:
+
+1. Background artifacts persist → bump `MEDIAN_RADIUS` to 3, knowing it will smooth faces more.
+2. Face tones too flat → lower `SATURATION` or `CONTRAST`.
+3. Details mushy → lower `MEDIAN_RADIUS` to 1 and accept some background speckle.
+4. Head cropped off → the source image is wrong, regenerate in Step 1 with the subject higher in the frame.
+
+---
+
+## Step 4: Pixelate (nearest-neighbor downscale)
+
+Once step 1 output looks good, run the step 2 script:
 
 ```bash
-cd ui/images
-
-# Create a working directory for references
-mkdir -p sd-references/lane1 sd-references/lane2 sd-references/lane3
-
-# Upscale lane1
-for f in lane1/*.gif; do
-  convert "$f" -filter point -resize 400% "sd-references/lane1/$(basename "${f%.gif}"-4x.png)"
-done
-
-# Upscale lane2
-for f in lane2/*.gif; do
-  convert "$f" -filter point -resize 400% "sd-references/lane2/$(basename "${f%.gif}"-4x.png)"
-done
-
-# Upscale lane3
-for f in lane3/*.gif; do
-  convert "$f" -filter point -resize 400% "sd-references/lane3/$(basename "${f%.gif}"-4x.png)"
-done
+python3 process_refs_v2_step2.py                    # all lanes
+python3 process_refs_v2_step2.py lane1              # one lane
 ```
 
-`-filter point` = nearest-neighbor (keeps pixels crispy). The `sd-references/` folder keeps working files separate from the app's image folders. Add `sd-references/` to `.gitignore`.
+For each PNG in `<lane>/step1_flattened/`, this script:
 
-### Extract a palette reference image
+1. **Re-enforce the 16-color limit.** Counts distinct colors in the input; if more than 16 (common when you've hand-touched-up a step 1 PNG in GIMP and the touch-up introduced extra shades or anti-aliased brush edges), keeps the 16 most-used and remaps the rest to their nearest surviving color. Files already at or under 16 colors pass through unchanged, and the log prints the input→output count when a reduction happens.
+2. **Nearest-neighbor resize** from the full source resolution to 112×88. Because the input is guaranteed to be at 16 colors by this point, every output pixel is a clean sample of an on-palette color — no averaging across palette boundaries.
+3. **Save as indexed GIF** at 112×88 with the 16-color palette, to `<lane>/step2_pixelated/<name>.gif`.
+4. **Save a 4× preview PNG** (448×352, nearest-neighbor) to the same folder. The preview is what you actually look at to judge the result — it shows individual pixels clearly.
 
-Pick one representative Atari image and create a palette swatch:
-
-```bash
-# Creates a tiny image containing only the unique colors from the source
-convert "lane1/Bard 1 01 Atari.gif" -unique-colors palette-atari.png
-```
-
-This `palette-atari.png` is used later for batch palette reduction. Do the same for Amiga if needed:
-
-```bash
-convert "lane2/Bard 2 04 Amiga.gif" -unique-colors palette-amiga.png
-```
+The `.gif` files are the final candidates for the lane folders. The `_4x.png` files are for review only.
 
 ---
 
-## Validation: test the post-processing pipeline first
+## Step 5: Review step 2 output, pick winners
 
-Before installing SD or ImageMagick, validate that the GIMP pipeline produces acceptable results using any free web-based image generator (Bing Image Creator, Copilot, etc.):
+Compare the 4× preview PNGs. Pick the 1–2 best candidates per character, per lane. Things to look for at 112×88:
 
-1. Generate a test image with a prompt like: "pixel art portrait of a woman knight in silver armor, 16-bit retro RPG style, dark teal background, limited color palette"
-2. Save the result (it'll be high-res, wrong palette — that's fine)
-3. Open in GIMP
-4. `Image → Scale Image` → 112×88, interpolation "None"
-5. `Image → Mode → Indexed` → "Generate optimum palette", max 16 colors, Floyd-Steinberg dithering
-6. Compare side-by-side with an existing Bard's Tale image
+1. **Clear silhouette** — can you read the character's shape?
+2. **Background doesn't compete** with the subject.
+3. **Face reads as a face** even though it's tiny (clear eye positions, hair shape).
+4. **Color blocking feels right** — no color that's out of place with the others.
 
-If the result looks like it belongs in the same app, the pipeline works and it's worth setting up SD for better reference-based generation. If it looks wrong even after palette reduction, we'll know to adjust the approach before investing in setup.
+Reject anything that doesn't read clearly. Faces are tiny at this resolution; silhouette and color blocking matter more than fine detail.
 
 ---
 
-## One-time setup (after validation)
+## Step 6: Hand touch-up in GIMP
 
-### 1. Install Stable Diffusion locally
+Open the winning GIF in GIMP for pixel-level cleanup:
 
-- Install [AUTOMATIC1111 WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) or [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
-- Requires: Python 3.10+, ~8GB disk, GPU with 4GB+ VRAM (or CPU mode, slower)
-- AUTOMATIC1111 is simpler to start with. Follow the repo's install guide for your OS.
+1. Zoom to 800% or higher.
+2. Use the pencil tool at 1px, hard edge.
+3. Pick colors from the image itself with the color picker — the image is already on the 16-color palette, so any picked color is safe.
+4. Fix obvious artifacts: stray speckles in backgrounds, broken outlines, unclear facial features, garbled hands.
+5. Compare side-by-side with the original male version for color and silhouette consistency.
 
-### 2. Download a pixel art model or LoRA
-
-- Base model: SD 1.5 or SDXL
-- Recommended LoRA: search CivitAI for "pixel art" LoRAs (e.g., "Pixel Art XL", "16-bit pixel art")
-- Place LoRA files in `models/Lora/` inside the SD installation
-
-### 3. Extract the Bard's Tale palette from GIMP
-
-1. Open any existing Atari image in GIMP (e.g., `Bard 1 01 Atari.gif`)
-2. `Windows → Dockable Dialogs → Colormap` — this shows the indexed palette
-3. `Windows → Dockable Dialogs → Palette Editor`
-4. Click the palette menu → `Import Palette → Import from Image`
-5. Name it "BardsTale-Atari" and save
-6. Repeat for an Amiga image if the palette differs — name it "BardsTale-Amiga"
+The touch-up step exists because the pipeline is statistical — it'll always leave a handful of pixels that a human can obviously improve. Budget a few minutes per image for this, not hours.
 
 ---
 
-## Per-image workflow
+## Step 7: Export to lane folder
 
-### Step 1: Prepare the reference image
-
-1. Open the existing male character image in GIMP
-2. `Image → Mode → RGB` (convert from indexed so SD can read it cleanly)
-3. `Image → Scale Image` — upscale to 448×352 (4x) using interpolation "None" (keeps pixel-sharp)
-4. Export as PNG to a working folder
-
-### Step 2: Craft the prompt (Cowork)
-
-Use Claude in Cowork mode to generate a detailed SD prompt from the reference image. Cowork can see images, so it can describe composition, pose, color blocking, and details that generic prompts miss.
-
-1. Open a Cowork session and share the upscaled reference image (or the original — Cowork can view either)
-2. Ask Cowork to describe what it sees and draft an img2img prompt for a female version
-3. Cowork will produce a tailored prompt covering: pose and composition, clothing/armor specifics, color palette and background, what to preserve vs. what to feminize
-4. Review and adjust the prompt before feeding it to SD
-
-This replaces the generic prompt templates below, which are kept as a fallback:
-
-<details>
-<summary>Fallback prompts (if not using Cowork)</summary>
-
-Base prompt structure:
-```
-pixel art portrait of a woman, retro 16-bit RPG style, limited color palette,
-dark background, bust portrait, [CHARACTER-SPECIFIC DETAILS]
-```
-
-Character-specific details:
-- Knight (Bard 1 01): "wearing silver plate armor, strong, short hair"
-- Ranger (Bard 1 05): "wearing green tunic and hood, holding axe, confident"
-- Wizard (Bard 1 06): "wearing blue robes, holding wooden staff, wise elder woman"
-- Crusader (Bard 1 02): "wearing blue and white tabard, holding sword upright, noble"
-- Bard (Bard 1 04): "playing a lute, wearing colorful clothes, sitting cross-legged"
-- Sorcerer (Bard 1 10): "wearing red and blue robes, casting spell, dramatic gesture"
-- Sage (Bard 1 54): "white-haired elder woman, wearing magenta robes, wise"
-- King → Queen (Bard 2 50): "wearing purple royal robes, crown, sitting on throne, holding scepter"
-
-</details>
-
-### Step 3: Generate in Stable Diffusion (img2img)
-
-1. Open SD WebUI, go to the **img2img** tab
-2. Upload the upscaled reference image
-3. Use the prompt from Step 2 (Cowork) or the fallback prompts
-4. Set negative prompt:
-
-```
-smooth, photorealistic, 3d render, high resolution, anti-aliased, blurry,
-modern style, anime, cartoon
-```
-
-5. Settings:
-   - **Denoising strength:** 0.55–0.70 (lower = more faithful to reference, higher = more creative)
-   - **Steps:** 30–50
-   - **CFG Scale:** 7–9
-   - **Output size:** 448×352 (4x the target, we'll downscale later)
-   - **Sampler:** Euler a or DPM++ 2M Karras
-   - Enable the pixel art LoRA if using one (weight 0.6–0.8)
-
-6. Generate several variations (batch of 4–8). Pick the best candidate.
-
-### Step 4: Downscale in GIMP
-
-1. Open the selected generated image in GIMP
-2. `Image → Scale Image` → 112×88 pixels
-3. Set interpolation to **"None"** (nearest-neighbor) for crispy pixel look
-4. If the result is too messy at this size, try scaling to 224×176 first (2x), clean up, then scale to 112×88
-
-### Step 5: Apply palette
-
-1. `Image → Mode → Indexed...`
-2. Select **"Use custom palette"**
-3. Choose "BardsTale-Atari" (or Amiga, matching the lane's style)
-4. Dithering: try **"Floyd-Steinberg (normal)"** first. If it's too noisy, try **"Positioned"** or **"None"**
-5. Compare with the original male version side-by-side — adjust if the palette mapping looks off
-
-### Step 6: Touch up
-
-1. Zoom to 800%+ and review pixel-by-pixel
-2. Fix any obvious artifacts: stray pixels, broken outlines, garbled features
-3. Use the pencil tool (1px, hard) to touch up — pick colors from the palette
-4. Key areas to check: face/hair, armor/clothing edges, hands, background boundary
-
-### Step 7: Export
-
-1. `File → Export As...` → name it to match the lane convention, e.g., `Female Knight Lane1.gif`
-2. Format: GIF
-3. Place in the appropriate lane folder (`ui/images/lane1/`, `lane2/`, or `lane3/`)
-
-### Step 8: Verify in app
-
-1. Rebuild the app (`cargo tauri build --debug`) — build.rs regenerates the manifest
-2. Check the quest giver lane — new image should appear in rotation
+1. `File → Export As...`
+2. Name it using the lane convention (e.g., `Female Knight Lane1.gif`).
+3. Format: GIF (indexed, already set).
+4. Place in the appropriate lane folder: `ui/images/lane1/`, `lane2/`, or `lane3/`.
 
 ---
 
----
+## Step 8: Verify in app
 
-## Bulk post-processing with ImageMagick
-
-After SD generates a batch of candidates, use ImageMagick for the mechanical steps and GIMP for the artistic ones.
-
-### Bulk downscale candidates to target size
-
-```bash
-# From wherever SD saved outputs (e.g., outputs/img2img/)
-mkdir -p downscaled
-for f in *.png; do
-  convert "$f" -filter point -resize 112x88! "downscaled/$f"
-done
-```
-
-`-resize 112x88!` forces exact dimensions (ignoring aspect ratio). `-filter point` keeps it pixel-sharp.
-
-### Bulk palette reduction (rough pass)
-
-```bash
-# Apply the extracted palette to all downscaled candidates
-cd downscaled
-for f in *.png; do
-  convert "$f" -remap ../palette-atari.png "palette-${f%.png}.gif"
-done
-```
-
-This gives you a quick preview of how each candidate looks with the correct palette. Review these visually — pick the best 1–2 per character.
-
-### Final touch-up in GIMP
-
-Open the best candidate GIF in GIMP for manual touch-up:
-1. Zoom 800%+
-2. Fix artifacts with the pencil tool (1px, pick colors from the palette via color picker)
-3. Compare side-by-side with the original male version
-4. Export as GIF to the target lane folder
-
-**Use ImageMagick for:** upscaling references, downscaling candidates, rough palette reduction, format conversion.
-**Use GIMP for:** palette application with dithering control, visual comparison, manual touch-up.
+1. Rebuild: `cargo tauri build --debug` — `build.rs` regenerates the image manifest.
+2. Run the app and check the quest giver lane — the new image should appear in rotation.
 
 ---
 
-## Tips
+## Folder layout
 
-- **Start with high denoising (0.65–0.70)** to get a distinctly female character, then dial back if it strays too far from the reference composition.
-- **The Atari images are grittier** (fewer colors, more dithering) than the Amiga ones. Match accordingly.
-- **Faces are tiny** at 112×88 — don't worry about fine facial detail. Clear silhouette and color blocking matter more.
-- **Generate many, pick few.** Expect to generate 8–16 candidates per character and keep 1–2.
-- **Save your prompts** for each character so you can regenerate if needed.
+```
+ui/images/sd-references/
+├── palette.png                       # 172-color master palette (1×172)
+├── palette-swatch.png                # visual reference grid
+├── process_refs_v2_step1.py          # flatten script
+├── process_refs_v2_step2.py          # pixelate script
+├── lane1/
+│   ├── *.jpeg                        # raw references from web generators
+│   ├── step1_flattened/*.png         # full-res, 16-color
+│   └── step2_pixelated/
+│       ├── *.gif                     # final 112×88 candidates
+│       └── *_4x.png                  # 448×352 previews for review
+├── lane2/ ...
+└── lane3/ ...
+```
+
+`ui/images/sd-references/` is in `.gitignore` — none of the reference or intermediate files are checked in. Only the final touched-up GIFs in `ui/images/lane{1,2,3}/` are committed.
+
+---
+
+## What was tried and abandoned
+
+This section exists so future-you doesn't re-explore dead ends.
+
+1. **ComfyUI / Stable Diffusion img2img.** Local SD setup hit too many friction points (model file naming, dependency mismatches, output quality). Free web-based generators gave comparable or better references with zero setup cost.
+2. **Single-step resize (pixelate before palette swap).** Doing nearest-neighbor downscale first and then palette-mapping produced two persistent problems: "solid" backgrounds fragmented into multiple palette colors (because one random source pixel per cell straddled palette boundaries), and fine details were lost because nearest-neighbor picks one source pixel per cell regardless of what's around it. Splitting into flatten-first / pixelate-second fixed both.
+3. **Centered vertical crop.** Most portraits have the subject's head near the top of the frame, so centered crops cut off the top of the head. Top-anchored crop fixed this without requiring source images to be reframed.
+4. **Median filter radius 3.** Flattened backgrounds well but oversmoothed faces. Radius 2 is the sweet spot.
+5. **Contrast 1.3 + saturation 1.2.** First pass. Slightly too much saturation, slightly too little contrast. Current values (1.4 / 1.1) are the result of one tuning pass.
 
 ---
 
