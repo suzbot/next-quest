@@ -112,6 +112,7 @@ fn main() {
             commands::delete_accomplishment,
             commands::set_last_skipped,
             commands::get_last_skipped,
+            commands::reset_skips,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Quest");

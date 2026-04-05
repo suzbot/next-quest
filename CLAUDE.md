@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** Phase 5B-1 complete. Next: Phase 5B-2 (CLI mode)
+**Current phase:** Phase 5C complete (release pipeline, v0.2.0 released). Next: Phase 5D (polish and features)
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 
@@ -28,6 +28,18 @@ cargo test
 
 Dev mode (hot reload, when we add a frontend dev server):
 cargo tauri dev
+
+Full release pipeline (tests → version bump → build → package → checksums → release notes → GitHub release):
+./relscripts/release-all.sh v0.2.0
+
+Individual release scripts (all in relscripts/):
+- version.sh v0.2.0 — bump version in all files, commit, tag
+- build.sh — release builds of GUI (.app) and CLI (nq) to dist/
+- package.sh v0.2.0 — archive dist/ into .tar.gz
+- checksums.sh — SHA256 of archives
+- release-notes.sh v0.2.0 — preview release notes from conventional commits
+- release.sh v0.2.0 — create GitHub release with assets
+- install.sh — copy dist/ artifacts to /Applications and /usr/local/bin
 
 ## Architecture
 

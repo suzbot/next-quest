@@ -1,82 +1,83 @@
-# Release Step 4: release-notes.sh + release.sh + release-all.sh + README update
+# Phase 5D Item 1: Reset Skips Button
 
-**Goal:** Auto-generate release notes from conventional commits, publish GitHub releases, and tie it all together with a single orchestrator script. Add the unsigned app workaround to the README.
+**Goal:** Add a Settings button that immediately clears all skip state (skip counts + last-skipped ID).
 
-**Design:** [release-pipeline-design.md](release-pipeline-design.md)
+**Requirements:** [phase-5d-group1-requirements.md](phase-5d-group1-requirements.md)
 
 ---
 
-## What We're Building
+## Design Notes
 
-Three scripts and a README update.
+### Backend
 
+Skip state lives in `AppSkipState` (`src-tauri/src/commands.rs` line 49):
+
+```rust
+pub struct SkipStateInner {
+    pub skip_counts: HashMap<String, i32>,
+    pub reset_date: String,
+    pub last_skipped_id: Option<String>,
+}
 ```
-relscripts/
-├── release-notes.sh   # generate markdown from conventional commits
-├── release.sh         # create GitHub release with assets
-└── release-all.sh     # orchestrate the full pipeline
-```
+
+All three pieces are in-memory only. A reset clears `skip_counts` and `last_skipped_id`. `reset_date` is used by `skip_quest()` to know when to auto-clear at midnight — we leave it as today (not reset to empty) so automatic midnight handling continues to work.
+
+### Frontend
+
+Settings tab already has a Reset section with three buttons (`Reset Char`, `Reset Quests`, `Reset History`), all gated by a two-click confirmation via `resetWithConfirm()`. The new button goes in the same section but uses a **direct click** (no confirmation) since skip reset is low-stakes — they'd reset at midnight anyway.
+
+Visual feedback: brief text swap on the button ("Reset" → "Done!" for 1 second) so the user knows it fired.
 
 ---
 
 ## Changes
 
-### 1. release-notes.sh
+### 1. Backend: new `reset_skips` Tauri command
 
-**Usage:** `./relscripts/release-notes.sh v0.2.0 [previous-tag]`
+In `src-tauri/src/commands.rs`:
 
-**Flow:**
-1. If no previous tag argument, auto-detect: `git describe --tags --abbrev=0 v0.2.0^`
-2. If no previous tag exists (initial release), use all commits up to the tag
-3. Parse `git log --format="%s" previous..version` for conventional commits
-4. Categorize:
-   - `feat` → **Features**
-   - `fix` → **Bug Fixes**
-   - `docs` → **Documentation**
-   - everything else → **Other Changes**
-5. Parse optional scope: `feat(cli): message` → **cli:** message
-6. Output markdown to stdout with non-empty sections only
-7. Append GitHub compare link: `https://github.com/{owner}/{repo}/compare/{prev}...{version}`
+```rust
+#[tauri::command]
+pub fn reset_skips(skip_state: State<AppSkipState>) -> Result<(), String> {
+    let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    skips.skip_counts.clear();
+    skips.last_skipped_id = None;
+    Ok(())
+}
+```
 
-### 2. release.sh
+Register in `main.rs` `invoke_handler!` list alongside other skip commands.
 
-**Usage:** `./relscripts/release.sh v0.2.0`
+### 2. Frontend: Settings button
 
-**Flow:**
-1. Check `gh` CLI is installed (error with install instructions if not)
-2. Validate tag exists locally
-3. Check tag is pushed to remote; prompt to push if not
-4. Generate release notes via `release-notes.sh`
-5. Create GitHub release: `gh release create v0.2.0 --title "Release v0.2.0" --notes "$NOTES" dist/archives/*.tar.gz dist/archives/checksums.txt`
-6. Print release URL
+Add to the Reset section in `ui/index.html`:
 
-### 3. release-all.sh
+```html
+<button onclick="resetSkips(this)">Reset Skips</button>
+```
 
-**Usage:** `./relscripts/release-all.sh v0.2.0`
+JS handler:
 
-**Flow:**
-1. Validate version argument
-2. `cargo test` — abort on failure
-3. `./relscripts/version.sh $VERSION`
-4. `./relscripts/build.sh`
-5. `./relscripts/package.sh $VERSION`
-6. `./relscripts/checksums.sh`
-7. `./relscripts/release-notes.sh $VERSION` — display preview
-8. **Prompt:** "Proceed with release? (y/n)"
-9. `git push && git push origin $VERSION`
-10. `./relscripts/release.sh $VERSION`
-11. Print completion banner
+```js
+async function resetSkips(btn) {
+  await invoke("reset_skips");
+  // Refresh the quest giver to reflect cleared skip state
+  await loadNextQuest();
+  // Brief visual confirmation
+  const original = btn.textContent;
+  btn.textContent = "Done!";
+  setTimeout(() => { btn.textContent = original; }, 1000);
+}
+```
 
-### 4. README update
-
-Add a "First Launch" note under the Build and Run section:
-
-> **First launch (macOS):** The app isn't code-signed, so macOS will show a warning that says "Apple could not verify 'Next Quest' is free of malware." If you still want to run it, right-click the app → Open → click Open in the dialog. You only need to do this once.
+`loadNextQuest()` is the existing function that re-fetches and re-scores quests in all three lanes. Calling it after reset ensures the user immediately sees the effect.
 
 ---
 
 ## Verification
 
-1. **release-notes.sh:** `./relscripts/release-notes.sh v0.2.0` — preview release notes from existing commits
-2. **release-all.sh:** run the full pipeline, approve at the prompt, verify release appears on GitHub with archive, checksums, and notes
-3. **README:** first-launch note is present
+1. Skip a trivial quest on the Castle Duties lane a few times (click "Something Else" repeatedly)
+2. Go to Settings → click "Reset Skips"
+3. Button briefly shows "Done!"
+4. Return to Next Quest tab — the previously skipped quest is back in rotation, scoring reflects zero skips
+5. "Last skipped" exclusion is also cleared (verified by the same quest being eligible again in the next pick)

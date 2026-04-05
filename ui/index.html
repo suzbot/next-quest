@@ -901,6 +901,7 @@
 
     <h2>Reset</h2>
     <div class="reset-section" style="margin-top: 8px; border-top: none; padding-top: 0;">
+      <button onclick="resetSkips(this)">Reset Skips</button>
       <button onclick="resetWithConfirm(this, 'reset_character', loadCharacterView)">Reset Char</button>
       <button onclick="resetWithConfirm(this, 'reset_quests', loadAll)">Reset Quests</button>
       <button onclick="resetWithConfirm(this, 'reset_completions', loadAll)">Reset History</button>
@@ -3900,6 +3901,15 @@
       const minutes = parseInt(input.value, 10);
       if (!minutes || minutes < 1) return;
       await invoke("set_cta_interval", { minutes });
+    }
+
+    async function resetSkips(btn) {
+      await invoke("reset_skips");
+      // Refresh the quest giver so the effect is immediately visible
+      await renderQuestGiver();
+      const original = btn.textContent;
+      btn.textContent = "Done!";
+      setTimeout(() => { btn.textContent = original; }, 1000);
     }
 
     function resetWithConfirm(btn, command, callback) {

@@ -192,7 +192,9 @@ Gently nudges quests that feed underleveled attributes or skills. If a quest is 
 
 #### Skip Penalty
 
-Each "Something Else" or "Run" adds 0.5 to the penalty. Resets at local midnight.
+Each "Something Else" or "Run" adds 0.5 to the penalty. Resets at local midnight, or manually via Settings → Reset Skips.
+
+Note: skips also divide the [Importance Boost](#importance-boost) (1 skip halves it, 2 skips cut it to a third). This is proportional to importance on purpose — a flat 0.5 penalty wouldn't be enough to move a !!!!! quest, making high-importance quests functionally unskippable. Dividing instead lets the user skip anything when they need to, while still weighting important things heavily on the first offer.
 
 ## XP and Progression
 

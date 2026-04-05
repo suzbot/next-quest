@@ -484,6 +484,14 @@ pub fn get_last_skipped(
     Ok(skips.last_skipped_id.clone())
 }
 
+#[tauri::command]
+pub fn reset_skips(skip_state: State<AppSkipState>) -> Result<(), String> {
+    let mut skips = skip_state.0.lock().map_err(|e| e.to_string())?;
+    skips.skip_counts.clear();
+    skips.last_skipped_id = None;
+    Ok(())
+}
+
 // --- Timer ---
 
 #[tauri::command]
