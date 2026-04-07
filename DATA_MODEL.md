@@ -258,8 +258,8 @@ Fibonacci-style progression with different seeds per scale:
 | Scale | Seed (level 1 cost, level 2 cost) |
 |---|---|
 | Character | 300, 500 |
-| Attribute | 60, 100 |
-| Skill | 30, 50 |
+| Attribute | 300, 500 |
+| Skill | 150, 300 |
 
 Each subsequent level costs the sum of the two prior levels (e.g., Character: 300, 500, 800, 1300, 2100...).
 

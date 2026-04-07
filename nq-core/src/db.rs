@@ -3206,8 +3206,8 @@ fn query_single_quest(conn: &Connection, quest_id: &str) -> Result<Quest, String
 pub fn level_from_xp(xp: i64, scale: &LevelScale) -> LevelInfo {
     let (seed1, seed2) = match scale {
         LevelScale::Character => (300i64, 500i64),
-        LevelScale::Attribute => (150, 250),
-        LevelScale::Skill => (75, 125),
+        LevelScale::Attribute => (300, 500),
+        LevelScale::Skill => (150, 300),
     };
 
     let mut level = 1;
@@ -4424,36 +4424,36 @@ mod tests {
 
     #[test]
     fn level_from_xp_attribute_scale() {
-        // Attribute seeds: 150, 250 (1/2 character)
+        // Attribute seeds: 300, 500
         let info = level_from_xp(0, &LevelScale::Attribute);
         assert_eq!(info.level, 1);
-        assert_eq!(info.xp_for_current_level, 150);
+        assert_eq!(info.xp_for_current_level, 300);
 
-        let info = level_from_xp(150, &LevelScale::Attribute);
+        let info = level_from_xp(300, &LevelScale::Attribute);
         assert_eq!(info.level, 2);
-        assert_eq!(info.xp_for_current_level, 250);
+        assert_eq!(info.xp_for_current_level, 500);
 
-        // Level 3 at 150+250=400
-        let info = level_from_xp(400, &LevelScale::Attribute);
+        // Level 3 at 300+500=800
+        let info = level_from_xp(800, &LevelScale::Attribute);
         assert_eq!(info.level, 3);
-        assert_eq!(info.xp_for_current_level, 400); // 150+250
+        assert_eq!(info.xp_for_current_level, 800); // 300+500
     }
 
     #[test]
     fn level_from_xp_skill_scale() {
-        // Skill seeds: 75, 125
+        // Skill seeds: 150, 300
         let info = level_from_xp(0, &LevelScale::Skill);
         assert_eq!(info.level, 1);
-        assert_eq!(info.xp_for_current_level, 75);
+        assert_eq!(info.xp_for_current_level, 150);
 
-        let info = level_from_xp(75, &LevelScale::Skill);
+        let info = level_from_xp(150, &LevelScale::Skill);
         assert_eq!(info.level, 2);
-        assert_eq!(info.xp_for_current_level, 125);
+        assert_eq!(info.xp_for_current_level, 300);
 
-        // Level 3 at 75+125=200
-        let info = level_from_xp(200, &LevelScale::Skill);
+        // Level 3 at 150+300=450
+        let info = level_from_xp(450, &LevelScale::Skill);
         assert_eq!(info.level, 3);
-        assert_eq!(info.xp_for_current_level, 200); // 75+125
+        assert_eq!(info.xp_for_current_level, 450); // 150+300
     }
 
     // --- Difficulty ---
@@ -4694,13 +4694,13 @@ mod tests {
         let q = test_quest(&conn, "Grind");
         let skills = get_skills(&conn).unwrap();
         // Cooking (skill[0]) maps to Health (attr[0])
-        // Skill level 2 at 75 XP. Award 75 to trigger level-up.
+        // Skill level 2 at 150 XP. Award 150 to trigger level-up.
         set_quest_links(&conn, q.id.clone(), vec![skills[0].id.clone()], vec![]).unwrap();
 
-        award_xp(&conn, &q.id, 75).unwrap();
+        award_xp(&conn, &q.id, 150).unwrap();
 
         let updated_skills = get_skills(&conn).unwrap();
-        assert_eq!(updated_skills[0].xp, 75);
+        assert_eq!(updated_skills[0].xp, 150);
         assert_eq!(updated_skills[0].level, 2);
 
         // Health should have received attribute bump = Moderate one-off base XP

@@ -297,11 +297,11 @@ When all steps in a run are complete, a bonus of 20% of the total baseline XP ac
 
 ### Attribute Levels
 
-Same curve at half scale (seeds: 150, 250). Level 2 at 150 XP, level 5 at 1,450 XP, level 10 at 18,600 XP.
+Same curve, same seeds as character (300, 500). Level 2 at 300 XP, level 5 at 2,900 XP, level 10 at 37,200 XP.
 
 ### Skill Levels
 
-Same curve at 1/8 scale (seeds: 37, 62). Level 2 at 37 XP, level 5 at 359 XP, level 10 at 4,606 XP.
+Seeds: 150, 300. Level 2 at 150 XP, level 5 at 1,650 XP, level 10 at 21,300 XP.
 
 ### Skill Level-Up Bonus
 
