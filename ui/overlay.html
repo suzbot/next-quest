@@ -276,11 +276,27 @@
     let currentResult = null; // ScoredQuest from backend
     let currentMonster = null;
     let currentEncounter = null;
+    let currentLane = null; // Lane the current poll landed on; cycling stays in this lane
+
+    // Walk Lane 1 → Lane 2 → Lane 3, returning the first lane that has a quest.
+    async function fetchQuestWithFallback(excludeQuestId) {
+      const lanes = ["castle_duties", "adventures", "royal_quests"];
+      for (const lane of lanes) {
+        const result = await invoke("get_next_quest", {
+          excludeQuestId: excludeQuestId ?? undefined,
+          lane,
+        });
+        if (result) return { result, lane };
+      }
+      return { result: null, lane: null };
+    }
 
     async function loadQuest() {
       // Exclude the quest currently offered by the quest giver
       const skippedId = await invoke("get_last_skipped");
-      currentResult = await invoke("get_next_quest", { excludeQuestId: skippedId, lane: "castle_duties" });
+      const { result, lane } = await fetchQuestWithFallback(skippedId);
+      currentResult = result;
+      currentLane = lane;
       currentMonster = randomFromExcluding(monsterImages, currentMonster);
       currentEncounter = randomFromExcluding(encounterLines, currentEncounter);
       render();
@@ -387,9 +403,15 @@
         const questId = currentResult.quest.id;
         await invoke("skip_quest", { questId });
         await invoke("set_last_skipped", { questId });
-        currentResult = await invoke("get_next_quest", { excludeQuestId: questId, lane: "castle_duties" });
+        // Stay in the current lane — no fallback re-walk mid-cycle
+        currentResult = await invoke("get_next_quest", { excludeQuestId: questId, lane: currentLane });
+      } else if (currentLane) {
+        currentResult = await invoke("get_next_quest", { lane: currentLane });
       } else {
-        currentResult = await invoke("get_next_quest", { lane: "castle_duties" });
+        // No lane context (initial empty state) — re-walk fallback
+        const { result, lane } = await fetchQuestWithFallback(null);
+        currentResult = result;
+        currentLane = lane;
       }
       currentMonster = randomFromExcluding(monsterImages, currentMonster);
       currentEncounter = randomFromExcluding(encounterLines, currentEncounter);

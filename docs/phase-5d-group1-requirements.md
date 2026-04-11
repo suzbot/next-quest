@@ -1,6 +1,6 @@
 # Phase 5D Group 1 — Requirements
 
-Three small-to-medium polish items to be implemented in order: reset skips button, show/hide lanes, then auto-accomplishment for one-off sagas.
+Small-to-medium polish items. Items 1 (reset skips button) and 2 (show/hide lanes) have been implemented. Items 3 (auto-accomplishment for one-off sagas) and 4 (overlay lane fallback) are next.
 
 ---
 
@@ -134,3 +134,42 @@ Accomplishments are permanent records of completed campaigns, displayed on the C
 - **No XP changes.** The saga completion bonus already fires separately and is unchanged.
 - **No new display affordances.** Just one more row in the existing Accomplishments list.
 - **Recurring sagas not affected.** They continue to work exactly as today.
+
+---
+
+## Item 4: Overlay Lane Fallback
+
+### Context
+
+The Encounters overlay (Call to Adventure) currently surfaces Lane 1 (Castle Duties) quests — daily-recurring things like pills, meals, exercise. When Lane 1 has nothing to offer (nothing due, or everything due has been "Not Today"'d), the overlay shows nothing. On those days, the overlay silently stops being useful until tomorrow.
+
+### Goal
+
+When Lane 1 is empty, the overlay falls through to Lane 2 (Adventures), then to Lane 3 (Royal Quests). The overlay remains themed as monster encounters regardless of which lane the quest came from.
+
+### Behavior
+
+**Trigger — each overlay poll evaluates lanes in order:** Lane 1 → Lane 2 → Lane 3.
+- The overlay uses the first lane that has a quest to offer
+- "Nothing to offer" = the lane's quest giver currently has zero quests to display (no due quests, or all due quests have been "Not Today"'d for the day)
+- If all three lanes are empty, the overlay shows nothing (same as today)
+
+**Per-poll re-evaluation:**
+- Each overlay poll re-runs the Lane 1 → Lane 2 → Lane 3 evaluation from scratch
+- Fallback state does not persist between polls. If a new Lane 1 quest becomes due between polls, the next poll picks it up and stops falling through.
+
+**Something Else / Run in the overlay:**
+- Cycles within the lane that was selected for the current poll
+- Does not re-evaluate fallback mid-cycle; the next natural poll handles that
+
+**Visuals:**
+- The overlay is always themed as monster encounters, regardless of which lane the quest came from
+- No lane-specific art or flavor text in the overlay
+- No visual indicator in the overlay of which lane produced the quest
+
+### Non-goals
+
+- **No change to the main app's Next Quest tab.** It continues to show all three lanes stacked vertically with independent quest givers. Fallback is overlay-only.
+- **No Lane 3 ceiling.** Royal Quests can be offered by the overlay as a fallback; there's no rule limiting how many appear per day.
+- **No change to scoring within a lane.** Each lane still scores and selects quests exactly as today. Fallback only changes which lane's selection the overlay consumes.
+- **No change to Quest Now / timer behavior.** Starting a quest from the overlay works the same regardless of which lane the quest came from.

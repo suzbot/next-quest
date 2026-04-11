@@ -311,7 +311,7 @@ Key design decisions:
 
 1. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
 
-2. **Show/hide lanes** — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today. Needs UI discussion.
+2. ~~**Show/hide lanes**~~ ✅ — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today.
 
 3. ~~**Reset skips button**~~ ✅ — A button on Settings that clears all skip counts and the last-skipped ID immediately.
 

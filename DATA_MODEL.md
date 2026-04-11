@@ -326,7 +326,7 @@ score = overdue_ratio + importance_boost + list_order_bonus + membership_bonus +
 - "Something Else" / "Run": records a skip, then re-scores. The just-skipped quest is excluded from the next pick (unless it's the only quest).
 - Exhaustion fallback: if all scores ≤ 0, returns the least-negative.
 - Skip counts are in-memory, reset at local midnight or app restart.
-- The Encounters overlay shows only Lane 1 (daily) quests and syncs with the quest giver. Both exclude the last-skipped quest so they show the same quest. The last-skipped ID is stored in skip state, set on "Something Else" / "Run", cleared on completion.
+- The Encounters overlay prefers Lane 1 (daily) quests and syncs with the quest giver. If Lane 1 has nothing to offer on a given poll, the overlay falls through to Lane 2, then Lane 3. Fallback is re-evaluated on every poll, so a newly-due Lane 1 quest is picked up on the next poll. Within a single poll, Run / "Something Else" cycling stays in the selected lane. The overlay excludes the last-skipped quest so it syncs with the quest giver. The last-skipped ID is stored in skip state, set on "Something Else" / "Run", cleared on completion.
 
 ## Planned Entities (Phase 2+)
 
