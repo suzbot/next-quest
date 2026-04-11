@@ -308,14 +308,12 @@ Daily-recurring sagas (cycle_days = 1) go to Castle Duties regardless of step di
 1. All active quests matching the lane's cadence/difficulty rules + active saga steps whose saga matches the lane
 2. Hard-filter: time-of-day bitmask matches current local hour (Morning 4am–noon, Afternoon noon–5pm, Evening 5pm–9pm, Night 9pm–4am)
 3. Hard-filter: days-of-week bitmask includes today
-4. Split into **due** and **not-due** pools; due always preferred. Saga steps go in the due pool when present (they only appear when their saga has an active run — either the saga is due, or the user started a new run early).
+4. Only **due** quests are eligible. Saga steps are included when their saga has an active run (either the saga is due, or the user started a new run early). If no quests are due in a lane, the lane shows its empty state — the quest giver never surfaces a not-due quest.
 
 ### Scoring
 ```
 score = overdue_ratio + importance_boost + list_order_bonus + membership_bonus + balance_bonus - skip_penalty
 ```
-
-All factors apply to both due and not-due pools (not-due uses normalized days_since instead of overdue_ratio).
 
 - **Overdue ratio**: `(days_overdue + cycle) / cycle` for recurring, `(days + 9) / 9` for one-off. Saga steps use their saga's cycle_days (one-off sagas fall back to 9).
 - **Importance boost**: `importance × 30.0 / (1 + skips)`. Importance (0–5) is the dominant scoring signal. Each level ≈ 30 days of daily overdue. Skips diminish importance gracefully rather than subtracting — after many skips, approaches a 0! quest.
@@ -328,7 +326,7 @@ All factors apply to both due and not-due pools (not-due uses normalized days_si
 - "Something Else" / "Run": records a skip, then re-scores. The just-skipped quest is excluded from the next pick (unless it's the only quest).
 - Exhaustion fallback: if all scores ≤ 0, returns the least-negative.
 - Skip counts are in-memory, reset at local midnight or app restart.
-- The Encounters overlay shows only Lane 1 (trivial) quests and syncs with the quest giver. Both exclude the last-skipped quest so they show the same quest. The last-skipped ID is stored in skip state, set on "Something Else" / "Run", cleared on completion.
+- The Encounters overlay shows only Lane 1 (daily) quests and syncs with the quest giver. Both exclude the last-skipped quest so they show the same quest. The last-skipped ID is stored in skip state, set on "Something Else" / "Run", cleared on completion.
 
 ## Planned Entities (Phase 2+)
 

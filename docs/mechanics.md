@@ -93,7 +93,7 @@ Each lane scores and selects independently. "Something Else" skips within a sing
 
 The quest giver scores all eligible quests in a lane and picks the highest. Eligible means: active, matches the lane's difficulty, matches the current time of day and day of week, and not dismissed for today.
 
-Quests are split into **due** (cycle elapsed or one-off never completed) and **not-due** pools. Due quests are always preferred. Not-due quests only appear if there are no due quests or all due quests have been skipped to zero.
+Only **due** quests (cycle elapsed or one-off never completed) are eligible. If no quests are due in a lane, the lane shows its empty state — the quest giver never surfaces a not-due quest.
 
 See [Quest Scoring](#quest-scoring) for details on the math.
 

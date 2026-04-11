@@ -255,9 +255,7 @@ pub struct ScoredQuest {
     pub list_order_bonus: f64,
     pub membership_bonus: f64,
     pub balance_bonus: f64,
-    pub pool: String,
     pub due_count: usize,
-    pub not_due_count: usize,
     pub saga_name: Option<String>,
 }
 
@@ -2230,40 +2228,26 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
         .collect();
 
     let due: Vec<&Quest> = eligible.iter().filter(|q| q.is_due).copied().collect();
-    let not_due: Vec<&Quest> = eligible.iter().filter(|q| !q.is_due).copied().collect();
 
-    let total_due = due.len() + eligible_saga.len();
-    let due_count = total_due;
-    let not_due_count = not_due.len();
+    let due_count = due.len() + eligible_saga.len();
 
     let mut results: Vec<ScoredQuest> = Vec::new();
 
-    if !due.is_empty() || !eligible_saga.is_empty() {
-        for (score, overdue, importance, skip, order, membership, balance, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map) {
-            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, pool: "due".to_string(), due_count, not_due_count, saga_name: None });
-        }
-        for (quest, saga_name, activated_at, saga_cycle_days, _saga_lane, saga_sort_order) in &eligible_saga {
-            let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
-            let days_since = (today - activated_days) as f64;
-            let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
-            let overdue_ratio = (days_since + saga_cycle) / saga_cycle;
-            let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
-            let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
-            let skip_penalty = skips * 0.5;
-            let list_order_bonus = *saga_sort_order as f64 / global_max_sort;
-            let membership_bonus = if quest.saga_id.as_ref().map_or(false, |sid| campaign_saga_ids.contains(sid)) { 1.0 } else { 0.0 };
-            let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
-            results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus: 0.0, pool: "due".to_string(), due_count, not_due_count, saga_name: Some(saga_name.clone()) });
-        }
+    for (score, overdue, importance, skip, order, membership, balance, quest) in score_quests_due(&due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map) {
+        results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, due_count, saga_name: None });
     }
-
-    let all_skipped = !results.is_empty() && results.iter().all(|s| s.score <= 0.0);
-    if results.is_empty() || all_skipped {
-        let not_due_scored = score_quests_not_due(&not_due, today, skip_counts, global_max_sort, &campaign_quest_ids, avg_attr_level, avg_skill_level, &attr_level_map, &skill_level_map);
-        let pool = if due_count == 0 { "not_due" } else { "due+not_due" };
-        for (score, overdue, importance, skip, order, membership, balance, quest) in not_due_scored {
-            results.push(ScoredQuest { quest, score, overdue_ratio: overdue, importance_boost: importance, skip_penalty: skip, list_order_bonus: order, membership_bonus: membership, balance_bonus: balance, pool: pool.to_string(), due_count, not_due_count, saga_name: None });
-        }
+    for (quest, saga_name, activated_at, saga_cycle_days, _saga_lane, saga_sort_order) in &eligible_saga {
+        let activated_days = utc_iso_to_local_days(activated_at).unwrap_or(today);
+        let days_since = (today - activated_days) as f64;
+        let saga_cycle = saga_cycle_days.unwrap_or(9) as f64;
+        let overdue_ratio = (days_since + saga_cycle) / saga_cycle;
+        let skips = *skip_counts.get(&quest.id).unwrap_or(&0) as f64;
+        let importance_boost = quest.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
+        let skip_penalty = skips * 0.5;
+        let list_order_bonus = *saga_sort_order as f64 / global_max_sort;
+        let membership_bonus = if quest.saga_id.as_ref().map_or(false, |sid| campaign_saga_ids.contains(sid)) { 1.0 } else { 0.0 };
+        let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus;
+        results.push(ScoredQuest { quest: (*quest).clone(), score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus: 0.0, due_count, saga_name: Some(saga_name.clone()) });
     }
 
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
@@ -2299,25 +2283,6 @@ fn score_quests_due(quests: &[&Quest], today: i64, skip_counts: &std::collection
         let balance_bonus = compute_balance_bonus(q, avg_attr_level, avg_skill_level, attr_level_map, skill_level_map);
         let score = overdue_ratio + importance_boost - skip_penalty + list_order_bonus + membership_bonus + balance_bonus;
         (score, overdue_ratio, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus, (*q).clone())
-    }).collect()
-}
-
-fn score_quests_not_due(quests: &[&Quest], today: i64, skip_counts: &std::collections::HashMap<String, i32>, global_max_sort: f64, campaign_quest_ids: &std::collections::HashSet<String>, avg_attr_level: f64, avg_skill_level: f64, attr_level_map: &std::collections::HashMap<String, i32>, skill_level_map: &std::collections::HashMap<String, i32>) -> Vec<(f64, f64, f64, f64, f64, f64, f64, Quest)> {
-    quests.iter().map(|q| {
-        let days_since = match q.last_completed.as_deref().and_then(utc_iso_to_local_days) {
-            Some(d) => (today - d) as f64,
-            None => 0.0, // never completed → treat as just done (maximally not-due)
-        };
-        let cycle = q.cycle_days.unwrap_or(1) as f64;
-        let days_until_due = days_since - cycle; // negative when not due
-        let skips = *skip_counts.get(&q.id).unwrap_or(&0) as f64;
-        let importance_boost = q.importance as f64 * IMPORTANCE_WEIGHT / (1.0 + skips);
-        let skip_penalty = skips * 0.5;
-        let list_order_bonus = q.sort_order as f64 / global_max_sort;
-        let membership_bonus = if campaign_quest_ids.contains(&q.id) { 1.0 } else { 0.0 };
-        let balance_bonus = compute_balance_bonus(q, avg_attr_level, avg_skill_level, attr_level_map, skill_level_map);
-        let score = days_until_due + importance_boost - skip_penalty + list_order_bonus + membership_bonus + balance_bonus;
-        (score, days_until_due, importance_boost, skip_penalty, list_order_bonus, membership_bonus, balance_bonus, (*q).clone())
     }).collect()
 }
 
@@ -5011,10 +4976,9 @@ mod tests {
         test_quest(&conn, "Second");
 
         let next = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
-        // Both never-completed daily quests created at same time — scores should be equal,
+        // Both never-completed quests created at same time — scores should be equal,
         // so list_order_bonus breaks tie (higher sort_order = lower bonus = sorted later)
         assert!(next.score > 0.0);
-        assert_eq!(next.pool, "due");
     }
 
     #[test]
@@ -5047,18 +5011,15 @@ mod tests {
     }
 
     #[test]
-    fn get_next_quest_none_due_falls_back() {
+    fn get_next_quest_none_due_returns_none() {
         let conn = test_db();
         // Add a quest with a long cycle so it won't be due after completion
         let q = test_quest_with(&conn, "Long cycle", |q| q.cycle_days = Some(999));
         complete_quest(&conn, q.id.clone()).unwrap();
 
-        // Not due, but should fall back to not_due pool
+        // Not due — quest giver returns None (no fallback to not-due pool)
         let next = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap();
-        assert!(next.is_some());
-        let scored = next.unwrap();
-        assert_eq!(scored.quest.id, q.id);
-        assert_eq!(scored.pool, "not_due");
+        assert!(next.is_none());
     }
 
     #[test]

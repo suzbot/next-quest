@@ -315,23 +315,25 @@ Key design decisions:
 
 3. ~~**Reset skips button**~~ ✅ — A button on Settings that clears all skip counts and the last-skipped ID immediately.
 
+4. **Overlay lane fallback** — When Lane 1 has nothing to offer, the Encounters overlay can fall back to Lane 2, then Lane 3, instead of showing nothing. Keeps the overlay useful on days when daily quests are all done.
+
 ### Group 2 — Bigger features
 
-4. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+5. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
 
-5. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
+6. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
 
-6. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
+7. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
 
-7. _(Consideration)_ **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+8. _(Consideration)_ **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
 
 ### Group 3 — Later
 
-8. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
+9. **Time-limited campaigns** — Campaigns where the first and last criteria must be completed within a timeframe (e.g., "Complete N quests in 1 month").
 
-9. **Weather-aware scoring** — Integrate current weather data to influence quest selection. Boost outdoor-tagged quests on nice days, boost indoor quests during rain, suppress outdoor quests in extreme heat/cold. Uses a free weather API with the user's location. Needs design discussion around how much influence weather should have vs. user-set priorities.
+10. **Weather-aware scoring** — Integrate current weather data to influence quest selection. Boost outdoor-tagged quests on nice days, boost indoor quests during rain, suppress outdoor quests in extreme heat/cold. Uses a free weather API with the user's location. Needs design discussion around how much influence weather should have vs. user-set priorities.
 
-10. **Configurable lane difficulty assignment** — Settings to control which difficulty tiers go in which lane. Currently hardcoded (Trivial → Castle Duties, Easy → Adventures, Moderate+Challenging+Epic → Royal Quests). As capacity grows, the user should be able to reassign.
+11. **Configurable lane difficulty assignment** — Settings to control which difficulty tiers go in which lane. Currently hardcoded (Trivial → Castle Duties, Easy → Adventures, Moderate+Challenging+Epic → Royal Quests). As capacity grows, the user should be able to reassign.
 
 ## Phase 6: "Everything Else"
 
