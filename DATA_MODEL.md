@@ -294,18 +294,18 @@ The quest giver picks quests using a scoring system with hard filters and soft r
 
 ### Lanes
 
-The quest giver has three lanes, each filtering by difficulty:
+The quest giver has three lanes, grouped by cadence and difficulty:
 
-| Lane | Name | Difficulties |
+| Lane | Name | Contains |
 |---|---|---|
-| 1 | Castle Duties | Trivial |
-| 2 | Adventures | Easy |
-| 3 | Royal Quests | Moderate, Challenging, Epic |
+| 1 | Castle Duties | Daily-recurring quests (cycle_days = 1), any difficulty |
+| 2 | Adventures | Non-daily Trivial or Easy quests (including one-offs) |
+| 3 | Royal Quests | Non-daily Moderate, Challenging, or Epic quests (including one-offs) |
 
-Saga steps appear in the lane matching their saga's hardest step difficulty. Each lane has its own quest giver images and flavor text.
+Daily-recurring sagas (cycle_days = 1) go to Castle Duties regardless of step difficulty. Non-daily sagas use their hardest step's difficulty to pick Lane 2 vs Lane 3. Each lane has its own quest giver images and flavor text.
 
 ### Candidate Pool (per lane)
-1. All active quests matching the lane's difficulty filter + active saga steps whose saga matches the lane
+1. All active quests matching the lane's cadence/difficulty rules + active saga steps whose saga matches the lane
 2. Hard-filter: time-of-day bitmask matches current local hour (Morning 4am–noon, Afternoon noon–5pm, Evening 5pm–9pm, Night 9pm–4am)
 3. Hard-filter: days-of-week bitmask includes today
 4. Split into **due** and **not-due** pools; due always preferred. Saga steps go in the due pool when present (they only appear when their saga has an active run — either the saga is due, or the user started a new run early).

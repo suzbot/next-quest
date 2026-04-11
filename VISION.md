@@ -251,21 +251,21 @@ This can later be built on to do things like more complex and dynamic rewards, h
 
 ## Phase 3: "The Three Quest Givers"
 
-The quest giver becomes three quest givers, each with their own personality, images, and flavor text. Quests are separated into lanes by difficulty, so hard things don't compete with trivials. Each lane works identically to the current quest giver (same scoring, same UI pattern).
+The quest giver becomes three quest givers, each with their own personality, images, and flavor text. Quests are separated into lanes by cadence and difficulty, so occasional big things don't compete with the daily routine. Each lane works identically to the current quest giver (same scoring, same UI pattern).
 
-**Lane 1 — Castle Duties** (Captain of the Guard): Trivial quests. The daily routine — pills, meals, cat care. Always showing, always reliable.
+**Lane 1 — Castle Duties** (Captain of the Guard): Daily-recurring quests, any difficulty. The stuff you do every day — pills, meals, cat care, exercise, whatever's on your daily rhythm regardless of effort. Always showing, always reliable.
 
-**Lane 2 — Adventures** (The Adventurer's Guild): Easy and Fair quests. The stretch goals — errands, cleaning projects, exercise. Tackle these when you're warmed up.
+**Lane 2 — Adventures** (The Adventurer's Guild): Non-daily Trivial or Easy quests. The stretch goals and occasional errands — weekly chores, one-off cleanups, short projects. Tackle these when you're warmed up.
 
-**Lane 3 — Royal Quests** (The Royal Court): Hard and Epic quests. The big challenges — taxes, doctor appointments, major projects. Visible all day so you can psych up. Do at most one per day.
+**Lane 3 — Royal Quests** (The Royal Court): Non-daily Fair, Hard, or Epic quests. The big challenges — taxes, doctor appointments, major projects. Visible all day so you can psych up. Do at most one per day.
 
 Key design decisions:
 
 - All three lanes stacked vertically on the Next Quest tab, Castle Duties on top
 - Each lane has its own quest giver images (`ui/images/lane1/`, `lane2/`, `lane3/`) and flavor text (`ui/text/lane1/`, `lane2/`, `lane3/`) for easy reskinning
 - Same scoring algorithm within each lane — importance, overdue, list order, etc.
-- Saga steps appear in whichever lane matches the saga's difficulty (inferred from hardest step)
-- CTA overlay only surfaces Lane 1 (trivial) quests — no surprise ambush with hard things
+- Daily-recurring sagas go to Castle Duties regardless of step difficulty; non-daily sagas use the hardest step to pick Lane 2 vs Lane 3
+- CTA overlay surfaces Lane 1 (daily) quests — including high-importance daily hard things that need to happen today
 - Quest Now / timer works from any lane (locks all three)
 
 ## Phase 4: "Stats and Feedback"

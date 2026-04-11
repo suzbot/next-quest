@@ -87,11 +87,12 @@ pub enum Lane {
 }
 
 impl Lane {
-    fn includes_difficulty(&self, d: &Difficulty) -> bool {
+    fn includes(&self, difficulty: &Difficulty, cycle_days: Option<i32>) -> bool {
+        let is_daily = cycle_days == Some(1);
         match self {
-            Lane::CastleDuties => matches!(d, Difficulty::Trivial),
-            Lane::Adventures => matches!(d, Difficulty::Easy),
-            Lane::RoyalQuests => matches!(d, Difficulty::Moderate | Difficulty::Challenging | Difficulty::Epic),
+            Lane::CastleDuties => is_daily,
+            Lane::Adventures => !is_daily && matches!(difficulty, Difficulty::Trivial | Difficulty::Easy),
+            Lane::RoyalQuests => !is_daily && matches!(difficulty, Difficulty::Moderate | Difficulty::Challenging | Difficulty::Epic),
         }
     }
 }
@@ -106,11 +107,11 @@ fn difficulty_rank(d: &Difficulty) -> u8 {
     }
 }
 
+// Used for non-daily sagas — Castle Duties is decided by cadence, not rank.
 fn lane_for_difficulty_rank(rank: u8) -> Lane {
     match rank {
         3 | 4 | 5 => Lane::RoyalQuests,
-        2 => Lane::Adventures,
-        _ => Lane::CastleDuties,
+        _ => Lane::Adventures, // 1 (trivial) or 2 (easy)
     }
 }
 
@@ -1508,9 +1509,14 @@ pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, St
         let steps = get_saga_steps(conn, &saga.id)?;
         if steps.is_empty() { continue; }
 
-        // Infer saga lane from hardest step
-        let max_rank = steps.iter().map(|s| difficulty_rank(&s.difficulty)).max().unwrap_or(1);
-        let saga_lane = lane_for_difficulty_rank(max_rank);
+        // Daily-recurring sagas go to Castle Duties regardless of step difficulty;
+        // otherwise infer from hardest step.
+        let saga_lane = if saga.cycle_days == Some(1) {
+            Lane::CastleDuties
+        } else {
+            let max_rank = steps.iter().map(|s| difficulty_rank(&s.difficulty)).max().unwrap_or(1);
+            lane_for_difficulty_rank(max_rank)
+        };
 
         // Compute current run start
         let run_start_str = saga.last_run_completed_at.as_deref()
@@ -2209,7 +2215,7 @@ pub fn get_quest_scores(conn: &Connection, skip_counts: &std::collections::HashM
     let eligible: Vec<&Quest> = quests.iter()
         .filter(|q| q.active)
         .filter(|q| !dismissed.contains(&q.id))
-        .filter(|q| lane.includes_difficulty(&q.difficulty))
+        .filter(|q| lane.includes(&q.difficulty, q.cycle_days))
         .filter(|q| matches_time_of_day(q.time_of_day, hour))
         .filter(|q| matches_day_of_week(q.days_of_week, weekday))
         .collect();
@@ -3935,15 +3941,18 @@ mod tests {
         init_db_memory()
     }
 
+    // Default test quest: easy weekly (cycle=7) so it naturally lands in Adventures
+    // lane under current rules. Tests that need daily or other cycles use test_quest_with.
     fn test_quest(conn: &Connection, title: &str) -> Quest {
         add_quest(conn, NewQuest {
             title: title.to_string(),
+            cycle_days: Some(7),
             ..NewQuest::default()
         }).unwrap()
     }
 
     fn test_quest_with(conn: &Connection, title: &str, f: impl FnOnce(&mut NewQuest)) -> Quest {
-        let mut q = NewQuest { title: title.to_string(), ..NewQuest::default() };
+        let mut q = NewQuest { title: title.to_string(), cycle_days: Some(7), ..NewQuest::default() };
         f(&mut q);
         add_quest(conn, q).unwrap()
     }
@@ -3965,7 +3974,7 @@ mod tests {
         let conn = test_db();
         let q = test_quest(&conn, "Shower");
         assert_eq!(q.quest_type, QuestType::Recurring);
-        assert_eq!(q.cycle_days, Some(1));
+        assert_eq!(q.cycle_days, Some(7));
         assert!(q.active);
         assert!(q.is_due);
     }
@@ -4114,7 +4123,7 @@ mod tests {
         let q = test_quest(&conn, "Old");
         let u = update_quest(&conn, q.id, QuestUpdate { title: Some("New".into()), ..Default::default() }).unwrap();
         assert_eq!(u.title, "New");
-        assert_eq!(u.cycle_days, Some(1));
+        assert_eq!(u.cycle_days, Some(7));
     }
 
     #[test]
@@ -5515,8 +5524,8 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].completed);
         assert_eq!(results[0].campaign_name, "Quick Clean");
-        // easy recurring daily: calculate_xp = 5 * 5.0 * 1.0 = 25. Bonus = round(0.20 * 25) = 5
-        assert_eq!(results[0].bonus_xp, 5);
+        // easy weekly: calculate_xp ≈ 66. Bonus = round(0.20 * 66) = 13
+        assert_eq!(results[0].bonus_xp, 13);
 
         let campaigns = get_campaigns(&conn).unwrap();
         assert!(campaigns[0].completed_at.is_some());
@@ -5690,9 +5699,9 @@ mod tests {
     #[test]
     fn check_campaign_progress_awards_bonus_xp() {
         let conn = test_db();
-        // Easy recurring daily (cycle=1): calculate_xp = 5 * 5.0 * 1.0 = 25
-        let q1 = test_quest(&conn, "Daily Easy");
-        // Moderate recurring 7-day: calculate_xp = 5 * 10.0 * sqrt(7) ≈ 132
+        // Easy weekly (default): calculate_xp = 5 * 5.0 * sqrt(7) ≈ 66
+        let q1 = test_quest(&conn, "Weekly Easy");
+        // Moderate weekly: calculate_xp = 5 * 10.0 * sqrt(7) ≈ 132
         let q2 = test_quest_with(&conn, "Weekly Moderate", |q| {
             q.difficulty = Difficulty::Moderate;
             q.cycle_days = Some(7);
@@ -5711,8 +5720,7 @@ mod tests {
         let results = check_campaign_progress(&conn, "quest_completions", &q2.id).unwrap();
 
         assert_eq!(results.len(), 1);
-        // Expected: round(0.20 * (25*2 + 132*1)) = round(0.20 * 182) = round(36.4) = 36
-        let expected_bonus = (0.20 * (calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(1)) as f64 * 2.0
+        let expected_bonus = (0.20 * (calculate_xp(&Difficulty::Easy, &QuestType::Recurring, Some(7)) as f64 * 2.0
             + calculate_xp(&Difficulty::Moderate, &QuestType::Recurring, Some(7)) as f64 * 1.0)).round() as i64;
         assert_eq!(results[0].bonus_xp, expected_bonus);
         assert!(results[0].bonus_xp > 0);
@@ -5734,7 +5742,7 @@ mod tests {
         let accomplishments = get_accomplishments(&conn).unwrap();
         assert_eq!(accomplishments.len(), 1);
         assert_eq!(accomplishments[0].campaign_name, "Accomplishment Test");
-        assert_eq!(accomplishments[0].bonus_xp, 5); // easy daily: round(0.20 * 25) = 5
+        assert_eq!(accomplishments[0].bonus_xp, 13); // easy weekly: round(0.20 * 66) = 13
         assert!(accomplishments[0].campaign_id.is_some());
         assert!(!accomplishments[0].completed_at.is_empty());
     }
@@ -5774,8 +5782,8 @@ mod tests {
         let results = check_campaign_progress(&conn, "quest_completions", &q2.id).unwrap();
 
         assert_eq!(results.len(), 1);
-        // Only q1 contributes: round(0.20 * 25) = 5. q2 deleted = 0 contribution.
-        assert_eq!(results[0].bonus_xp, 5);
+        // Only q1 contributes: round(0.20 * 66) = 13. q2 deleted = 0 contribution.
+        assert_eq!(results[0].bonus_xp, 13);
     }
 
     #[test]
@@ -5942,7 +5950,8 @@ mod tests {
             rusqlite::params![s.id],
         ).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
+        // Daily saga goes to Castle Duties under new rules
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::CastleDuties).unwrap().unwrap();
         assert_eq!(result.saga_name.as_deref(), Some("Daily Saga"));
         // (days + 1) / 1 — days_since is large, so ratio should be >> 2.0
         assert!(result.overdue_ratio > 2.0);
@@ -6200,7 +6209,8 @@ mod tests {
             rusqlite::params![s.id],
         ).unwrap();
 
-        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::Adventures).unwrap().unwrap();
+        // Daily saga goes to Castle Duties under new rules
+        let result = get_next_quest(&conn, &std::collections::HashMap::new(), None, &Lane::CastleDuties).unwrap().unwrap();
         assert_eq!(result.saga_name.as_deref(), Some("Test Saga"));
         // Saga step gets 0 membership bonus (gets 1.0 from list_order instead)
         assert_eq!(result.membership_bonus, 0.0);
@@ -6269,47 +6279,60 @@ mod tests {
     // --- Lane filter tests ---
 
     #[test]
-    fn lane_filter_trivial_only() {
+    fn lane_filter_castle_duties_daily_only() {
+        // Castle Duties contains daily quests (cycle_days == 1), any difficulty.
         let conn = test_db();
-        test_quest_with(&conn, "Trivial Quest", |q| q.difficulty = Difficulty::Trivial);
-        test_quest(&conn, "Easy Quest"); // default = easy
-        test_quest_with(&conn, "Epic Quest", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "Daily Trivial", |q| { q.difficulty = Difficulty::Trivial; q.cycle_days = Some(1); });
+        test_quest_with(&conn, "Daily Moderate", |q| { q.difficulty = Difficulty::Moderate; q.cycle_days = Some(1); });
+        test_quest_with(&conn, "Daily Epic", |q| { q.difficulty = Difficulty::Epic; q.cycle_days = Some(1); });
+        test_quest_with(&conn, "Weekly Trivial", |q| { q.difficulty = Difficulty::Trivial; q.cycle_days = Some(7); });
+        test_quest_with(&conn, "One-off Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
 
         let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
-        assert_eq!(scores.len(), 1);
-        assert_eq!(scores[0].quest.title, "Trivial Quest");
+        let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
+        assert!(titles.contains(&"Daily Trivial"));
+        assert!(titles.contains(&"Daily Moderate"));
+        assert!(titles.contains(&"Daily Epic"));
+        assert!(!titles.contains(&"Weekly Trivial"));
+        assert!(!titles.contains(&"One-off Epic"));
     }
 
     #[test]
-    fn lane_filter_adventures() {
+    fn lane_filter_adventures_non_daily_easy() {
+        // Adventures contains non-daily trivial and easy quests.
         let conn = test_db();
-        test_quest_with(&conn, "Trivial", |q| q.difficulty = Difficulty::Trivial);
-        test_quest(&conn, "Easy"); // default = easy
-        test_quest_with(&conn, "Moderate", |q| q.difficulty = Difficulty::Moderate);
-        test_quest_with(&conn, "Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "Weekly Trivial", |q| { q.difficulty = Difficulty::Trivial; q.cycle_days = Some(7); });
+        test_quest_with(&conn, "Weekly Easy", |q| { q.difficulty = Difficulty::Easy; q.cycle_days = Some(7); });
+        test_quest_with(&conn, "One-off Easy", |q| { q.difficulty = Difficulty::Easy; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "Daily Easy", |q| { q.difficulty = Difficulty::Easy; q.cycle_days = Some(1); });
+        test_quest_with(&conn, "Weekly Moderate", |q| { q.difficulty = Difficulty::Moderate; q.cycle_days = Some(7); });
 
         let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
         let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
-        assert!(titles.contains(&"Easy"));
-        assert!(!titles.contains(&"Moderate"));
-        assert!(!titles.contains(&"Trivial"));
-        assert!(!titles.contains(&"Epic"));
+        assert!(titles.contains(&"Weekly Trivial"));
+        assert!(titles.contains(&"Weekly Easy"));
+        assert!(titles.contains(&"One-off Easy"));
+        assert!(!titles.contains(&"Daily Easy"));
+        assert!(!titles.contains(&"Weekly Moderate"));
     }
 
     #[test]
-    fn lane_filter_royal() {
+    fn lane_filter_royal_non_daily_moderate_plus() {
+        // Royal Quests contains non-daily moderate/challenging/epic quests.
         let conn = test_db();
-        test_quest(&conn, "Easy"); // default = easy
-        test_quest_with(&conn, "Moderate", |q| { q.difficulty = Difficulty::Moderate; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
-        test_quest_with(&conn, "Hard", |q| { q.difficulty = Difficulty::Challenging; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
-        test_quest_with(&conn, "Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "Weekly Moderate", |q| { q.difficulty = Difficulty::Moderate; q.cycle_days = Some(7); });
+        test_quest_with(&conn, "One-off Hard", |q| { q.difficulty = Difficulty::Challenging; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "One-off Epic", |q| { q.difficulty = Difficulty::Epic; q.quest_type = QuestType::OneOff; q.cycle_days = None; });
+        test_quest_with(&conn, "Daily Moderate", |q| { q.difficulty = Difficulty::Moderate; q.cycle_days = Some(1); });
+        test_quest_with(&conn, "Weekly Easy", |q| { q.difficulty = Difficulty::Easy; q.cycle_days = Some(7); });
 
         let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
         let titles: Vec<&str> = scores.iter().map(|s| s.quest.title.as_str()).collect();
-        assert!(titles.contains(&"Moderate"));
-        assert!(titles.contains(&"Hard"));
-        assert!(titles.contains(&"Epic"));
-        assert!(!titles.contains(&"Easy"));
+        assert!(titles.contains(&"Weekly Moderate"));
+        assert!(titles.contains(&"One-off Hard"));
+        assert!(titles.contains(&"One-off Epic"));
+        assert!(!titles.contains(&"Daily Moderate"));
+        assert!(!titles.contains(&"Weekly Easy"));
     }
 
     #[test]
@@ -6364,6 +6387,149 @@ mod tests {
         // Should NOT appear in CastleDuties
         let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
         assert!(!castle.iter().any(|s| s.saga_name.is_some()));
+    }
+
+    // --- New lane rule tests (cadence + difficulty) ---
+
+    #[test]
+    fn lane_daily_moderate_in_castle_duties() {
+        let conn = test_db();
+        test_quest_with(&conn, "Daily Exercise", |q| { q.difficulty = Difficulty::Moderate; q.cycle_days = Some(1); });
+
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+        let royal = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+
+        assert!(castle.iter().any(|s| s.quest.title == "Daily Exercise"));
+        assert!(!royal.iter().any(|s| s.quest.title == "Daily Exercise"));
+    }
+
+    #[test]
+    fn lane_daily_epic_in_castle_duties() {
+        let conn = test_db();
+        test_quest_with(&conn, "Daily Deep Work", |q| { q.difficulty = Difficulty::Epic; q.cycle_days = Some(1); });
+
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+        let royal = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+
+        assert!(castle.iter().any(|s| s.quest.title == "Daily Deep Work"));
+        assert!(!royal.iter().any(|s| s.quest.title == "Daily Deep Work"));
+    }
+
+    #[test]
+    fn lane_daily_trivial_still_in_castle_duties() {
+        // Regression guard: trivial daily still lands in Castle Duties
+        let conn = test_db();
+        test_quest_with(&conn, "Take Meds", |q| { q.difficulty = Difficulty::Trivial; q.cycle_days = Some(1); });
+
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+        assert!(castle.iter().any(|s| s.quest.title == "Take Meds"));
+    }
+
+    #[test]
+    fn lane_weekly_trivial_in_adventures() {
+        let conn = test_db();
+        test_quest_with(&conn, "Water Plants", |q| { q.difficulty = Difficulty::Trivial; q.cycle_days = Some(7); });
+
+        let adventures = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+
+        assert!(adventures.iter().any(|s| s.quest.title == "Water Plants"));
+        assert!(!castle.iter().any(|s| s.quest.title == "Water Plants"));
+    }
+
+    #[test]
+    fn lane_one_off_trivial_in_adventures() {
+        let conn = test_db();
+        test_quest_with(&conn, "Find Receipts", |q| {
+            q.difficulty = Difficulty::Trivial;
+            q.quest_type = QuestType::OneOff;
+            q.cycle_days = None;
+        });
+
+        let adventures = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+
+        assert!(adventures.iter().any(|s| s.quest.title == "Find Receipts"));
+        assert!(!castle.iter().any(|s| s.quest.title == "Find Receipts"));
+    }
+
+    #[test]
+    fn lane_weekly_moderate_still_in_royal_quests() {
+        // Regression guard for non-daily moderate
+        let conn = test_db();
+        test_quest_with(&conn, "Meal Prep", |q| { q.difficulty = Difficulty::Moderate; q.cycle_days = Some(7); });
+
+        let royal = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+        assert!(royal.iter().any(|s| s.quest.title == "Meal Prep"));
+    }
+
+    #[test]
+    fn saga_daily_recurring_in_castle_duties() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Daily Ritual".into(), Some(1)).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Hard Step".into(),
+            difficulty: Difficulty::Epic,
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        // Daily saga with epic step → Castle Duties (cadence wins)
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+        let royal = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+
+        assert!(castle.iter().any(|s| s.saga_name.as_deref() == Some("Daily Ritual")));
+        assert!(!royal.iter().any(|s| s.saga_name.as_deref() == Some("Daily Ritual")));
+    }
+
+    #[test]
+    fn saga_one_off_trivial_steps_in_adventures() {
+        // Non-daily saga with only trivial steps goes to Adventures under new rules
+        // (would have been Castle Duties before)
+        let conn = test_db();
+        let s = add_saga(&conn, "Tiny Tasks".into(), None).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Trivial Step".into(),
+            difficulty: Difficulty::Trivial,
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        let adventures = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        let castle = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
+
+        assert!(adventures.iter().any(|s| s.saga_name.as_deref() == Some("Tiny Tasks")));
+        assert!(!castle.iter().any(|s| s.saga_name.as_deref() == Some("Tiny Tasks")));
+    }
+
+    #[test]
+    fn saga_weekly_moderate_steps_in_royal_quests() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Weekly Big".into(), Some(7)).unwrap();
+        add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Moderate Step".into(),
+            difficulty: Difficulty::Moderate,
+            ..NewSagaStep::default()
+        }).unwrap();
+
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![s.id],
+        ).unwrap();
+
+        let royal = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::RoyalQuests).unwrap();
+        assert!(royal.iter().any(|s| s.saga_name.as_deref() == Some("Weekly Big")));
     }
 
     // --- Bonus XP in history tests ---
@@ -6651,7 +6817,8 @@ mod tests {
 
         // s1 has lower sort_order than s2 (created first)
         // So s2 (created second, higher sort_order) should get higher list_order_bonus
-        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::Adventures).unwrap();
+        // Daily sagas go to Castle Duties under new rules
+        let scores = get_quest_scores(&conn, &std::collections::HashMap::new(), &Lane::CastleDuties).unwrap();
         let top = scores.iter().find(|s| s.saga_name.as_deref() == Some("Top Saga")).unwrap();
         let bottom = scores.iter().find(|s| s.saga_name.as_deref() == Some("Bottom Saga")).unwrap();
         assert!(bottom.list_order_bonus > top.list_order_bonus);

@@ -62,13 +62,23 @@ User-defined labels (e.g., "Computer", "Outside", "Phone") for organizing quests
 
 ### Lanes
 
-The Next Quest tab shows three quest givers, each offering one quest from a different difficulty tier:
+The Next Quest tab shows three quest givers, each grouping quests by cadence and difficulty:
 
-| Lane | Name          | Difficulties     |
-| ---- | ------------- | ---------------- |
-| 1    | Castle Duties | Trivial          |
-| 2    | Adventures    | Easy             |
-| 3    | Royal Quests  | Fair, Hard, Epic |
+| Lane | Name          | Contains                                                          |
+| ---- | ------------- | ----------------------------------------------------------------- |
+| 1    | Castle Duties | Daily-recurring quests (cycle = 1 day), any difficulty            |
+| 2    | Adventures    | Non-daily Trivial or Easy quests (including one-offs)             |
+| 3    | Royal Quests  | Non-daily Fair, Hard, or Epic quests (including one-offs)         |
+
+Lane 1 is about what you do every day, regardless of effort. Lanes 2 and 3 split the rest by difficulty.
+
+| Difficulty | One-off  | Daily (cycle=1) | Weekly (cycle=7) | Monthly  |
+| ---------- | -------- | --------------- | ---------------- | -------- |
+| Trivial    | Lane 2   | **Lane 1**      | Lane 2           | Lane 2   |
+| Easy       | Lane 2   | **Lane 1**      | Lane 2           | Lane 2   |
+| Fair       | Lane 3   | **Lane 1**      | Lane 3           | Lane 3   |
+| Hard       | Lane 3   | **Lane 1**      | Lane 3           | Lane 3   |
+| Epic       | Lane 3   | **Lane 1**      | Lane 3           | Lane 3   |
 
 Each lane scores and selects independently. "Something Else" skips within a single lane. Starting a timer from any lane locks all three until you finish or cancel.
 
@@ -126,7 +136,7 @@ Each saga appears as a single slot on the quest list, interleaved with regular q
 
 ### Lane Assignment
 
-A saga's lane is determined by its hardest step. A saga with an Epic step puts all its steps in the Royal Quests lane, even the trivial ones.
+A daily-recurring saga (cycle = 1 day) goes to Castle Duties, regardless of step difficulty. Otherwise, the saga's lane is determined by its hardest step: a saga with an Epic step puts all its steps in the Royal Quests lane, even the trivial ones. A saga with only trivial or easy steps goes to Adventures.
 
 ## Campaigns
 
