@@ -2246,9 +2246,11 @@
       if (excludeQuestId) params.excludeQuestId = excludeQuestId;
       const result = await invoke("get_next_quest", params);
 
-      // Skip re-render if quest hasn't changed and we already have content
+      // Skip re-render if the same quest is still being offered and we already have content.
+      // Only applies when rendering a quest — when result is null we always re-render so the
+      // empty state replaces any stale content (e.g. completion feedback from a just-done quest).
       const newQuestId = result?.quest?.id || null;
-      if (!forceRefresh && newQuestId === laneCurrentQuestId[lane.key] && container.innerHTML !== "") {
+      if (!forceRefresh && result && newQuestId === laneCurrentQuestId[lane.key] && container.innerHTML !== "") {
         return;
       }
       laneCurrentQuestId[lane.key] = newQuestId;
