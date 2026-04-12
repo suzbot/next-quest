@@ -48,9 +48,13 @@ A visible record that you did a quest at a specific time, or that a bonus was aw
 | quest_title | String | Snapshot of quest title, or bonus description (e.g., "Morning Routine complete!") |
 | completed_at | Timestamp | ISO 8601 completion time |
 | xp_earned | Integer | XP awarded for this completion |
+| difficulty | String? | Snapshot of quest difficulty at completion time (e.g., "easy", "moderate"). NULL for bonus completions or pre-migration records. |
+| skills | JSON String? | Snapshot of linked skill names at completion time (e.g., `["Cooking", "Healing"]`). NULL for bonus completions or pre-migration records. |
+| attributes | JSON String? | Snapshot of linked attribute names at completion time (e.g., `["Health"]`). NULL for bonus completions or pre-migration records. |
+| tags | JSON String? | Snapshot of linked tag/category names at completion time (e.g., `["Computer"]`). NULL for bonus completions or pre-migration records. |
 
 **Rules:**
-- Completions snapshot the quest title so they remain self-contained after quest rename or deletion.
+- Completions snapshot the quest title, difficulty, and linked skills/attributes/tags so they remain self-contained after quest rename, relink, or deletion.
 - Quests and completions are independent: deleting a quest orphans (not deletes) its completions.
 - Saga completion bonuses and campaign completion bonuses are also recorded as completions with `quest_id: NULL` and a descriptive title. These appear in the history list and count toward daily XP stats.
 - Individually deletable. Deleting a completion does NOT reduce XP — XP only goes up.

@@ -98,6 +98,62 @@ Returns attributes with XP/level progression.
 
 **Output fields:** id, name, xp, level, xp_for_current_level, xp_into_current_level
 
+### list-history
+
+Returns completion history — every quest completion and bonus entry, newest first.
+
+```
+nq list-history
+```
+
+**Output fields per item:**
+
+| Field | Type | Description |
+|---|---|---|
+| id | string | Completion UUID |
+| quest_id | string or null | Quest UUID. Null for bonus entries or deleted quests. |
+| quest_title | string | Snapshot of quest title, or bonus description |
+| completed_at | string | ISO 8601 timestamp |
+| xp_earned | int | XP awarded |
+| difficulty | string or null | Quest difficulty at completion time. Null for bonus entries or pre-migration records. |
+| skills | string[] or null | Linked skill names at completion time. Null for bonus entries or pre-migration records. |
+| attributes | string[] or null | Linked attribute names at completion time. Null for bonus entries or pre-migration records. |
+| tags | string[] or null | Linked tag names at completion time. Null for bonus entries or pre-migration records. |
+| level_ups | object[] | Level-ups triggered (empty for history queries; populated at completion time only) |
+| xp_awards | object[] | XP distribution breakdown (empty for history queries; populated at completion time only) |
+
+**Example output:**
+```json
+[
+  {
+    "id": "abc-123",
+    "quest_id": "def-456",
+    "quest_title": "Take a shower",
+    "completed_at": "2026-04-12T14:30:00Z",
+    "xp_earned": 20,
+    "difficulty": "easy",
+    "skills": ["Healing"],
+    "attributes": ["Health"],
+    "tags": ["Inside"],
+    "level_ups": [],
+    "xp_awards": []
+  },
+  {
+    "id": "ghi-789",
+    "quest_id": null,
+    "quest_title": "Morning Routine complete!",
+    "completed_at": "2026-04-12T14:30:00Z",
+    "xp_earned": 15,
+    "difficulty": null,
+    "skills": null,
+    "attributes": null,
+    "tags": null,
+    "level_ups": [],
+    "xp_awards": []
+  }
+]
+```
+
 ---
 
 ### add-quest
@@ -315,6 +371,7 @@ nq list-sagas               # what sagas exist (get IDs for add-saga-step)
 nq list-skills              # valid skill names for --skills
 nq list-attributes          # valid attribute names for --attributes
 nq list-tags                # existing tag names (new tags are auto-created)
+nq list-history             # completion history with snapshot metadata
 ```
 
 ---

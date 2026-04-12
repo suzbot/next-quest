@@ -282,6 +282,10 @@ pub struct Completion {
     pub xp_earned: i64,
     pub level_ups: Vec<LevelUp>,
     pub xp_awards: Vec<XpAward>,
+    pub difficulty: Option<String>,
+    pub skills: Option<Vec<String>>,
+    pub attributes: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Debug)]
@@ -460,7 +464,11 @@ fn create_tables(conn: &Connection) {
             quest_id      TEXT,
             quest_title   TEXT NOT NULL DEFAULT '',
             completed_at  TEXT NOT NULL,
-            xp_earned     INTEGER NOT NULL DEFAULT 0
+            xp_earned     INTEGER NOT NULL DEFAULT 0,
+            difficulty    TEXT,
+            skills        TEXT,
+            attributes    TEXT,
+            tags          TEXT
         );
 
         CREATE TABLE IF NOT EXISTS character (
@@ -852,6 +860,26 @@ fn migrate(conn: &Connection) {
         }
     }
 
+    // Migration: add snapshot columns to quest_completion
+    let has_completion_difficulty: bool = conn
+        .prepare("SELECT difficulty FROM quest_completion LIMIT 0")
+        .is_ok();
+
+    if !has_completion_difficulty {
+        conn.execute_batch(
+            "ALTER TABLE quest_completion ADD COLUMN difficulty TEXT;
+             ALTER TABLE quest_completion ADD COLUMN skills TEXT;
+             ALTER TABLE quest_completion ADD COLUMN attributes TEXT;
+             ALTER TABLE quest_completion ADD COLUMN tags TEXT;"
+        ).expect("Failed to add snapshot columns to quest_completion");
+    }
+
+    // Migration: deactivate one-off sagas that completed before deactivation code existed
+    conn.execute_batch(
+        "UPDATE saga SET active = 0 WHERE cycle_days IS NULL AND last_run_completed_at IS NOT NULL AND active = 1;
+         UPDATE quest SET active = 0 WHERE saga_id IN (SELECT id FROM saga WHERE cycle_days IS NULL AND last_run_completed_at IS NOT NULL AND active = 0) AND active = 1;"
+    ).expect("Failed to deactivate completed one-off sagas");
+
     // Migration: create campaign tables if missing
     let has_campaign: bool = conn
         .prepare("SELECT id FROM campaign LIMIT 0")
@@ -996,7 +1024,7 @@ pub fn get_sagas(conn: &Connection) -> Result<Vec<Saga>, String> {
         .prepare(
             "SELECT id, name, cycle_days, sort_order, active, created_at, last_run_completed_at
              FROM saga
-             ORDER BY sort_order DESC",
+             ORDER BY active DESC, sort_order DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -2127,9 +2155,10 @@ pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
         });
     }
 
-    // Add saga slots
+    // Add saga slots (skip deactivated sagas — completed one-offs)
     for sp in &sagas_with_progress {
         let saga = &sp.saga;
+        if !saga.active { continue; }
         let steps = get_saga_steps(conn, &saga.id)?;
         if steps.is_empty() { continue; }
 
@@ -2392,7 +2421,7 @@ fn compute_overdue_ratio(q: &Quest, today: i64) -> f64 {
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, quest_id, quest_title, completed_at, xp_earned
+            "SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, skills, attributes, tags
              FROM quest_completion
              ORDER BY completed_at DESC",
         )
@@ -2400,14 +2429,21 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
 
     let completions = stmt
         .query_map([], |row| {
+            let skills_json: Option<String> = row.get(6)?;
+            let attrs_json: Option<String> = row.get(7)?;
+            let tags_json: Option<String> = row.get(8)?;
             Ok(Completion {
                 id: row.get(0)?,
                 quest_id: row.get(1)?,
                 quest_title: row.get(2)?,
                 completed_at: row.get(3)?,
-                level_ups: Vec::new(),
                 xp_earned: row.get(4)?,
+                level_ups: Vec::new(),
                 xp_awards: Vec::new(),
+                difficulty: row.get(5)?,
+                skills: skills_json.and_then(|s| serde_json::from_str(&s).ok()),
+                attributes: attrs_json.and_then(|s| serde_json::from_str(&s).ok()),
+                tags: tags_json.and_then(|s| serde_json::from_str(&s).ok()),
             })
         })
         .map_err(|e| e.to_string())?
@@ -2658,6 +2694,32 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 
+    // Snapshot linked names for completion history
+    let snapshot_skill_names: Vec<String> = conn.prepare(
+        "SELECT s.name FROM quest_skill qs JOIN skill s ON s.id = qs.skill_id WHERE qs.quest_id = ?1"
+    ).map_err(|e| e.to_string())?
+    .query_map(rusqlite::params![quest_id], |row| row.get(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let snapshot_attr_names: Vec<String> = conn.prepare(
+        "SELECT a.name FROM quest_attribute qa JOIN attribute a ON a.id = qa.attribute_id WHERE qa.quest_id = ?1"
+    ).map_err(|e| e.to_string())?
+    .query_map(rusqlite::params![quest_id], |row| row.get(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let snapshot_tag_names: Vec<String> = conn.prepare(
+        "SELECT t.name FROM quest_tag qt JOIN tag t ON t.id = qt.tag_id WHERE qt.quest_id = ?1"
+    ).map_err(|e| e.to_string())?
+    .query_map(rusqlite::params![quest_id], |row| row.get(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let skills_json = serde_json::to_string(&snapshot_skill_names).ok();
+    let attrs_json = serde_json::to_string(&snapshot_attr_names).ok();
+    let tags_json = serde_json::to_string(&snapshot_tag_names).ok();
+
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     // Distribute XP
@@ -2667,8 +2729,8 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let completed_at = chrono_now();
 
     tx.execute(
-        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned],
+        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, skills, attributes, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned, difficulty.as_str(), skills_json, attrs_json, tags_json],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2746,6 +2808,10 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         xp_earned,
         level_ups,
         xp_awards,
+        difficulty: Some(difficulty.as_str().to_string()),
+        skills: Some(snapshot_skill_names),
+        attributes: Some(snapshot_attr_names),
+        tags: Some(snapshot_tag_names),
     })
 }
 
@@ -4758,6 +4824,118 @@ mod tests {
         assert!(c.xp_earned > 0);
         let completions = get_completions(&conn).unwrap();
         assert_eq!(completions[0].xp_earned, c.xp_earned);
+    }
+
+    #[test]
+    fn complete_quest_snapshots_difficulty() {
+        let conn = test_db();
+        let q = test_quest_with(&conn, "Moderate quest", |q| q.difficulty = Difficulty::Moderate);
+        let c = complete_quest(&conn, q.id).unwrap();
+        assert_eq!(c.difficulty, Some("moderate".to_string()));
+
+        let completions = get_completions(&conn).unwrap();
+        assert_eq!(completions[0].difficulty, Some("moderate".to_string()));
+    }
+
+    #[test]
+    fn complete_quest_snapshots_skills_and_attributes() {
+        let conn = test_db();
+        let q = add_quest_full(
+            &conn,
+            NewQuest { title: "Linked quest".to_string(), cycle_days: Some(7), ..Default::default() },
+            vec![],
+            vec!["Cooking".to_string(), "Healing".to_string()],
+            vec!["Health".to_string()],
+        ).unwrap();
+        let c = complete_quest(&conn, q.id).unwrap();
+
+        assert_eq!(c.attributes, Some(vec!["Health".to_string()]));
+        // Skills may come back in any order
+        let mut skills = c.skills.unwrap();
+        skills.sort();
+        assert_eq!(skills, vec!["Cooking", "Healing"]);
+
+        let completions = get_completions(&conn).unwrap();
+        assert_eq!(completions[0].attributes, Some(vec!["Health".to_string()]));
+        let mut stored_skills = completions[0].skills.clone().unwrap();
+        stored_skills.sort();
+        assert_eq!(stored_skills, vec!["Cooking", "Healing"]);
+    }
+
+    #[test]
+    fn complete_quest_snapshots_tags() {
+        let conn = test_db();
+        let q = add_quest_full(
+            &conn,
+            NewQuest { title: "Tagged quest".to_string(), cycle_days: Some(7), ..Default::default() },
+            vec!["Computer".to_string(), "Outside".to_string()],
+            vec![],
+            vec![],
+        ).unwrap();
+        let c = complete_quest(&conn, q.id).unwrap();
+
+        let mut tags = c.tags.unwrap();
+        tags.sort();
+        assert_eq!(tags, vec!["Computer", "Outside"]);
+
+        let completions = get_completions(&conn).unwrap();
+        let mut stored_tags = completions[0].tags.clone().unwrap();
+        stored_tags.sort();
+        assert_eq!(stored_tags, vec!["Computer", "Outside"]);
+    }
+
+    #[test]
+    fn complete_quest_no_links_snapshots_empty_arrays() {
+        let conn = test_db();
+        let q = test_quest(&conn, "No links");
+        let c = complete_quest(&conn, q.id).unwrap();
+
+        assert_eq!(c.skills, Some(vec![]));
+        assert_eq!(c.attributes, Some(vec![]));
+        assert_eq!(c.tags, Some(vec![]));
+    }
+
+    #[test]
+    fn bonus_completion_has_null_snapshots() {
+        let conn = test_db();
+        // Create a one-off saga with one step, complete it to trigger bonus
+        let saga = add_saga(&conn, "Test Saga".to_string(), None).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: saga.id.clone(),
+            title: "Only step".to_string(),
+            ..Default::default()
+        }).unwrap();
+        // Backdate saga so completions count as current run
+        conn.execute(
+            "UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+            rusqlite::params![saga.id],
+        ).unwrap();
+        complete_quest(&conn, step.id).unwrap();
+        check_saga_completion(&conn, &saga.id).unwrap();
+
+        let completions = get_completions(&conn).unwrap();
+        let bonus = completions.iter().find(|c| c.quest_id.is_none()).unwrap();
+        assert!(bonus.difficulty.is_none());
+        assert!(bonus.skills.is_none());
+        assert!(bonus.attributes.is_none());
+        assert!(bonus.tags.is_none());
+    }
+
+    #[test]
+    fn old_completions_have_null_snapshots() {
+        let conn = test_db();
+        // Simulate a pre-migration completion (no snapshot columns)
+        conn.execute(
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, NULL, 'Old record', '2020-01-01T00:00:00Z', 10)",
+            rusqlite::params![Uuid::new_v4().to_string()],
+        ).unwrap();
+
+        let completions = get_completions(&conn).unwrap();
+        assert_eq!(completions.len(), 1);
+        assert!(completions[0].difficulty.is_none());
+        assert!(completions[0].skills.is_none());
+        assert!(completions[0].attributes.is_none());
+        assert!(completions[0].tags.is_none());
     }
 
     #[test]
@@ -7052,10 +7230,9 @@ mod tests {
         complete_quest(&conn, step1.id).unwrap();
         check_saga_completion(&conn, &s.id).unwrap();
 
+        // Completed one-off sagas should not appear on the quest list
         let items = get_quest_list(&conn).unwrap();
-        let slot = items.iter().find(|i| i.item_type == "saga").unwrap().saga_slot.as_ref().unwrap();
-        assert!(slot.is_completed);
-        assert!(!slot.is_saga_due);
+        assert!(items.iter().find(|i| i.item_type == "saga").is_none());
     }
 
     // --- Bitmask parsing ---

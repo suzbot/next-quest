@@ -1,166 +1,301 @@
-# Lane Refactor: Cadence + Difficulty
+# Completion History Snapshots
 
-**Goal:** Shift lane assignment so daily-recurring quests (any difficulty) live in Lane 1, and non-daily quests split by difficulty into Lanes 2 and 3.
+**Goal:** Capture quest difficulty and linked skills/attributes/tags at completion time so completion history is self-contained for external analysis.
 
-**Requirements:** [lane-refactor-requirements.md](lane-refactor-requirements.md)
-**Design:** [lane-refactor-design.md](lane-refactor-design.md)
-
----
-
-## Gaps Caught During Review
-
-1. **`lane_for_difficulty_rank` needs updating.** Under the old rules, rank 1 (trivial) mapped to `CastleDuties`. Under the new rules, non-daily trivial sagas go to Adventures. This function is only called from the non-daily branch of `get_active_saga_steps`, so we can fix it directly — Castle Duties is determined by cadence now, not by rank.
-
-2. **`get_quests()` already filters `saga_id IS NULL`.** Saga steps never flow through the quest filter path, so we don't need to worry about saga steps matching wrong lanes via the new `Lane::includes()` check. Saga lane assignment stays exclusively in `get_active_saga_steps`.
-
-3. **Saga one-off with trivial-only steps.** Under the old rules, a one-off saga with trivial steps would have gone to Castle Duties. Under the new rules, one-off means non-daily, and trivial means Adventures — a noticeable shift. Worth a dedicated test.
-
-4. **Existing quest data redistributes automatically.** Lane is computed at query time, no stored lane field. The user's current trivial weekly quests will move from Lane 1 to Lane 2 on first launch — that's the intended effect, not a bug.
+No backfill — existing completions get NULL for the new fields.
 
 ---
 
-## Changes
+## Schema Change
 
-### 1. `Lane::includes()` — new method with cadence + difficulty
+Four nullable TEXT columns added to `quest_completion` via ALTER TABLE:
 
-Replace `Lane::includes_difficulty(&Difficulty)` with `Lane::includes(&Difficulty, Option<i32>)`:
+| Column | Type | Content | Example |
+|---|---|---|---|
+| `difficulty` | TEXT | Difficulty enum string | `"easy"` |
+| `skills` | TEXT | JSON array of skill names | `["Cooking", "Healing"]` |
+| `attributes` | TEXT | JSON array of attribute names | `["Health"]` |
+| `tags` | TEXT | JSON array of tag names | `["Computer", "Outside"]` |
+
+All nullable. NULL means either a bonus completion (no quest) or a pre-migration record.
+
+Format matches the CLI's `QuestOutput` pattern: difficulty as a plain string, skills/attributes/tags as flat name arrays. No IDs — names are snapshotted so the record is self-contained even if entities are renamed or deleted later.
+
+---
+
+## Migration
+
+In `nq-core/src/db.rs`, in the migration section (after existing ALTER TABLE blocks).
+
+**Detection:** Check for `difficulty` column on `quest_completion` using the existing `prepare("SELECT difficulty FROM quest_completion LIMIT 0").is_ok()` pattern.
+
+**If missing, run:**
+
+```sql
+ALTER TABLE quest_completion ADD COLUMN difficulty TEXT;
+ALTER TABLE quest_completion ADD COLUMN skills TEXT;
+ALTER TABLE quest_completion ADD COLUMN attributes TEXT;
+ALTER TABLE quest_completion ADD COLUMN tags TEXT;
+```
+
+No DEFAULT needed — nullable columns default to NULL.
+
+---
+
+## Completion Creation Paths
+
+Three INSERT sites in `db.rs`:
+
+### 1. `complete_quest` (~line 2669) — gets snapshot data
+
+This is the only path that changes. The function already reads the quest row for XP calculation and has `quest_id` in scope.
+
+**New lookups** (three queries, after the existing quest row read, before the INSERT):
 
 ```rust
-impl Lane {
-    fn includes(&self, difficulty: &Difficulty, cycle_days: Option<i32>) -> bool {
-        let is_daily = cycle_days == Some(1);
-        match self {
-            Lane::CastleDuties => is_daily,
-            Lane::Adventures => !is_daily && matches!(difficulty, Difficulty::Trivial | Difficulty::Easy),
-            Lane::RoyalQuests => !is_daily && matches!(difficulty, Difficulty::Moderate | Difficulty::Challenging | Difficulty::Epic),
-        }
-    }
+// Look up linked skill names
+let skill_names: Vec<String> = conn.prepare(
+    "SELECT s.name FROM quest_skill qs JOIN skill s ON s.id = qs.skill_id WHERE qs.quest_id = ?1"
+)?.query_map(params![quest_id], |row| row.get(0))?
+.collect::<Result<Vec<_>, _>>()?;
+
+// Look up linked attribute names
+let attr_names: Vec<String> = conn.prepare(
+    "SELECT a.name FROM quest_attribute qa JOIN attribute a ON a.id = qa.attribute_id WHERE qa.quest_id = ?1"
+)?.query_map(params![quest_id], |row| row.get(0))?
+.collect::<Result<Vec<_>, _>>()?;
+
+// Look up linked tag names
+let tag_names: Vec<String> = conn.prepare(
+    "SELECT t.name FROM quest_tag qt JOIN tag t ON t.id = qt.tag_id WHERE qt.quest_id = ?1"
+)?.query_map(params![quest_id], |row| row.get(0))?
+.collect::<Result<Vec<_>, _>>()?;
+```
+
+**Serialize to JSON strings:**
+
+```rust
+let skills_json = serde_json::to_string(&skill_names).ok();
+let attrs_json = serde_json::to_string(&attr_names).ok();
+let tags_json = serde_json::to_string(&tag_names).ok();
+```
+
+**Updated INSERT:**
+
+```rust
+tx.execute(
+    "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, skills, attributes, tags)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    rusqlite::params![
+        completion_id, quest_id, quest_title, completed_at, xp_earned,
+        difficulty.as_str(), skills_json, attrs_json, tags_json
+    ],
+)
+```
+
+### 2. Saga bonus (~line 1437) — no change
+
+INSERT explicitly lists columns and passes NULL for `quest_id`. The four new columns are nullable with no NOT NULL constraint, so SQLite fills them as NULL automatically. No code change needed.
+
+### 3. Campaign bonus (~line 2021) — no change
+
+Same situation as saga bonus.
+
+---
+
+## Struct Update
+
+`Completion` struct (`db.rs` ~line 277):
+
+```rust
+#[derive(Serialize, Debug)]
+pub struct Completion {
+    pub id: String,
+    pub quest_id: Option<String>,
+    pub quest_title: String,
+    pub completed_at: String,
+    pub xp_earned: i64,
+    pub level_ups: Vec<LevelUp>,
+    pub xp_awards: Vec<XpAward>,
+    pub difficulty: Option<String>,
+    pub skills: Option<Vec<String>>,
+    pub attributes: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
 }
 ```
 
-Delete `includes_difficulty`.
+`skills`, `attributes`, and `tags` are `Option<Vec<String>>` — serde serializes these as JSON arrays (matching the CLI pattern) or null. The raw column is a JSON string, deserialized on read.
 
-### 2. Update the call site in `get_quest_scores`
+---
+
+## Read Path
+
+`get_completions` (~line 2392):
 
 ```rust
-// before
-.filter(|q| lane.includes_difficulty(&q.difficulty))
-// after
-.filter(|q| lane.includes(&q.difficulty, q.cycle_days))
+"SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, skills, attributes, tags
+ FROM quest_completion
+ ORDER BY completed_at DESC"
 ```
 
-### 3. Update `lane_for_difficulty_rank`
-
-Under the new rules, this function is only called for non-daily sagas. It should never return `CastleDuties` — that's decided by cadence in the caller.
+In the row mapper:
 
 ```rust
-fn lane_for_difficulty_rank(rank: u8) -> Lane {
-    match rank {
-        3 | 4 | 5 => Lane::RoyalQuests,
-        _ => Lane::Adventures,  // 1 (trivial) or 2 (easy)
-    }
-}
+Ok(Completion {
+    id: row.get(0)?,
+    quest_id: row.get(1)?,
+    quest_title: row.get(2)?,
+    completed_at: row.get(3)?,
+    xp_earned: row.get(4)?,
+    level_ups: Vec::new(),
+    xp_awards: Vec::new(),
+    difficulty: row.get(5)?,
+    skills: row.get::<_, Option<String>>(6)?.and_then(|s| serde_json::from_str(&s).ok()),
+    attributes: row.get::<_, Option<String>>(7)?.and_then(|s| serde_json::from_str(&s).ok()),
+    tags: row.get::<_, Option<String>>(8)?.and_then(|s| serde_json::from_str(&s).ok()),
+})
 ```
 
-### 4. Update `get_active_saga_steps` to check cadence first
+---
+
+## CLI: `list-history` Command
+
+The CLI has no way to query completion history today. Add `list-history` so external analysis tools can access completions through the same interface they use for quests, skills, etc.
+
+### Command definition
+
+In `src-cli/src/main.rs`, add to the `Commands` enum:
 
 ```rust
-// before
-let max_rank = steps.iter().map(|s| difficulty_rank(&s.difficulty)).max().unwrap_or(1);
-let saga_lane = lane_for_difficulty_rank(max_rank);
-
-// after
-let saga_lane = if saga.cycle_days == Some(1) {
-    Lane::CastleDuties
-} else {
-    let max_rank = steps.iter().map(|s| difficulty_rank(&s.difficulty)).max().unwrap_or(1);
-    lane_for_difficulty_rank(max_rank)
-};
+/// List completion history as JSON
+ListHistory,
 ```
 
-### 5. Update existing tests to match new rules
-
-Three tests assert the old difficulty-based lane rules and need updating:
-
-- **`lane_filter_trivial_only`** — now should assert that Castle Duties contains daily quests (any difficulty) and excludes non-daily quests
-- **`lane_filter_adventures`** — now should assert Adventures contains non-daily trivial/easy and excludes daily quests
-- **`lane_filter_royal`** — now should assert Royal Quests contains non-daily moderate+ and excludes daily quests
-
-Existing saga tests to check:
-
-- **`saga_lane_inference_from_hardest_step`** — ensure the test uses a non-daily saga (cycle_days != Some(1)). If it uses a daily saga, update to a non-daily cycle. Still a valid test for the difficulty-based fallback path.
-- **`saga_with_only_easy_steps_in_adventures`** — same check. Must be non-daily. Under new rules, trivial-only non-daily sagas also go to Adventures, which is a behavior change this test doesn't cover alone.
-
-### 6. Add new tests
+### Output struct
 
 ```rust
-#[test]
-fn lane_daily_moderate_in_castle_duties() {
-    // Moderate quest with cycle_days=1 appears in Castle Duties, not Royal Quests
+#[derive(Serialize)]
+struct CompletionOutput {
+    id: String,
+    quest_id: Option<String>,
+    quest_title: String,
+    completed_at: String,
+    xp_earned: i64,
+    difficulty: Option<String>,
+    skills: Option<Vec<String>>,
+    attributes: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+    level_ups: Vec<LevelUpOutput>,
+    xp_awards: Vec<XpAwardOutput>,
 }
 
-#[test]
-fn lane_daily_epic_in_castle_duties() {
-    // Epic quest with cycle_days=1 appears in Castle Duties, not Royal Quests
+#[derive(Serialize)]
+struct LevelUpOutput {
+    name: String,
+    new_level: i32,
 }
 
-#[test]
-fn lane_daily_trivial_still_in_castle_duties() {
-    // Trivial daily still in Castle Duties — regression guard
-}
-
-#[test]
-fn lane_weekly_trivial_in_adventures() {
-    // Trivial quest with cycle_days=7 appears in Adventures, not Castle Duties
-}
-
-#[test]
-fn lane_one_off_trivial_in_adventures() {
-    // One-off trivial appears in Adventures (not Castle Duties)
-}
-
-#[test]
-fn lane_weekly_moderate_still_in_royal_quests() {
-    // Regression guard for non-daily moderate
-}
-
-#[test]
-fn saga_daily_recurring_in_castle_duties() {
-    // Saga with cycle_days=Some(1) and epic steps appears in Castle Duties
-}
-
-#[test]
-fn saga_one_off_trivial_steps_in_adventures() {
-    // Non-daily saga (cycle_days=None) with only trivial steps goes to Adventures
-    // under new rules (would have been Castle Duties before)
-}
-
-#[test]
-fn saga_weekly_moderate_steps_in_royal_quests() {
-    // Non-daily saga with moderate steps still goes to Royal Quests
+#[derive(Serialize)]
+struct XpAwardOutput {
+    name: String,
+    xp: i64,
+    award_type: String,
 }
 ```
 
-### 7. Documentation updates
+`level_ups` and `xp_awards` are currently only populated at completion time for the GUI — they'll be empty arrays in history results today. Included for schema completeness so external tools pick them up if we ever persist them.
 
-**`docs/mechanics.md`** — "Lanes" section. Replace the existing table with the new decision table from requirements. Also update the "Lane Assignment" subsection under Sagas to reflect cadence-first rule.
+### Handler
 
-**`DATA_MODEL.md`** — "Quest Selector" > "Lanes" subsection. Replace the lane table. Update the "Saga steps appear in the lane matching their saga's hardest step difficulty" sentence to reflect the new rule (daily sagas in Castle Duties, otherwise by hardest step).
+```rust
+fn list_history(conn: &nq_core::rusqlite::Connection) -> Result<String, String> {
+    let completions = db::get_completions(conn)?;
 
-**`VISION.md`** — "Phase 3: The Three Quest Givers" section. Update the lane descriptions. Castle Duties is now "daily rhythm" rather than "trivial routine."
+    let output: Vec<CompletionOutput> = completions
+        .iter()
+        .map(|c| CompletionOutput {
+            id: c.id.clone(),
+            quest_id: c.quest_id.clone(),
+            quest_title: c.quest_title.clone(),
+            completed_at: c.completed_at.clone(),
+            xp_earned: c.xp_earned,
+            difficulty: c.difficulty.clone(),
+            skills: c.skills.clone(),
+            attributes: c.attributes.clone(),
+            tags: c.tags.clone(),
+            level_ups: c.level_ups.iter().map(|l| LevelUpOutput {
+                name: l.name.clone(),
+                new_level: l.new_level,
+            }).collect(),
+            xp_awards: c.xp_awards.iter().map(|a| XpAwardOutput {
+                name: a.name.clone(),
+                xp: a.xp,
+                award_type: a.award_type.clone(),
+            }).collect(),
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+}
+```
+
+Wire into the `match` in `run()`:
+
+```rust
+Commands::ListHistory => list_history(&conn),
+```
+
+---
+
+## What Does NOT Change
+
+- **Frontend** — no display changes. The new fields are available via `get_completions` but the history list in `ui/index.html` doesn't need to render them. This is for external analysis.
+- **Tauri commands** — `get_completions` and `complete_quest` already return `db::Completion`. The struct change flows through automatically.
+
+---
+
+## Tests
+
+In `nq-core/src/db.rs` tests:
+
+### 1. `complete_quest_snapshots_difficulty`
+
+Create a quest with `Difficulty::Moderate`, complete it, read completions, assert `difficulty == Some("moderate")`.
+
+### 2. `complete_quest_snapshots_skills_and_attributes`
+
+Create a quest, link it to skills (Cooking, Healing) and an attribute (Health), complete it, read completions, assert `skills == Some(vec!["Cooking", "Healing"])` and `attributes == Some(vec!["Health"])`.
+
+### 3. `complete_quest_snapshots_tags`
+
+Create a quest, link it to tags (Computer, Outside), complete it, read completions, assert `tags == Some(vec!["Computer", "Outside"])`.
+
+### 4. `complete_quest_no_links_snapshots_empty_arrays`
+
+Create a quest with no linked skills/attributes/tags, complete it, assert `skills == Some(vec![])`, `attributes == Some(vec![])`, `tags == Some(vec![])`.
+
+### 5. `bonus_completion_has_null_snapshots`
+
+Complete a one-off saga (triggering a bonus completion), read completions, find the bonus entry (`quest_id.is_none()`), assert `difficulty.is_none()`, `skills.is_none()`, `attributes.is_none()`, `tags.is_none()`.
+
+### 6. `old_completions_have_null_snapshots`
+
+Manually INSERT a completion without the new columns (simulating pre-migration data), read it back via `get_completions`, assert all four new fields are `None`.
+
+---
+
+## Documentation Updates
+
+**`DATA_MODEL.md`** — Add the four new fields to the Completion entity table. Add a note that these are snapshots captured at completion time and may be NULL for bonus completions or pre-migration records.
+
+**`docs/cli-guide.md`** — Add `list-history` command with usage, example output, and field descriptions.
 
 ---
 
 ## Verification
 
-1. **Tests pass:** `cargo test` — all existing tests updated, new tests pass.
-2. **Manual check — regular quests:**
-   - Create (or find) a daily moderate quest. Confirm it shows in Castle Duties.
-   - Create a weekly trivial quest. Confirm it shows in Adventures.
-   - Create a one-off trivial quest. Confirm it shows in Adventures.
-   - Create a weekly epic quest. Confirm it stays in Royal Quests.
-3. **Manual check — sagas:**
-   - Find a one-off saga with all trivial steps. Confirm it shows in Adventures (previously Castle Duties).
-   - Find a one-off saga with a moderate+ step. Confirm it stays in Royal Quests.
-4. **Encounters overlay:** Enable Call to Adventure. Confirm it surfaces Lane 1 quests (which now may include any-difficulty daily quests).
-5. **Existing quests:** Launch the app. Current daily quests redistribute into Lane 1; current weekly/one-off quests distribute into Lanes 2 and 3 by difficulty. Nothing should be missing from the lists — everything should just be in a different lane.
+1. `cargo test` — all existing tests pass, new tests pass
+2. Build the app: `cargo tauri build --debug`
+3. Complete a quest that has linked skills, attributes, and tags
+4. Check the completion history (visible in GUI) — no visual change expected
+5. Query the SQLite database directly to confirm the new columns are populated with correct snapshot values

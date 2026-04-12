@@ -32,6 +32,8 @@ enum Commands {
     ListSkills,
     /// List attributes as JSON
     ListAttributes,
+    /// List completion history as JSON
+    ListHistory,
     /// Create a new quest
     AddQuest {
         /// Quest title
@@ -178,6 +180,34 @@ struct AttributeOutput {
     xp_into_current_level: i64,
 }
 
+#[derive(Serialize)]
+struct CompletionOutput {
+    id: String,
+    quest_id: Option<String>,
+    quest_title: String,
+    completed_at: String,
+    xp_earned: i64,
+    difficulty: Option<String>,
+    skills: Option<Vec<String>>,
+    attributes: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+    level_ups: Vec<LevelUpOutput>,
+    xp_awards: Vec<XpAwardOutput>,
+}
+
+#[derive(Serialize)]
+struct LevelUpOutput {
+    name: String,
+    new_level: i32,
+}
+
+#[derive(Serialize)]
+struct XpAwardOutput {
+    name: String,
+    xp: i64,
+    award_type: String,
+}
+
 // --- Bitmask-to-name helpers ---
 
 fn time_of_day_names(mask: i32) -> Vec<String> {
@@ -287,6 +317,7 @@ fn run(command: Commands) -> Result<String, String> {
         Commands::ListTags => list_tags(&conn),
         Commands::ListSkills => list_skills(&conn),
         Commands::ListAttributes => list_attributes(&conn),
+        Commands::ListHistory => list_history(&conn),
         Commands::AddQuest {
             title, difficulty, quest_type, importance,
             cycle_days, time_of_day, days_of_week,
@@ -453,6 +484,36 @@ fn list_attributes(conn: &nq_core::rusqlite::Connection) -> Result<String, Strin
             level: a.level,
             xp_for_current_level: a.xp_for_current_level,
             xp_into_current_level: a.xp_into_current_level,
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+}
+
+fn list_history(conn: &nq_core::rusqlite::Connection) -> Result<String, String> {
+    let completions = db::get_completions(conn)?;
+
+    let output: Vec<CompletionOutput> = completions
+        .iter()
+        .map(|c| CompletionOutput {
+            id: c.id.clone(),
+            quest_id: c.quest_id.clone(),
+            quest_title: c.quest_title.clone(),
+            completed_at: c.completed_at.clone(),
+            xp_earned: c.xp_earned,
+            difficulty: c.difficulty.clone(),
+            skills: c.skills.clone(),
+            attributes: c.attributes.clone(),
+            tags: c.tags.clone(),
+            level_ups: c.level_ups.iter().map(|l| LevelUpOutput {
+                name: l.name.clone(),
+                new_level: l.new_level,
+            }).collect(),
+            xp_awards: c.xp_awards.iter().map(|a| XpAwardOutput {
+                name: a.name.clone(),
+                xp: a.xp,
+                award_type: a.award_type.clone(),
+            }).collect(),
         })
         .collect();
 
