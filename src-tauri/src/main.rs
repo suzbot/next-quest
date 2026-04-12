@@ -176,6 +176,11 @@ fn cta_poll_loop(app: tauri::AppHandle) {
             .unwrap_or(false);
 
         if window_focused {
+            // Reset the countdown so the overlay doesn't ambush the user
+            // the instant they navigate away from NQ.
+            let tray_state = app.state::<AppTrayState>();
+            let mut tray = tray_state.0.lock().unwrap();
+            tray.reset_fire_time();
             continue;
         }
 
@@ -199,6 +204,35 @@ fn cta_poll_loop(app: tauri::AppHandle) {
     }
 }
 
+/// After showing the overlay, push the main window behind other apps so it doesn't
+/// get pulled forward by macOS app activation. Uses the native NSWindow to order the
+/// window back without hiding it. Dispatches to the main thread since Cocoa UI
+/// operations are not safe from background threads.
+#[cfg(target_os = "macos")]
+fn push_main_window_back(app: &tauri::AppHandle) {
+    if let Some(main_window) = app.get_webview_window("main") {
+        if let Ok(ns_window_ptr) = main_window.ns_window() {
+            // ns_window_ptr is a raw pointer to the NSWindow; safe to send to the main
+            // thread because AppKit objects are main-thread-only and we dispatch there.
+            let ptr = ns_window_ptr as usize; // usize is Send
+            let _ = app.run_on_main_thread(move || {
+                let ns_window = ptr as *mut std::ffi::c_void;
+                extern "C" {
+                    fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+                    fn objc_msgSend(receiver: *mut std::ffi::c_void, sel: *mut std::ffi::c_void, ...);
+                }
+                unsafe {
+                    let sel = sel_registerName(b"orderBack:\0".as_ptr() as *const _);
+                    objc_msgSend(ns_window, sel, std::ptr::null::<std::ffi::c_void>());
+                }
+            });
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn push_main_window_back(_app: &tauri::AppHandle) {}
+
 fn show_overlay(app: &tauri::AppHandle) {
     use tauri::WebviewWindowBuilder;
 
@@ -209,6 +243,7 @@ fn show_overlay(app: &tauri::AppHandle) {
         let _ = overlay.center();
         let _ = overlay.set_always_on_top(true);
         let _ = overlay.set_focus();
+        push_main_window_back(app);
         return;
     }
 
@@ -229,7 +264,7 @@ fn show_overlay(app: &tauri::AppHandle) {
     .focused(true)
     .build()
     {
-        Ok(_) => {}
+        Ok(_) => push_main_window_back(app),
         Err(e) => eprintln!("[CTA] Failed to create overlay: {}", e),
     }
 }
