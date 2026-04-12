@@ -690,6 +690,9 @@ pub fn dismiss_overlay(
             tray.reset_fire_time();
         }
         "later" => {
+            // Deactivate the app so focus returns to whatever the user was working on,
+            // rather than macOS activating the main window when the overlay hides.
+            let _ = app.hide();
             let mut tray = tray_state.0.lock().map_err(|e| e.to_string())?;
             tray.reset_fire_time();
         }
