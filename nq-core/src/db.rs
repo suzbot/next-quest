@@ -411,10 +411,10 @@ pub struct CampaignCompletionResult {
 #[serde(rename_all = "camelCase")]
 pub struct Accomplishment {
     pub id: String,
-    pub campaign_id: Option<String>,
-    pub campaign_name: String,
+    pub source_type: String,
+    pub source_id: Option<String>,
+    pub name: String,
     pub completed_at: String,
-    pub bonus_xp: i64,
 }
 
 pub fn init_db(db_path: &Path) -> Connection {
@@ -545,10 +545,10 @@ fn create_tables(conn: &Connection) {
 
         CREATE TABLE IF NOT EXISTS accomplishment (
             id             TEXT PRIMARY KEY,
-            campaign_id    TEXT,
-            campaign_name  TEXT NOT NULL,
-            completed_at   TEXT NOT NULL,
-            bonus_xp       INTEGER NOT NULL DEFAULT 0
+            source_type    TEXT NOT NULL,
+            source_id      TEXT,
+            name           TEXT NOT NULL,
+            completed_at   TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS not_today (
             quest_id       TEXT PRIMARY KEY,
@@ -824,6 +824,34 @@ fn migrate(conn: &Connection) {
     // together, the migration condition (saga_min <= quest_max) triggers incorrectly
     // after mixed reordering. New databases already use unified sort_orders from creation.
 
+    // Migration: refactor accomplishment table to generic source_type/source_id/name
+    let has_source_type: bool = conn
+        .prepare("SELECT source_type FROM accomplishment LIMIT 0")
+        .is_ok();
+
+    if !has_source_type {
+        // Old schema might not exist yet (campaign tables created lazily below)
+        let has_accomplishment: bool = conn
+            .prepare("SELECT id FROM accomplishment LIMIT 0")
+            .is_ok();
+
+        if has_accomplishment {
+            conn.execute_batch(
+                "CREATE TABLE accomplishment_new (
+                    id           TEXT PRIMARY KEY,
+                    source_type  TEXT NOT NULL,
+                    source_id    TEXT,
+                    name         TEXT NOT NULL,
+                    completed_at TEXT NOT NULL
+                );
+                INSERT INTO accomplishment_new (id, source_type, source_id, name, completed_at)
+                    SELECT id, 'campaign', campaign_id, campaign_name, completed_at FROM accomplishment;
+                DROP TABLE accomplishment;
+                ALTER TABLE accomplishment_new RENAME TO accomplishment;"
+            ).expect("Failed to migrate accomplishment table");
+        }
+    }
+
     // Migration: create campaign tables if missing
     let has_campaign: bool = conn
         .prepare("SELECT id FROM campaign LIMIT 0")
@@ -851,10 +879,10 @@ fn migrate(conn: &Connection) {
 
             CREATE TABLE IF NOT EXISTS accomplishment (
                 id             TEXT PRIMARY KEY,
-                campaign_id    TEXT,
-                campaign_name  TEXT NOT NULL,
-                completed_at   TEXT NOT NULL,
-                bonus_xp       INTEGER NOT NULL DEFAULT 0
+                source_type    TEXT NOT NULL,
+                source_id      TEXT,
+                name           TEXT NOT NULL,
+                completed_at   TEXT NOT NULL
             );"
         ).expect("Failed to create campaign tables");
     }
@@ -1135,6 +1163,12 @@ pub fn delete_saga(conn: &Connection, saga_id: String) -> Result<(), String> {
         rusqlite::params![saga_id],
     ).map_err(|e| e.to_string())?;
 
+    // Orphan any accomplishments (keep name snapshot, null the source_id)
+    conn.execute(
+        "UPDATE accomplishment SET source_id = NULL WHERE source_type = 'saga' AND source_id = ?1",
+        rusqlite::params![saga_id],
+    ).map_err(|e| e.to_string())?;
+
     conn.execute(
         "DELETE FROM quest WHERE saga_id = ?1",
         rusqlite::params![saga_id],
@@ -1405,6 +1439,32 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCom
         ).map_err(|e| e.to_string())?;
     }
 
+    // One-off saga completion: create accomplishment and deactivate saga + steps
+    if saga.cycle_days.is_none() {
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM accomplishment WHERE source_type = 'saga' AND source_id = ?1",
+            rusqlite::params![saga_id],
+            |row| row.get::<_, i32>(0).map(|c| c > 0),
+        ).map_err(|e| e.to_string())?;
+
+        if !exists {
+            conn.execute(
+                "INSERT INTO accomplishment (id, source_type, source_id, name, completed_at) VALUES (?1, 'saga', ?2, ?3, ?4)",
+                rusqlite::params![Uuid::new_v4().to_string(), saga_id, saga.name, now],
+            ).map_err(|e| e.to_string())?;
+        }
+
+        // Deactivate saga and its steps — mirrors complete_quest's active=0 for one-off quests
+        conn.execute(
+            "UPDATE saga SET active = 0 WHERE id = ?1",
+            rusqlite::params![saga_id],
+        ).map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE quest SET active = 0 WHERE saga_id = ?1",
+            rusqlite::params![saga_id],
+        ).map_err(|e| e.to_string())?;
+    }
+
     Ok(SagaCompletionResult {
         completed: true,
         saga_id: saga.id,
@@ -1457,12 +1517,15 @@ pub fn get_sagas_with_progress(conn: &Connection) -> Result<Vec<SagaWithProgress
 
         let run_start = saga.last_run_completed_at.as_deref().unwrap_or(&saga.created_at).to_string();
 
-        // Check if saga is due (for recurring)
-        let is_due = if let (Some(ref last_run), Some(cycle)) = (&saga.last_run_completed_at, saga.cycle_days) {
+        // Check if saga is due
+        let is_one_off = saga.cycle_days.is_none();
+        let is_due = if is_one_off && saga.last_run_completed_at.is_some() {
+            false // Completed one-off saga — permanently done
+        } else if let (Some(ref last_run), Some(cycle)) = (&saga.last_run_completed_at, saga.cycle_days) {
             let last_run_days = utc_iso_to_local_days(last_run).unwrap_or(0);
             today >= last_run_days + cycle as i64
         } else {
-            true // One-off or never completed = due
+            true // One-off never completed, or recurring never completed = due
         };
 
         // Always count completions after run_start — even during cooldown,
@@ -1503,6 +1566,9 @@ pub fn get_active_saga_steps(conn: &Connection) -> Result<Vec<(Quest, String, St
 
     for saga in &sagas {
         if !saga.active { continue; }
+
+        // Completed one-off sagas don't produce candidates
+        if saga.cycle_days.is_none() && saga.last_run_completed_at.is_some() { continue; }
 
         let steps = get_saga_steps(conn, &saga.id)?;
         if steps.is_empty() { continue; }
@@ -1765,7 +1831,7 @@ pub fn delete_campaign(conn: &Connection, id: String) -> Result<(), String> {
 
     // Orphan any accomplishments
     conn.execute(
-        "UPDATE accomplishment SET campaign_id = NULL WHERE campaign_id = ?1",
+        "UPDATE accomplishment SET source_id = NULL WHERE source_type = 'campaign' AND source_id = ?1",
         rusqlite::params![id],
     )
     .map_err(|e| e.to_string())?;
@@ -1790,7 +1856,7 @@ pub fn delete_campaign(conn: &Connection, id: String) -> Result<(), String> {
 pub fn get_accomplishments(conn: &Connection) -> Result<Vec<Accomplishment>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, campaign_id, campaign_name, completed_at, bonus_xp
+            "SELECT id, source_type, source_id, name, completed_at
              FROM accomplishment
              ORDER BY completed_at DESC",
         )
@@ -1800,10 +1866,10 @@ pub fn get_accomplishments(conn: &Connection) -> Result<Vec<Accomplishment>, Str
         .query_map([], |row| {
             Ok(Accomplishment {
                 id: row.get(0)?,
-                campaign_id: row.get(1)?,
-                campaign_name: row.get(2)?,
-                completed_at: row.get(3)?,
-                bonus_xp: row.get(4)?,
+                source_type: row.get(1)?,
+                source_id: row.get(2)?,
+                name: row.get(3)?,
+                completed_at: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1945,8 +2011,8 @@ pub fn check_campaign_progress(
             // Create accomplishment record
             let accomplishment_id = Uuid::new_v4().to_string();
             conn.execute(
-                "INSERT INTO accomplishment (id, campaign_id, campaign_name, completed_at, bonus_xp) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![accomplishment_id, campaign_id, campaign_name, now, bonus_xp],
+                "INSERT INTO accomplishment (id, source_type, source_id, name, completed_at) VALUES (?1, 'campaign', ?2, ?3, ?4)",
+                rusqlite::params![accomplishment_id, campaign_id, campaign_name, now],
             ).map_err(|e| e.to_string())?;
 
             // Record bonus in completion history
@@ -5702,9 +5768,9 @@ mod tests {
 
         let accomplishments = get_accomplishments(&conn).unwrap();
         assert_eq!(accomplishments.len(), 1);
-        assert_eq!(accomplishments[0].campaign_name, "Accomplishment Test");
-        assert_eq!(accomplishments[0].bonus_xp, 13); // easy weekly: round(0.20 * 66) = 13
-        assert!(accomplishments[0].campaign_id.is_some());
+        assert_eq!(accomplishments[0].name, "Accomplishment Test");
+        assert_eq!(accomplishments[0].source_type, "campaign");
+        assert!(accomplishments[0].source_id.is_some());
         assert!(!accomplishments[0].completed_at.is_empty());
     }
 
@@ -5797,14 +5863,99 @@ mod tests {
         check_campaign_progress(&conn, "quest_completions", &q.id).unwrap();
         let accomplishments = get_accomplishments(&conn).unwrap();
         assert_eq!(accomplishments.len(), 1);
-        assert!(accomplishments[0].campaign_id.is_some());
+        assert!(accomplishments[0].source_id.is_some());
+        assert_eq!(accomplishments[0].source_type, "campaign");
 
         delete_campaign(&conn, c.id).unwrap();
 
         let accomplishments = get_accomplishments(&conn).unwrap();
         assert_eq!(accomplishments.len(), 1);
-        assert!(accomplishments[0].campaign_id.is_none()); // orphaned
-        assert_eq!(accomplishments[0].campaign_name, "Orphan Test"); // name snapshot survives
+        assert!(accomplishments[0].source_id.is_none()); // orphaned
+        assert_eq!(accomplishments[0].name, "Orphan Test"); // name snapshot survives
+    }
+
+    #[test]
+    fn one_off_saga_completion_creates_accomplishment() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Move to New Apartment".into(), None).unwrap();
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Pack boxes".into(),
+            ..Default::default()
+        }).unwrap();
+        complete_quest(&conn, step.id).unwrap();
+        let result = check_saga_completion(&conn, &s.id).unwrap();
+        assert!(result.completed);
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+        assert_eq!(accomplishments[0].source_type, "saga");
+        assert_eq!(accomplishments[0].source_id.as_deref(), Some(s.id.as_str()));
+        assert_eq!(accomplishments[0].name, "Move to New Apartment");
+    }
+
+    #[test]
+    fn recurring_saga_completion_does_not_create_accomplishment() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Weekly Laundry".into(), Some(7)).unwrap();
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Wash clothes".into(),
+            ..Default::default()
+        }).unwrap();
+        complete_quest(&conn, step.id).unwrap();
+        let result = check_saga_completion(&conn, &s.id).unwrap();
+        assert!(result.completed);
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 0);
+    }
+
+    #[test]
+    fn one_off_saga_accomplishment_dedup() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Dedup Test".into(), None).unwrap();
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Only step".into(),
+            ..Default::default()
+        }).unwrap();
+        complete_quest(&conn, step.id).unwrap();
+        check_saga_completion(&conn, &s.id).unwrap();
+
+        // Call check_saga_completion again — should not create a duplicate
+        check_saga_completion(&conn, &s.id).unwrap();
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+    }
+
+    #[test]
+    fn delete_one_off_saga_orphans_accomplishment() {
+        let conn = test_db();
+        let s = add_saga(&conn, "Orphan Saga Test".into(), None).unwrap();
+        conn.execute("UPDATE saga SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1", rusqlite::params![s.id]).unwrap();
+        let step = add_saga_step(&conn, NewSagaStep {
+            saga_id: s.id.clone(),
+            title: "Do the thing".into(),
+            ..Default::default()
+        }).unwrap();
+        complete_quest(&conn, step.id).unwrap();
+        check_saga_completion(&conn, &s.id).unwrap();
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+        assert!(accomplishments[0].source_id.is_some());
+
+        delete_saga(&conn, s.id).unwrap();
+
+        let accomplishments = get_accomplishments(&conn).unwrap();
+        assert_eq!(accomplishments.len(), 1);
+        assert!(accomplishments[0].source_id.is_none()); // orphaned
+        assert_eq!(accomplishments[0].name, "Orphan Saga Test"); // name snapshot survives
     }
 
     // --- Stored last_completed tests ---

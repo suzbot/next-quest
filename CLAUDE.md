@@ -67,7 +67,7 @@ Cargo workspace with three crates:
 
 ### Data Model
 
-See [DATA_MODEL.md](DATA_MODEL.md) for entities, relationships, and quest selector logic.
+See [DATA_MODEL.md](DATA_MODEL.md) for entities, relationships, and quest selector logic. **Read DATA_MODEL.md first when troubleshooting bugs or understanding current behavior** — it describes lifecycle rules (e.g., how `active` flags, completion states, and scoring interact) that are easy to miss when reading code in isolation.
 
 ## Collaboration
 

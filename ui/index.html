@@ -2714,10 +2714,9 @@
         ? '<div class="empty-state" style="font-size: 10px; color: #777;">No accomplishments yet.</div>'
         : accomplishments.map(a => `
           <div class="accomplishment-row">
-            <div class="accomplishment-name">${escapeHtml(a.campaignName)}</div>
+            <div class="accomplishment-name">${escapeHtml(a.name)}</div>
             <div class="accomplishment-detail">
               <span>${formatTimestamp(a.completedAt)}</span>
-              ${a.bonusXp > 0 ? `<span style="color: #7a5500">+${a.bonusXp} XP</span>` : ''}
               <button class="del-x" onclick="deleteAccomplishment('${a.id}')">✕</button>
             </div>
           </div>

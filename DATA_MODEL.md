@@ -110,7 +110,7 @@ A multi-step goal with ordered sub-quests. Can be one-off or recurring.
 | name | String | Saga title |
 | cycle_days | Integer? | NULL = one-off, set = recurring (days after run completion before reset) |
 | sort_order | Integer | Display order. Shares a unified namespace with quest sort_order — sagas and quests are interleaved on the quest list by this value. |
-| active | Bool (int) | 1 = active |
+| active | Bool (int) | 1 = active, 0 = deactivated (completed one-off) |
 | created_at | Timestamp | ISO 8601 creation time |
 | last_run_completed_at | Timestamp? | Stamped when all steps complete a run. Drives recurring reset and cooldown styling. Not recomputed — permanent once stamped. |
 
@@ -120,6 +120,7 @@ A multi-step goal with ordered sub-quests. Can be one-off or recurring.
 - A saga is due when: one-off and incomplete, or recurring and `cycle_days` have elapsed since `last_run_completed_at`, or user has started a new run early (any steps completed after stamp).
 - The quest giver surfaces one active step per saga: the first step (by step_order) not yet completed in the current run.
 - When all steps have a current-run completion, `last_run_completed_at` is stamped and a completion bonus is awarded.
+- One-off sagas are deactivated (`active = 0`) on completion, along with all their steps. This mirrors one-off quest deactivation — they sort to the bottom of lists, get dimmed styling, and are excluded from the quest giver.
 
 ### Campaign
 A user-defined collection of criteria tracking progress toward a larger accomplishment.
@@ -162,20 +163,22 @@ A single requirement within a campaign. Tracks completions of a specific quest o
 - Progress is tracked by `check_campaign_progress`, called from the frontend after every quest or saga completion across all five completion paths (quest list, quest giver, timer, saga tab, overlay).
 
 ### Accomplishment
-A permanent record of completing a campaign. Created when a campaign completes.
+A permanent record of completing a campaign or one-off saga. Displayed on the Character tab.
 
 | Field | Type | Description |
 |---|---|---|
 | id | UUID (text) | Unique identifier |
-| campaign_id | UUID? (text) | FK to Campaign. NULL if campaign deleted. |
-| campaign_name | String | Snapshot of campaign name at completion time |
+| source_type | String | `"campaign"` or `"saga"` |
+| source_id | UUID? (text) | FK to Campaign or Saga. NULL if source deleted. |
+| name | String | Snapshot of source name at completion time |
 | completed_at | Timestamp | ISO 8601 |
-| bonus_xp | Integer | XP awarded (0 until Phase 2G.2-3 wires bonus calculation) |
 
 **Rules:**
-- Parallels how completions relate to quests — the accomplishment survives campaign deletion.
+- Created automatically when a campaign completes or a one-off saga completes.
+- Survives source deletion — deleting a campaign or saga nulls `source_id` but keeps the name snapshot.
+- Recurring sagas do not create accomplishments (completing a run is the cycle turning over, not a permanent milestone).
+- Deduped on `(source_type, source_id)` — one accomplishment per source.
 - Individually deletable. Deleting an accomplishment does NOT reduce XP.
-- Table exists but accomplishment records are not yet created (Phase 2G.2-3).
 
 ### Quest-Skill Link (quest_skill)
 Many-to-many join table between quests and skills.
@@ -224,7 +227,8 @@ Quest (M) ──── many-to-many ──── Attribute   (via quest_attribut
 Quest (M) ──── many-to-many ──── Tag          (via quest_tag)
 Saga (1) ──── has many ──── Quest            (via quest.saga_id)
 Campaign (1) ──── has many ──── Campaign Criterion
-Campaign (1) ──── has many ──── Accomplishment
+Campaign (1) ──── has many ──── Accomplishment  (via source_type = "campaign")
+Saga (1-off) ──── has one ──── Accomplishment   (via source_type = "saga")
 Attribute (1) ──── has many ──── Skill
 Character (singleton)
 ```
@@ -233,6 +237,7 @@ Completions reference quests via `quest_id`, but the FK is nullable — completi
 survive quest deletion. Deleting a quest also cleans up its link rows in quest_skill
 and quest_attribute. Deleting a saga deletes its steps and orphans their completions.
 Deleting a campaign deletes its criteria and orphans its accomplishments.
+Deleting a saga orphans its accomplishments.
 
 ## XP Engine
 
