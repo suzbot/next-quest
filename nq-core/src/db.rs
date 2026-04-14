@@ -2216,8 +2216,12 @@ pub fn get_quest_list(conn: &Connection) -> Result<Vec<QuestListItem>, String> {
         });
     }
 
-    // Sort by sort_order descending (same as quest list)
-    items.sort_by(|a, b| b.sort_order.cmp(&a.sort_order));
+    // Sort: active items first (by sort_order desc), then inactive at the bottom
+    items.sort_by(|a, b| {
+        let a_active = a.quest.as_ref().map_or(true, |q| q.active);
+        let b_active = b.quest.as_ref().map_or(true, |q| q.active);
+        b_active.cmp(&a_active).then(b.sort_order.cmp(&a.sort_order))
+    });
 
     Ok(items)
 }
