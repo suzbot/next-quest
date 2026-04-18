@@ -126,9 +126,15 @@ fn format_countdown(remaining_ms: u64) -> String {
 }
 
 fn update_tray_title(app: &tauri::AppHandle, title: &str) {
-    if let Some(tray) = app.tray_by_id("nq_tray") {
-        let _ = tray.set_title(Some(title));
-    }
+    let handle = app.clone();
+    let title = title.to_string();
+    let _ = app.run_on_main_thread(move || {
+        // set_title must run on the main thread — macOS NSStatusItem
+        // operations from background threads can corrupt the status item.
+        if let Some(tray) = handle.tray_by_id("nq_tray") {
+            let _ = tray.set_title(Some(&title));
+        }
+    });
 }
 
 fn cta_poll_loop(app: tauri::AppHandle) {
