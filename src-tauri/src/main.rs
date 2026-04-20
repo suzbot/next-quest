@@ -66,6 +66,7 @@ fn main() {
             commands::update_quest,
             commands::delete_quest,
             commands::delete_completion,
+            commands::update_completion_date,
             commands::reorder_list,
             commands::dismiss_quest_today,
             commands::get_character,

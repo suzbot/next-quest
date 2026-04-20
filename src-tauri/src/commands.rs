@@ -345,6 +345,16 @@ pub fn delete_completion(
 }
 
 #[tauri::command]
+pub fn update_completion_date(
+    state: State<DbState>,
+    completion_id: String,
+    completed_at: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::update_completion_date(&conn, completion_id, completed_at)
+}
+
+#[tauri::command]
 pub fn get_character(state: State<DbState>) -> Result<db::Character, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::get_character(&conn)

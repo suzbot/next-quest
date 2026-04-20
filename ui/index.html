@@ -1735,10 +1735,15 @@
       completionList.innerHTML = completions
         .map(c => {
           const xpText = c.xp_earned > 0 ? `<span class="completion-xp">+${c.xp_earned} XP</span>` : "";
+          const completionDate = c.completed_at.substring(0, 10);
           return `<li class="completion-item">
             <span class="completion-title">${escapeHtml(c.quest_title)}</span>
             ${xpText}
             <span class="completion-time">${formatTimestamp(c.completed_at)}</span>
+            <span class="last-done-picker-wrap">
+              <span class="last-done-picker-icon" onclick="this.nextElementSibling.showPicker()" title="Edit completion date">&#x270E;</span>
+              <input type="date" class="last-done-picker-input" value="${completionDate}" max="${new Date().toISOString().substring(0, 10)}" onchange="setCompletionDate('${c.id}', this.value)">
+            </span>
             <button onclick="deleteCompletion('${c.id}')">Del</button>
           </li>`;
         })
@@ -1942,6 +1947,13 @@
 
     async function deleteCompletion(id) {
       await invoke("delete_completion", { completionId: id });
+      await loadAll();
+    }
+
+    async function setCompletionDate(id, dateStr) {
+      if (!dateStr) return;
+      const completedAt = new Date(dateStr + "T00:01:00").toISOString().replace(/\.\d{3}Z$/, "Z");
+      await invoke("update_completion_date", { completionId: id, completedAt });
       await loadAll();
     }
 

@@ -3042,6 +3042,21 @@ pub fn delete_completion(conn: &Connection, completion_id: String) -> Result<(),
     Ok(())
 }
 
+pub fn update_completion_date(conn: &Connection, completion_id: String, completed_at: String) -> Result<(), String> {
+    let rows = conn
+        .execute(
+            "UPDATE quest_completion SET completed_at = ?1 WHERE id = ?2",
+            rusqlite::params![completed_at, completion_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Completion not found: {}", completion_id));
+    }
+
+    Ok(())
+}
+
 pub fn reset_character(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "UPDATE character SET xp = 0;

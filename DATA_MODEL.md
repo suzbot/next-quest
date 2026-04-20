@@ -59,6 +59,7 @@ A visible record that you did a quest at a specific time, or that a bonus was aw
 - Quests and completions are independent: deleting a quest orphans (not deletes) its completions.
 - Saga completion bonuses and campaign completion bonuses are also recorded as completions with `quest_id: NULL` and a descriptive title. These appear in the history list and count toward daily XP stats.
 - Individually deletable. Deleting a completion does NOT reduce XP — XP only goes up.
+- Completion date is editable via the pencil icon on the history list. Changing the date does not affect XP.
 
 ### Character
 The player's RPG avatar. Exactly one row, seeded on first launch.

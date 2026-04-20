@@ -154,6 +154,13 @@ Your **character** is your overall RPG avatar. It levels up from all quest XP.
 
 **Accomplishments** are permanent records of completed [campaigns](#campaigns). They appear on the Character tab as a history of milestones you've achieved. Accomplishments survive even if the campaign is later deleted.
 
+## Completion History
+
+The history list on the Quest List tab shows every quest completion and bonus entry, newest first. Each entry records the quest title, XP earned, and the date it was completed.
+
+- **Edit date:** Click the pencil icon next to a completion's date to change when it was recorded. Does not affect XP.
+- **Delete:** Click "Del" to remove a completion from the visible history. Does not reduce XP — XP only goes up.
+
 ## Quest Scoring
 
 Quests are presented by the quest giver based on an internal scoring system, with highest scoring eligible quests being presented first.
