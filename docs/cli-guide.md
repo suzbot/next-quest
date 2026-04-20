@@ -116,6 +116,7 @@ nq list-history
 | completed_at | string | ISO 8601 timestamp |
 | xp_earned | int | XP awarded |
 | difficulty | string or null | Quest difficulty at completion time. Null for bonus entries or pre-migration records. |
+| cycle_days | int or null | Effective cycle_days at completion time. Null for one-off quests, bonus entries, or pre-migration records. |
 | skills | string[] or null | Linked skill names at completion time. Null for bonus entries or pre-migration records. |
 | attributes | string[] or null | Linked attribute names at completion time. Null for bonus entries or pre-migration records. |
 | tags | string[] or null | Linked tag names at completion time. Null for bonus entries or pre-migration records. |
@@ -132,6 +133,7 @@ nq list-history
     "completed_at": "2026-04-12T14:30:00Z",
     "xp_earned": 20,
     "difficulty": "easy",
+    "cycle_days": 7,
     "skills": ["Healing"],
     "attributes": ["Health"],
     "tags": ["Inside"],
@@ -145,6 +147,7 @@ nq list-history
     "completed_at": "2026-04-12T14:30:00Z",
     "xp_earned": 15,
     "difficulty": null,
+    "cycle_days": null,
     "skills": null,
     "attributes": null,
     "tags": null,

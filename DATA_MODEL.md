@@ -49,6 +49,7 @@ A visible record that you did a quest at a specific time, or that a bonus was aw
 | completed_at | Timestamp | ISO 8601 completion time |
 | xp_earned | Integer | XP awarded for this completion |
 | difficulty | String? | Snapshot of quest difficulty at completion time (e.g., "easy", "moderate"). NULL for bonus completions or pre-migration records. |
+| cycle_days | Integer? | Snapshot of effective cycle_days at completion time. NULL for one-off quests, bonus completions, or pre-migration records. Saga steps use the parent saga's cycle_days. |
 | skills | JSON String? | Snapshot of linked skill names at completion time (e.g., `["Cooking", "Healing"]`). NULL for bonus completions or pre-migration records. |
 | attributes | JSON String? | Snapshot of linked attribute names at completion time (e.g., `["Health"]`). NULL for bonus completions or pre-migration records. |
 | tags | JSON String? | Snapshot of linked tag/category names at completion time (e.g., `["Computer"]`). NULL for bonus completions or pre-migration records. |

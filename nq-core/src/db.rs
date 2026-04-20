@@ -283,6 +283,7 @@ pub struct Completion {
     pub level_ups: Vec<LevelUp>,
     pub xp_awards: Vec<XpAward>,
     pub difficulty: Option<String>,
+    pub cycle_days: Option<i32>,
     pub skills: Option<Vec<String>>,
     pub attributes: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
@@ -466,6 +467,7 @@ fn create_tables(conn: &Connection) {
             completed_at  TEXT NOT NULL,
             xp_earned     INTEGER NOT NULL DEFAULT 0,
             difficulty    TEXT,
+            cycle_days    INTEGER,
             skills        TEXT,
             attributes    TEXT,
             tags          TEXT
@@ -868,10 +870,22 @@ fn migrate(conn: &Connection) {
     if !has_completion_difficulty {
         conn.execute_batch(
             "ALTER TABLE quest_completion ADD COLUMN difficulty TEXT;
+             ALTER TABLE quest_completion ADD COLUMN cycle_days INTEGER;
              ALTER TABLE quest_completion ADD COLUMN skills TEXT;
              ALTER TABLE quest_completion ADD COLUMN attributes TEXT;
              ALTER TABLE quest_completion ADD COLUMN tags TEXT;"
         ).expect("Failed to add snapshot columns to quest_completion");
+    }
+
+    // Migration: add cycle_days snapshot column to quest_completion
+    let has_completion_cycle_days: bool = conn
+        .prepare("SELECT cycle_days FROM quest_completion LIMIT 0")
+        .is_ok();
+
+    if !has_completion_cycle_days {
+        conn.execute_batch(
+            "ALTER TABLE quest_completion ADD COLUMN cycle_days INTEGER;"
+        ).expect("Failed to add cycle_days column to quest_completion");
     }
 
     // Migration: deactivate one-off sagas that completed before deactivation code existed
@@ -2425,7 +2439,7 @@ fn compute_overdue_ratio(q: &Quest, today: i64) -> f64 {
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, skills, attributes, tags
+            "SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags
              FROM quest_completion
              ORDER BY completed_at DESC",
         )
@@ -2433,9 +2447,9 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
 
     let completions = stmt
         .query_map([], |row| {
-            let skills_json: Option<String> = row.get(6)?;
-            let attrs_json: Option<String> = row.get(7)?;
-            let tags_json: Option<String> = row.get(8)?;
+            let skills_json: Option<String> = row.get(7)?;
+            let attrs_json: Option<String> = row.get(8)?;
+            let tags_json: Option<String> = row.get(9)?;
             Ok(Completion {
                 id: row.get(0)?,
                 quest_id: row.get(1)?,
@@ -2445,6 +2459,7 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
                 level_ups: Vec::new(),
                 xp_awards: Vec::new(),
                 difficulty: row.get(5)?,
+                cycle_days: row.get(6)?,
                 skills: skills_json.and_then(|s| serde_json::from_str(&s).ok()),
                 attributes: attrs_json.and_then(|s| serde_json::from_str(&s).ok()),
                 tags: tags_json.and_then(|s| serde_json::from_str(&s).ok()),
@@ -2733,8 +2748,8 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let completed_at = chrono_now();
 
     tx.execute(
-        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, skills, attributes, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned, difficulty.as_str(), skills_json, attrs_json, tags_json],
+        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned, difficulty.as_str(), effective_cycle, skills_json, attrs_json, tags_json],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2813,6 +2828,7 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         level_ups,
         xp_awards,
         difficulty: Some(difficulty.as_str().to_string()),
+        cycle_days: effective_cycle,
         skills: Some(snapshot_skill_names),
         attributes: Some(snapshot_attr_names),
         tags: Some(snapshot_tag_names),
