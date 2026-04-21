@@ -1,6 +1,6 @@
 # Tech Debt
 
-Items that work but could be cleaner. Not blocking anything — just things to address when convenient.
+Items that work but could be cleaner. Not blocking anything — just things to address when convenient. Each item has trigger conditions that describe when it becomes worth fixing.
 
 ## 1. renderCheckDropdown: DOM manipulation → inline HTML
 
@@ -12,6 +12,11 @@ Items that work but could be cleaner. Not blocking anything — just things to a
 
 **Scope:** 10 call sites across 5 contexts (quest add, quest add reset, quest edit, saga step add, saga step edit). Each context has a TOD + DOW pair.
 
+**Trigger conditions — implement when ANY of:**
+- (a) Next bug traced to the DOM-vs-inline-HTML inconsistency (post-render population fails or races with another render)
+- (b) A 6th form context is added that needs TOD/DOW dropdowns
+- (c) A new form-field type needs the same multi-select pattern and the current approach can't absorb it cleanly
+
 ## 2. Quest add form rendered twice
 
 **Where:** Lines ~1014 and ~2050 in `ui/index.html`
@@ -20,6 +25,11 @@ Items that work but could be cleaner. Not blocking anything — just things to a
 
 **Fix:** Extract a `resetAddForm()` function that sets all add-form fields to defaults, including TOD/DOW. Call it on load and after adding a quest. Would become simpler if combined with item 1 above.
 
+**Trigger conditions — implement when ANY of:**
+- (a) The add form reset logic diverges between the two call sites (one gets updated, the other doesn't)
+- (b) A new default field is added to the add form and must be initialized in both places
+- (c) Item 1 is being addressed (combine them — the `resetAddForm` extraction becomes trivial once `renderCheckDropdown` returns HTML)
+
 ## 3. Saga step add/edit form duplication
 
 **Where:** Saga step add form (~line 3078) and saga step edit form (~line 3068) in `ui/index.html`
@@ -27,3 +37,8 @@ Items that work but could be cleaner. Not blocking anything — just things to a
 **Problem:** The saga step add and edit forms duplicate the same TOD/DOW/difficulty/importance rendering logic that exists in the quest add and edit forms. The field sets are nearly identical — both have title, difficulty, importance, TOD, DOW. The only difference is saga steps don't have quest_type/cycle_days.
 
 **Fix:** Extract shared form-field rendering helpers that both quest and saga step forms use. This would reduce the surface area for bugs like the one where quest edit TOD/DOW broke but saga step edit didn't (different code paths for the same UI).
+
+**Trigger conditions — implement when ANY of:**
+- (a) A bug in one form type (quest or saga step) that doesn't reproduce in the other, caused by the parallel code paths
+- (b) A new shared field is added to both quest and saga step forms (increasing the duplication surface)
+- (c) Items 1 and 2 are being addressed (natural time to unify since the form rendering is already being reworked)

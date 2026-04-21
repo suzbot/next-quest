@@ -1,10 +1,6 @@
 # Next Quest — Mechanics
 
-How the app works under the hood. If you want to understand why the quest giver picked a particular quest, how XP is calculated, or what all the numbers mean, then this is the reference for you.
-
-## CLI
-
-The `nq` command-line tool creates quests and queries data through the same business logic as the GUI. Both read and write the same database. See the [CLI Guide](cli-guide.md) for all commands and options.
+How the app works — quest selection, XP, scoring, and progression. If you want to understand why the quest giver picked a particular quest, how XP is calculated, or how to tune the system for your own fork, this is the reference.
 
 ## Quests
 
@@ -99,9 +95,9 @@ See [Quest Scoring](#quest-scoring) for details on the math.
 
 ## Encounters Overlay
 
-A small always-on-top window that fires on a configurable interval. Shows a single trivial quest (from the Castle Duties pool) with a quick-complete button. Designed to break hyperfocus without demanding much effort. Syncs with Lane 1 — both show the same quest.
+A small always-on-top window that fires on a configurable interval. Designed to break hyperfocus without demanding much effort. Prefers Lane 1 (Castle Duties) quests, but falls back to Lane 2 then Lane 3 when Lane 1 has nothing to offer.
 
-Whether it is turned on, and the interval for how frequently it is displayed can be adjusted on the 'Settings' tab.
+Whether it is turned on, and the interval for how frequently it is displayed, can be adjusted on the Settings tab.
 
 ### Actions
 
@@ -129,7 +125,7 @@ Each saga appears as a single slot on the quest list, interleaved with regular q
 
 - **Due sagas** show the active step with action buttons — complete it or start a timer.
 - **Between-runs sagas** appear dimmed, like not-due recurring quests.
-- **Completed one-off sagas** appear dimmed at the bottom.
+- **Completed one-off sagas** are removed from the quest list (they remain visible on the Sagas tab).
 - Sagas are reorderable alongside quests via drag-and-drop or shift+arrow.
 - Clicking a saga slot's title navigates to the Sagas tab for editing.
 - Fuzzy search matches step title, saga name, linked skills/attributes/tags, difficulty, and importance.
@@ -152,7 +148,7 @@ Your **character** is your overall RPG avatar. It levels up from all quest XP.
 
 **Skills** are directional goals mapped to attributes — specific areas you want to grow. Completing quests linked to a skill directs XP to both the skill and its parent attribute.
 
-**Accomplishments** are permanent records of completed [campaigns](#campaigns). They appear on the Character tab as a history of milestones you've achieved. Accomplishments survive even if the campaign is later deleted.
+**Accomplishments** are permanent records of completed [campaigns](#campaigns) and one-off [sagas](#sagas). They appear on the Character tab as a history of milestones you've achieved. Accomplishments survive even if the source campaign or saga is later deleted.
 
 ## Completion History
 
@@ -341,3 +337,7 @@ Fibonacci-style progression: each level costs the sum of the previous two levels
 | 8     | 5,500       | 13,900     |
 | 9     | 8,900       | 22,800     |
 | 10    | 14,400      | 37,200     |
+
+## CLI
+
+The `nq` command-line tool creates quests and queries data through the same business logic as the GUI. Both read and write the same database. See the [CLI Guide](cli-guide.md) for all commands and options.

@@ -19,5 +19,7 @@ rust-analyzer.toml
 ui/images/sd-references/
 reference.png
 
-# Claude Code
-.claude/
+# Claude Code (track skills, ignore personal config)
+.claude/settings.local.json
+.claude/projects/
+.claude/worktrees/

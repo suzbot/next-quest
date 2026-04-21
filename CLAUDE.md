@@ -4,7 +4,7 @@ Guidance for Claude Code when working with code in this repo.
 
 Next Quest is an RPG-themed task motivator app designed for ADHD brains. It's a quest giver, not a quest list — it tells you one thing to do right now.
 
-**Current phase:** Phase 5C complete (release pipeline, v0.2.0 released). Next: Phase 5D (polish and features)
+**Current phase:** Phase 5D Group 1 complete (polish quick wins). Next: Phase 5D Group 2 (bigger features)
 
 **Vision:** See [VISION.md](VISION.md) for full vision, modes, and phased roadmap.
 
@@ -80,7 +80,7 @@ See [DATA_MODEL.md](DATA_MODEL.md) for entities, relationships, and quest select
 5. **Step Spec** — Small implementation spec for the current slice of work. Scoped to what can be built, tested, and committed in one session.
 6. **Implementation** — Code to the step spec. Tests where appropriate.
 7. **Human Testing** — User runs the app and verifies.
-8. **Documentation** — Update data model, CLAUDE.md, and any other docs to reflect what was built.
+8. **Documentation** — Run `/nq-update-docs` to update all project docs (DATA_MODEL.md, mechanics.md, CLI guide, VISION.md, etc.) in a single coordinated pass.
 
 Do NOT skip steps or combine them without discussing it first. Do NOT draft docs that introduce decisions we haven't discussed.
 

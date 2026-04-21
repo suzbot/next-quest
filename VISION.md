@@ -307,25 +307,33 @@ Key design decisions:
 
 ~~**Quest giver images**~~ ✅ — More variety, including women characters, generated via AI image generation in Cowork.
 
-### Group 1 — Quick wins
+### Group 1 — Quick wins ✅
 
-1. **Auto-accomplishment for 1-off sagas** — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
+1. ~~**Auto-accomplishment for 1-off sagas**~~ ✅ — Completing a one-off saga automatically creates an accomplishment record (same as campaign completion).
 
 2. ~~**Show/hide lanes**~~ ✅ — Ability to collapse or hide the Adventures and Royal Quests lanes when you don't have capacity for bigger items today.
 
 3. ~~**Reset skips button**~~ ✅ — A button on Settings that clears all skip counts and the last-skipped ID immediately.
 
-4. **Overlay lane fallback** — When Lane 1 has nothing to offer, the Encounters overlay can fall back to Lane 2, then Lane 3, instead of showing nothing. Keeps the overlay useful on days when daily quests are all done.
+4. ~~**Overlay lane fallback**~~ ✅ — When Lane 1 has nothing to offer, the Encounters overlay can fall back to Lane 2, then Lane 3, instead of showing nothing. Keeps the overlay useful on days when daily quests are all done.
 
 ### Group 2 — Bigger features
 
-5. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+5. ~~**Tech debt trigger conditions**~~ ✅ — Add explicit "implement when..." conditions to each entry in `docs/tech-debt.md` so deferred work has clear activation criteria instead of sitting as an indefinite list. *(Source: meta-claude proposals P6)*
 
-6. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
+6. ~~**Retro skill**~~ ✅ — `/nq-retro` for post-feature reflection. Triggered from `/nq-update-docs` on significant milestones, or directly by user. *(Source: meta-claude proposals P1)*
 
-7. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
+7. ~~**Update-docs skill**~~ ✅ — `/nq-update-docs` skill with doc fan-out table and retro trigger. Step 8 in CLAUDE.md points to it. *(Source: meta-claude proposals P2)*
 
-8. _(Consideration)_ **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
+8. **Completion path refactor** — Converge the five frontend completion entry points (quest list, quest giver, timer, saga tab, overlay) onto a shared code path so downstream effects (XP, campaign progress, saga bonus, history snapshot) are colocated. Currently fragile — every new completion-time feature must be verified across multiple INSERT sites. *(Source: meta-claude proposals P8)*
+
+9. **Smart achievements** — Auto-generated achievements based on completion data (e.g., "First Epic quest," "5 quests in one day," "Reached level 3 in Cooking"). Appear as accomplishments on Character tab.
+
+10. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
+
+11. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
+
+12. _(Consideration)_ **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
 
 ### Group 3 — Later
 
@@ -334,6 +342,8 @@ Key design decisions:
 10. **Weather-aware scoring** — Integrate current weather data to influence quest selection. Boost outdoor-tagged quests on nice days, boost indoor quests during rain, suppress outdoor quests in extreme heat/cold. Uses a free weather API with the user's location. Needs design discussion around how much influence weather should have vs. user-set priorities.
 
 11. **Configurable lane difficulty assignment** — Settings to control which difficulty tiers go in which lane. Currently hardcoded (Trivial → Castle Duties, Easy → Adventures, Moderate+Challenging+Epic → Royal Quests). As capacity grows, the user should be able to reassign.
+
+12. **CLAUDE.md discoverable-content audit** — One-off pass to remove content that Claude can find by reading the code (e.g., dependency details visible in Cargo.toml). No structural restructure unless the audit reveals it's needed. *(Source: meta-claude proposals P5)*
 
 ## Phase 6: "Everything Else"
 
