@@ -3125,7 +3125,7 @@
         const isExpanded = expandedSagaId === s.id;
         const toggle = `<span class="expand-toggle" onclick="toggleSagaExpand('${s.id}')">${isExpanded ? '▾' : '▸'}</span>`;
         const stateClass = sp.is_due ? "quest-due" : "quest-cooldown";
-        const allDone = sp.is_due && sp.total_steps > 0 && sp.completed_steps >= sp.total_steps;
+        const allDone = !sp.is_due && sp.total_steps > 0 && sp.completed_steps >= sp.total_steps;
         const pct = sp.total_steps > 0 ? Math.round((sp.completed_steps / sp.total_steps) * 100) : 0;
         const progressText = allDone ? "Done" : `${sp.completed_steps}/${sp.total_steps}`;
         const lastRun = s.last_run_completed_at ? formatTimestamp(s.last_run_completed_at) : "";

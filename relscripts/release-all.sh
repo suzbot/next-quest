@@ -67,9 +67,12 @@ git push origin "$VERSION"
 
 ./relscripts/release.sh "$VERSION"
 
+# Install locally
+echo ""
+echo "==> Installing locally..."
+./relscripts/install.sh
+
 echo ""
 echo "========================================="
 echo "  Release ${VERSION} complete!"
 echo "========================================="
-echo ""
-echo "  Run ./relscripts/install.sh to install locally."
