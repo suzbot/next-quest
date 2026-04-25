@@ -98,6 +98,8 @@ Do NOT skip steps or combine them without discussing it first. Do NOT draft docs
 - **Help realize the vision.** If you don't understand the intent, ask for context. Don't ask "are you sure?" — if there are substantive concerns, present trade-offs.
 - **Trust user observations as evidence.** Verify where they point, don't reason about why they can't be true.
 - **When things go wrong**: Gather evidence first before reasoning about causes. Don't speculate. Surface when stuck.
+- **Align explanations with actions.** Don't silently change course.
+- **Follow explicit direction.** Disagree once, then comply.
 - **Always use numbered lists.** The user responds by number. Any time you present items, questions, options, or notes, number them.
 
 ## Dependencies & Security
@@ -137,6 +139,8 @@ This is an ADHD productivity app being built by someone with ADHD. The developme
 - **No streaks, ever**: XP and levels only go up. No decay, no punishment for absence.
 - **RPG framing**: Quests not tasks, grinding not chores, boss fights not "big goals."
 - **Don't become the problem**: The app must never become another system to manage. If a feature adds management overhead, cut it.
+- **Proportional solutions**: Match the size of the change to the size of the problem. Don't over-engineer, don't under-solve.
+- **Respect existing behavior**: Don't override what users already know how to use. Platform conventions and existing app patterns carry value.
 - **8-16bit aesthetic**: Think 1985 Apple IIGS Bard's Tale. Pixel art, pixel fonts, simple charm.
 
 ## Reference Documents

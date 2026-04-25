@@ -131,6 +131,27 @@ For each signal, state: the choice made and the value it expresses. Note if CLAU
 
 Carry friction insights (items 1-5) and value signals (item 6) forward.
 
+#### Value Persistence (after identifying value signals)
+
+Values identified in item 6 should be routed to persistent storage. Two categories:
+
+**Design values** (about the product — how features should work, how problems should be solved):
+- The principle itself lives as a one-liner in **CLAUDE.md Design Principles**
+- A companion **reference memory file** (`value_<name>.md`) accumulates dated examples from retros
+- If the value maps to an existing principle, add the example to its companion file
+- If accumulated examples suggest the principle should be broadened or narrowed, propose the edit
+
+**Collaboration values** (about how to work together — communication, presentation, decision-making):
+- The principle itself lives in **CLAUDE.md Communication Style**
+- A companion **reference memory file** (`value_<name>.md`) accumulates dated examples
+- Same pattern as design values: examples accumulate, principle evolves
+
+**Personal values** (about the user — aesthetic preferences, interaction style):
+- Live in **user memory files** (e.g., `user_aesthetic_values.md`)
+- Accumulate examples under named headings within the file
+
+Before proposing a new principle, check existing ones — many new observations are illustrations of existing values, not new values. Read the companion memory files (in `memory/value_*.md`) to see if the pattern is already tracked.
+
 **Full retro: STOP here.** Present the assessment and wait for user reaction before proceeding. The user may correct observations, add missing context, or confirm. Their input shapes what gets proposed — don't formulate proposals from unvalidated analysis.
 
 **Lite retro:** Skip the pause — proceed directly to Step 1.5 and Step 2. Only propose changes if something significant surfaced.
