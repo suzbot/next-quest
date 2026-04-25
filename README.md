@@ -19,6 +19,30 @@ Built for people who struggle with task initiation, routine maintenance, and the
 
 For more detail, see the [Mechanics reference](docs/mechanics.md).
 
+### Keyboard Shortcuts
+
+**Quest List tab:**
+
+| Key | Action |
+|-----|--------|
+| N | Open the add quest form (focus lands in title field) |
+| Escape | Close the add quest form |
+| E | Edit the focused quest |
+| Enter | Complete the focused quest |
+| Delete / Backspace | Delete the focused quest |
+| Arrow Up / Down | Navigate between quests |
+| Alt + Arrow Up / Down | Reorder the focused quest |
+| Tab | Move between form fields when adding/editing |
+
+**Encounters overlay:**
+
+| Key | Action |
+|-----|--------|
+| F | Fight (start timer) |
+| C | Cast Completion (complete immediately) |
+| R | Run (skip) |
+| H | Hide in the Shadows (dismiss) |
+
 ## How It Was Built
 
 Next Quest is built through an iterative collaboration between a Product Manager and [Claude Code](https://claude.com/claude-code), using custom skills to coordinate the workflow. Each feature follows a structured process:

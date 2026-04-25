@@ -8,11 +8,11 @@ A quest is something you do. It has a **difficulty** and is either **recurring**
 
 ### Quest List
 
-The quest list shows all quests and saga slots in priority order (highest priority at top). You can:
+The quest list shows all quests and saga slots in priority order (highest priority at top). The filter bar is always visible at the top. The add form is hidden behind a **+ New** button to keep the focus on browsing and filtering.
 
-- **Add quests** with title, difficulty, cycle, importance, time-of-day, day-of-week, and linked skills/attributes/tags
+- **Add quests** — click **+ New** (or press **N**) to open the add form. Enter title, difficulty, cycle, importance, time-of-day, day-of-week, and linked skills/attributes/tags. Press Enter to add and keep adding; press Escape to close.
 - **Edit** any quest inline
-- **Reorder** via drag-and-drop or shift+arrow keys
+- **Reorder** via drag-and-drop or Alt+Arrow keys
 - **Complete** directly from the list with inline XP feedback
 - **Filter** by search text, difficulty, importance, time of day, day of week, or due status
 - **Search** across quest titles, saga names, skill names, attribute names, tags, difficulty labels, and importance marks

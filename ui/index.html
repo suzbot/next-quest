@@ -54,7 +54,7 @@
     #add-form {
       display: flex;
       gap: 8px;
-      margin-bottom: 16px;
+      margin-bottom: 0;
       align-items: center;
     }
 
@@ -69,8 +69,13 @@
 
     input[type="number"] { text-align: center; }
 
-    #add-form input[type="text"] { flex: 1; }
-    #add-form input[type="number"] { width: 55px; }
+    #add-form { font-size: 10px; gap: 6px; }
+    #add-form input[type="text"] { flex: 1; font-size: 10px; padding: 2px 4px; }
+    #add-form input[type="number"] { width: 45px; font-size: 10px; padding: 2px 4px; }
+    #add-form select { font-size: 10px; }
+    #add-form label { font-size: 10px; }
+    #add-form button { font-size: 10px; padding: 1px 6px; }
+    #add-form button[type="submit"] { background: #a0a0a0; color: #fff; }
 
     select {
       background: #ccc;
@@ -345,7 +350,14 @@
     .link-tag.selected { border-color: #333; color: #fff; background: #555; font-weight: 700; }
     .link-tag:hover { border-color: #666; color: #333; }
 
-    #add-links-row { margin-bottom: 12px; }
+    #add-links-row { margin-bottom: 0; }
+
+    #add-panel {
+      background: #a8a8a8;
+      border: 1px solid #888;
+      padding: 8px;
+      margin-bottom: 4px;
+    }
 
     #filter-bar {
       display: flex;
@@ -372,6 +384,15 @@
     #filter-bar button {
       font-size: 10px;
       padding: 1px 6px;
+    }
+    #add-toggle-btn {
+      margin-left: auto;
+      background: #a0a0a0;
+      color: #fff;
+    }
+    #add-toggle-btn.active {
+      background: #999;
+      border-style: inset;
     }
 
     .quest-links { font-size: 10px; color: #666; width: 180px; text-align: right; overflow-wrap: break-word; flex-shrink: 0; }
@@ -795,39 +816,6 @@
 
   <div id="quests-view" class="hidden">
 
-  <form id="add-form">
-    <input type="text" id="quest-title" placeholder="Quest name..." autofocus>
-    <select id="quest-type" onchange="toggleCycleInput()">
-      <option value="recurring">Recurring</option>
-      <option value="one_off">One-off</option>
-    </select>
-    <label id="cycle-label">
-      Days
-      <input type="number" id="quest-cycle" value="1" min="1">
-    </label>
-    <select id="quest-difficulty">
-      <option value="trivial">Trivial</option>
-      <option value="easy" selected>Easy</option>
-      <option value="moderate">Fair</option>
-      <option value="challenging">Hard</option>
-      <option value="epic">Epic</option>
-    </select>
-    <select id="quest-importance" title="Importance">
-      <option value="0" selected>—</option>
-      <option value="1">!</option>
-      <option value="2">!!</option>
-      <option value="3">!!!</option>
-      <option value="4">!!!!</option>
-      <option value="5">!!!!!</option>
-    </select>
-    <span id="add-tod" class="dow-dropdown"></span>
-    <span id="add-dow" class="dow-dropdown"></span>
-    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
-    <button type="submit">Add</button>
-  </form>
-
-  <div id="add-links-row" class="hidden"></div>
-
   <div id="filter-bar">
     <input type="text" id="filter-search" placeholder="Search quests..." oninput="applyFilters()">
     <select id="filter-difficulty" onchange="applyFilters()">
@@ -866,6 +854,41 @@
     </select>
     <label id="filter-due-label"><input type="checkbox" id="filter-due" onchange="applyFilters()"> Due</label>
     <button type="button" onclick="clearFilters()">Clear</button>
+    <button type="button" id="add-toggle-btn" onclick="toggleAddForm()">+ New</button>
+  </div>
+
+  <div id="add-panel" class="hidden">
+  <form id="add-form">
+    <input type="text" id="quest-title" placeholder="Quest name...">
+    <select id="quest-type" onchange="toggleCycleInput()">
+      <option value="recurring">Recurring</option>
+      <option value="one_off">One-off</option>
+    </select>
+    <label id="cycle-label">
+      Days
+      <input type="number" id="quest-cycle" value="1" min="1">
+    </label>
+    <select id="quest-difficulty">
+      <option value="trivial">Trivial</option>
+      <option value="easy" selected>Easy</option>
+      <option value="moderate">Fair</option>
+      <option value="challenging">Hard</option>
+      <option value="epic">Epic</option>
+    </select>
+    <select id="quest-importance" title="Importance">
+      <option value="0" selected>—</option>
+      <option value="1">!</option>
+      <option value="2">!!</option>
+      <option value="3">!!!</option>
+      <option value="4">!!!!</option>
+      <option value="5">!!!!!</option>
+    </select>
+    <span id="add-tod" class="dow-dropdown"></span>
+    <span id="add-dow" class="dow-dropdown"></span>
+    <button type="button" id="toggle-links-btn" onclick="toggleAddLinks()">Tags</button>
+    <button type="submit">Add</button>
+  </form>
+  <div id="add-links-row" class="hidden"></div>
   </div>
 
   <ul id="quest-list"></ul>
@@ -1366,6 +1389,18 @@
 
     function toggleAddLinks() {
       addLinksRow.classList.toggle("hidden");
+    }
+
+    function toggleAddForm() {
+      const panel = document.getElementById("add-panel");
+      const btn = document.getElementById("add-toggle-btn");
+      panel.classList.toggle("hidden");
+      btn.classList.toggle("active");
+      if (!panel.classList.contains("hidden")) {
+        titleInput.focus();
+      } else {
+        addLinksRow.classList.add("hidden");
+      }
     }
 
     function renderAddLinkTags() {
@@ -2143,6 +2178,31 @@
       await loadAll();
           });
 
+    document.addEventListener("keydown", (e) => {
+      if (questsView.classList.contains("hidden")) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        const panel = document.getElementById("add-panel");
+        if (panel.classList.contains("hidden")) {
+          toggleAddForm();
+        } else {
+          titleInput.focus();
+        }
+      }
+    });
+
+    document.getElementById("add-panel").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        const openDropdown = document.getElementById("add-panel").querySelector(".dow-dropdown.open");
+        if (openDropdown) return;
+        e.preventDefault();
+        toggleAddForm();
+      }
+    });
+
     function formatTimestamp(iso) {
       const d = new Date(iso);
       const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -2185,6 +2245,12 @@
     const settingsView = document.getElementById("settings-view");
 
     function showView(view) {
+      const addPanel = document.getElementById("add-panel");
+      const addBtn = document.getElementById("add-toggle-btn");
+      if (addPanel && !addPanel.classList.contains("hidden")) {
+        addPanel.classList.add("hidden");
+        addBtn.classList.remove("active");
+      }
       if (view !== "quest-giver" && timerInterval) {
         showBattleLockMessage();
         return;

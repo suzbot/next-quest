@@ -331,7 +331,7 @@ Key design decisions:
 
 10. **Timer as always-on-top overlay** — Quest Now timer becomes an overlay window that stays on top and can only be dismissed via Victory or Defeat, preventing distraction by other windows.
 
-11. **Quest list layout cleanup** — The add-quest row and filter bar compete visually and aren't in intuitive relative positions/sizes. Rework spacing, hierarchy, and layout so the primary actions (add, filter, scroll) feel natural.
+11. ~~**Quest list layout cleanup**~~ ✅ — Collapsible add form behind a + New toggle button. Filter bar always visible at top. Keyboard shortcuts: N to open, Escape to close, Enter to add and keep adding.
 
 12. _(Consideration)_ **Expandable queue per lane** — Show full ranked candidate list on each quest giver lane. May not be needed if quest list filtering covers the use case.
 
