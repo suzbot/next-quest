@@ -399,7 +399,9 @@
     .quest-edit-links { padding: 2px 8px 6px 8px; border-bottom: 1px solid #999; }
 
     /* XP display */
-    .completion-xp { font-size: 10px; color: #1a6e1a; }
+    .completion-xp { font-size: 10px; color: #1a6e1a; flex-shrink: 0; }
+    .completion-meta { display: flex; gap: 8px; flex-shrink: 0; font-size: 10px; }
+    .completion-links { font-size: 10px; overflow-wrap: break-word; }
     .xp-flash { font-size: 11px; color: #1a6e1a; font-weight: 700; margin-left: 4px; }
 
     /* Nav */
@@ -1771,9 +1773,26 @@
         .map(c => {
           const xpText = c.xp_earned > 0 ? `<span class="completion-xp">+${c.xp_earned} XP</span>` : "";
           const completionDate = c.completed_at.substring(0, 10);
+          const sagaBadge = c.saga_name ? `<span class="saga-badge">${escapeHtml(c.saga_name)}</span>` : "";
+          const diffColor = c.difficulty ? (diffTextColors[c.difficulty] || '#555') : '';
+          const diffText = c.difficulty ? `<span class="meta-difficulty" style="color: ${diffColor}">${difficultyLabel(c.difficulty)}</span>` : "";
+          const cycleText = c.cycle_days != null ? `<span class="meta-cycle">↻ ${c.cycle_days}d</span>`
+            : (c.difficulty ? `<span class="meta-cycle">One-off</span>` : "");
+          const coloredLinks = [
+            ...(c.skills || []).map(n => `<span style="color:${levelUpColor(n)}">${escapeHtml(n)}</span>`),
+            ...(c.attributes || []).map(n => `<span style="color:${levelUpColor(n)}">${escapeHtml(n)}</span>`),
+            ...(c.tags || []).map(n => `<span style="color:#666">${escapeHtml(n)}</span>`),
+          ];
+          const linksText = coloredLinks.length ? `<span class="completion-links">${coloredLinks.join(", ")}</span>` : "";
           return `<li class="completion-item">
+            ${sagaBadge}
             <span class="completion-title">${escapeHtml(c.quest_title)}</span>
+            ${linksText}
             ${xpText}
+            <span class="completion-meta">
+              ${cycleText}
+              ${diffText}
+            </span>
             <span class="completion-time">${formatTimestamp(c.completed_at)}</span>
             <span class="last-done-picker-wrap">
               <span class="last-done-picker-icon" onclick="this.nextElementSibling.showPicker()" title="Edit completion date">&#x270E;</span>
@@ -2650,12 +2669,13 @@
     }
 
     async function loadCharacterView() {
-      const [character, attributes, skills, accomplishments, xpStats] = await Promise.all([
+      const [character, attributes, skills, accomplishments, xpStats, completions] = await Promise.all([
         invoke("get_character"),
         invoke("get_attributes"),
         invoke("get_skills"),
         invoke("get_accomplishments"),
         invoke("get_xp_stats"),
+        invoke("get_completions"),
       ]);
       cachedAttributes = attributes;
       cachedSkills = skills;
@@ -2663,6 +2683,7 @@
       cachedAttributes.forEach((a, i) => { attrIndexById[a.id] = i; });
       populateFilterDropdowns();
       renderCharacterView(character, attributes, skills, accomplishments, xpStats);
+      renderCompletions(completions);
     }
 
     // Attribute fill colors (bright variants for meter bars)

@@ -287,6 +287,7 @@ pub struct Completion {
     pub skills: Option<Vec<String>>,
     pub attributes: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
+    pub saga_name: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -470,7 +471,8 @@ fn create_tables(conn: &Connection) {
             cycle_days    INTEGER,
             skills        TEXT,
             attributes    TEXT,
-            tags          TEXT
+            tags          TEXT,
+            saga_name     TEXT
         );
 
         CREATE TABLE IF NOT EXISTS character (
@@ -893,6 +895,25 @@ fn migrate(conn: &Connection) {
         "UPDATE saga SET active = 0 WHERE cycle_days IS NULL AND last_run_completed_at IS NOT NULL AND active = 1;
          UPDATE quest SET active = 0 WHERE saga_id IN (SELECT id FROM saga WHERE cycle_days IS NULL AND last_run_completed_at IS NOT NULL AND active = 0) AND active = 1;"
     ).expect("Failed to deactivate completed one-off sagas");
+
+    // Migration: add saga_name snapshot column to quest_completion
+    let has_completion_saga_name: bool = conn
+        .prepare("SELECT saga_name FROM quest_completion LIMIT 0")
+        .is_ok();
+
+    if !has_completion_saga_name {
+        conn.execute_batch(
+            "ALTER TABLE quest_completion ADD COLUMN saga_name TEXT;"
+        ).expect("Failed to add saga_name column to quest_completion");
+
+        // Backfill existing completions by joining through quest -> saga
+        conn.execute_batch(
+            "UPDATE quest_completion SET saga_name = (
+                SELECT s.name FROM quest q JOIN saga s ON s.id = q.saga_id
+                WHERE q.id = quest_completion.quest_id
+            ) WHERE quest_id IS NOT NULL AND saga_name IS NULL;"
+        ).expect("Failed to backfill saga_name on completions");
+    }
 
     // Migration: create campaign tables if missing
     let has_campaign: bool = conn
@@ -1474,10 +1495,19 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCom
             }
         }
 
-        // Record bonus in completion history
+        // Record bonus in completion history with last step's linked skills/attributes
+        let last_step = &steps[steps.len() - 1];
+        let bonus_skill_names: Vec<String> = last_step.skill_ids.iter()
+            .filter_map(|sid| conn.query_row("SELECT name FROM skill WHERE id = ?1", rusqlite::params![sid], |r| r.get(0)).ok())
+            .collect();
+        let bonus_attr_names: Vec<String> = last_step.attribute_ids.iter()
+            .filter_map(|aid| conn.query_row("SELECT name FROM attribute WHERE id = ?1", rusqlite::params![aid], |r| r.get(0)).ok())
+            .collect();
+        let bonus_skills_json = if bonus_skill_names.is_empty() { None } else { serde_json::to_string(&bonus_skill_names).ok() };
+        let bonus_attrs_json = if bonus_attr_names.is_empty() { None } else { serde_json::to_string(&bonus_attr_names).ok() };
         conn.execute(
-            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned) VALUES (?1, NULL, ?2, ?3, ?4)",
-            rusqlite::params![Uuid::new_v4().to_string(), format!("{} complete!", saga.name), now, bonus_xp],
+            "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, skills, attributes) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![Uuid::new_v4().to_string(), format!("{} complete!", saga.name), now, bonus_xp, bonus_skills_json, bonus_attrs_json],
         ).map_err(|e| e.to_string())?;
     }
 
@@ -2439,7 +2469,7 @@ fn compute_overdue_ratio(q: &Quest, today: i64) -> f64 {
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags
+            "SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags, saga_name
              FROM quest_completion
              ORDER BY completed_at DESC",
         )
@@ -2463,6 +2493,7 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
                 skills: skills_json.and_then(|s| serde_json::from_str(&s).ok()),
                 attributes: attrs_json.and_then(|s| serde_json::from_str(&s).ok()),
                 tags: tags_json.and_then(|s| serde_json::from_str(&s).ok()),
+                saga_name: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -2629,6 +2660,20 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
                     rusqlite::params![attr_bump, aid],
                 )
                 .map_err(|e| e.to_string())?;
+
+                // Record the level-up bonus in history
+                let skill_name: String = conn.query_row(
+                    "SELECT name FROM skill WHERE id = ?1", rusqlite::params![sid], |r| r.get(0)
+                ).map_err(|e| e.to_string())?;
+                let attr_name: String = conn.query_row(
+                    "SELECT name FROM attribute WHERE id = ?1", rusqlite::params![aid], |r| r.get(0)
+                ).map_err(|e| e.to_string())?;
+                let title = format!("{} Level {}!", skill_name, level_after);
+                let attrs_json = serde_json::to_string(&vec![&attr_name]).ok();
+                conn.execute(
+                    "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, attributes) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![Uuid::new_v4().to_string(), title, chrono_now(), attr_bump, attrs_json],
+                ).map_err(|e| e.to_string())?;
             }
         }
     }
@@ -2649,18 +2694,18 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let difficulty = Difficulty::from_str(&difficulty_str);
 
     // For saga steps, use the saga's cycle to determine quest_type and cycle_days
-    let (effective_type, effective_cycle) = if let Some(ref sid) = saga_id {
-        let saga_cycle: Option<i32> = conn.query_row(
-            "SELECT cycle_days FROM saga WHERE id = ?1",
+    let (effective_type, effective_cycle, saga_name) = if let Some(ref sid) = saga_id {
+        let (saga_cycle, sname): (Option<i32>, String) = conn.query_row(
+            "SELECT cycle_days, name FROM saga WHERE id = ?1",
             rusqlite::params![sid],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(|e| e.to_string())?;
         match saga_cycle {
-            Some(c) => (QuestType::Recurring, Some(c)),
-            None => (QuestType::OneOff, None), // one-off saga
+            Some(c) => (QuestType::Recurring, Some(c), Some(sname)),
+            None => (QuestType::OneOff, None, Some(sname)),
         }
     } else {
-        (QuestType::from_str(&quest_type_str), cycle_days)
+        (QuestType::from_str(&quest_type_str), cycle_days, None)
     };
 
     let base_xp = calculate_xp(&difficulty, &effective_type, effective_cycle);
@@ -2748,8 +2793,8 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let completed_at = chrono_now();
 
     tx.execute(
-        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned, difficulty.as_str(), effective_cycle, skills_json, attrs_json, tags_json],
+        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags, saga_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned, difficulty.as_str(), effective_cycle, skills_json, attrs_json, tags_json, saga_name],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2832,6 +2877,7 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         skills: Some(snapshot_skill_names),
         attributes: Some(snapshot_attr_names),
         tags: Some(snapshot_tag_names),
+        saga_name,
     })
 }
 
