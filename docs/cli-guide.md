@@ -15,13 +15,17 @@ The `nq` CLI creates quests and queries data through the same business logic as 
 Returns the quest list — same view as the GUI. Standalone quests and saga slots (showing each saga's current active step) interleaved by priority order.
 
 ```
-nq list-quests [--active] [--difficulty <level>] [--due]
+nq list-quests [--active] [--difficulty <level>] [--due] [--day <day>] [--time <time>]
 ```
 
 **Filters (all optional, combinable):**
 - `--active` — only active quests
 - `--difficulty <level>` — one of: trivial, easy, moderate, challenging, epic
-- `--due` — only quests currently due
+- `--due` — only quests whose cycle has elapsed (does not check day-of-week or time-of-day)
+- `--day <day>` — filter by day-of-week bitmask. Accepts: `today`, a day name (`monday`, `sunday`, `mon`, `sun`), or comma-separated (`mon,wed,fri`). Quests set to "everyday" always pass.
+- `--time <time>` — filter by time-of-day window. Accepts: `now`, `morning`, `afternoon`, `evening`, `night`. Quests set to "anytime" always pass.
+
+**Combining `--due` with `--day` and `--time`:** `--due` checks cycle eligibility only. To get quests that are both due and eligible right now, combine all three: `nq list-quests --due --day today --time now`.
 
 **Output fields per item:**
 

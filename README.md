@@ -85,7 +85,7 @@ A command-line tool (`nq`) for creating quests and querying data without opening
 cargo build -p nq
 
 # Examples
-./target/debug/nq list-quests --due
+./target/debug/nq list-quests --due --day today
 ./target/debug/nq list-history
 ./target/debug/nq add-quest --title "Read a book" --difficulty easy --type one_off
 echo '[{"title":"Q1","difficulty":"easy","quest_type":"one_off"}]' | ./target/debug/nq add-batch

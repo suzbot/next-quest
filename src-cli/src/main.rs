@@ -23,6 +23,12 @@ enum Commands {
         /// Only quests currently due
         #[arg(long)]
         due: bool,
+        /// Filter by day of week: today, monday-sunday, or comma-separated (mon,wed,fri)
+        #[arg(long)]
+        day: Option<String>,
+        /// Filter by time of day: now, morning, afternoon, evening, night
+        #[arg(long)]
+        time: Option<String>,
     },
     /// List sagas as JSON with progress info
     ListSagas,
@@ -311,8 +317,8 @@ fn run(command: Commands) -> Result<String, String> {
     let conn = db::init_db(&db_path);
 
     match command {
-        Commands::ListQuests { active, difficulty, due } => {
-            list_quests(&conn, active, difficulty, due)
+        Commands::ListQuests { active, difficulty, due, day, time } => {
+            list_quests(&conn, active, difficulty, due, day, time)
         }
         Commands::ListSagas => list_sagas(&conn),
         Commands::ListTags => list_tags(&conn),
@@ -350,12 +356,64 @@ fn run(command: Commands) -> Result<String, String> {
     }
 }
 
+fn resolve_day_filter(day: &str) -> Result<u32, String> {
+    // Returns a bitmask (Mon=1..Sun=64)
+    match day.to_lowercase().as_str() {
+        "today" => Ok(1 << db::local_weekday()),
+        "monday" | "mon" => Ok(1),
+        "tuesday" | "tue" => Ok(2),
+        "wednesday" | "wed" => Ok(4),
+        "thursday" | "thu" => Ok(8),
+        "friday" | "fri" => Ok(16),
+        "saturday" | "sat" => Ok(32),
+        "sunday" | "sun" => Ok(64),
+        other => {
+            // Try comma-separated: "mon,wed,fri"
+            let mut mask = 0u32;
+            for part in other.split(',') {
+                mask |= resolve_day_filter(part.trim())?;
+            }
+            if mask == 0 {
+                Err(format!("Invalid --day value: {}", other))
+            } else {
+                Ok(mask)
+            }
+        }
+    }
+}
+
+fn resolve_time_filter(time: &str) -> Result<u32, String> {
+    // Returns a bitmask (Morning=1, Afternoon=2, Evening=4, Night=8)
+    match time.to_lowercase().as_str() {
+        "now" => {
+            let hour = db::local_hour();
+            let bit = match hour {
+                4..=11 => 1,   // morning
+                12..=16 => 2,  // afternoon
+                17..=20 => 4,  // evening
+                _ => 8,        // night
+            };
+            Ok(bit)
+        }
+        "morning" => Ok(1),
+        "afternoon" => Ok(2),
+        "evening" => Ok(4),
+        "night" => Ok(8),
+        other => Err(format!("Invalid --time value: {}. Use now, morning, afternoon, evening, night", other)),
+    }
+}
+
 fn list_quests(
     conn: &nq_core::rusqlite::Connection,
     filter_active: bool,
     filter_difficulty: Option<String>,
     filter_due: bool,
+    filter_day: Option<String>,
+    filter_time: Option<String>,
 ) -> Result<String, String> {
+    let day_mask = filter_day.as_deref().map(resolve_day_filter).transpose()?;
+    let time_mask = filter_time.as_deref().map(resolve_time_filter).transpose()?;
+
     let items = db::get_quest_list(conn)?;
     let skills = db::get_skills(conn)?;
     let attributes = db::get_attributes(conn)?;
@@ -368,14 +426,15 @@ fn list_quests(
     let mut output: Vec<QuestOutput> = Vec::new();
 
     for item in &items {
-        let quest_output = match item.item_type.as_str() {
+        let (quest_output, raw_dow, raw_tod) = match item.item_type.as_str() {
             "quest" => {
                 if let Some(ref quest) = item.quest {
-                    quest_to_output(
+                    let qo = quest_to_output(
                         quest, "quest", item.dismissed_today,
                         None, None,
                         &skill_map, &attr_map, &tag_map,
-                    )
+                    );
+                    (qo, quest.days_of_week, quest.time_of_day)
                 } else {
                     continue;
                 }
@@ -387,10 +446,9 @@ fn list_quests(
                         Some(&slot.saga_id), Some(&slot.saga_name),
                         &skill_map, &attr_map, &tag_map,
                     );
-                    // Use saga-level due status and sort order
                     qo.is_due = slot.is_saga_due;
                     qo.sort_order = slot.sort_order;
-                    qo
+                    (qo, slot.step.days_of_week, slot.step.time_of_day)
                 } else {
                     continue;
                 }
@@ -407,6 +465,18 @@ fn list_quests(
         }
         if let Some(ref diff) = filter_difficulty {
             if quest_output.difficulty != *diff {
+                continue;
+            }
+        }
+        if let Some(mask) = day_mask {
+            let dow = raw_dow as u32;
+            if dow != 0 && dow != 127 && (dow & mask) == 0 {
+                continue;
+            }
+        }
+        if let Some(mask) = time_mask {
+            let tod = raw_tod as u32;
+            if tod != 0 && tod != 15 && (tod & mask) == 0 {
                 continue;
             }
         }
