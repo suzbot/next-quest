@@ -472,7 +472,8 @@ fn create_tables(conn: &Connection) {
             skills        TEXT,
             attributes    TEXT,
             tags          TEXT,
-            saga_name     TEXT
+            saga_name     TEXT,
+            snapshot_version INTEGER NOT NULL DEFAULT 2
         );
 
         CREATE TABLE IF NOT EXISTS character (
@@ -948,6 +949,65 @@ fn migrate(conn: &Connection) {
                 completed_at   TEXT NOT NULL
             );"
         ).expect("Failed to create campaign tables");
+    }
+
+    // Migration: convert skill/attribute/tag snapshots from names to IDs
+    let has_snapshot_version: bool = conn
+        .prepare("SELECT snapshot_version FROM quest_completion LIMIT 0")
+        .is_ok();
+
+    if !has_snapshot_version {
+        conn.execute_batch(
+            "ALTER TABLE quest_completion ADD COLUMN snapshot_version INTEGER NOT NULL DEFAULT 1;"
+        ).expect("Failed to add snapshot_version column to quest_completion");
+
+        // Build name->ID maps
+        let skill_map: std::collections::HashMap<String, String> = conn
+            .prepare("SELECT name, id FROM skill").unwrap()
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        let attr_map: std::collections::HashMap<String, String> = conn
+            .prepare("SELECT name, id FROM attribute").unwrap()
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        let tag_map: std::collections::HashMap<String, String> = conn
+            .prepare("SELECT name, id FROM tag").unwrap()
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+
+        // Convert each completion's name arrays to ID arrays
+        let mut read_stmt = conn
+            .prepare("SELECT id, skills, attributes, tags FROM quest_completion WHERE snapshot_version = 1 AND (skills IS NOT NULL OR attributes IS NOT NULL OR tags IS NOT NULL)")
+            .unwrap();
+        let rows: Vec<(String, Option<String>, Option<String>, Option<String>)> = read_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+
+        for (cid, skills_json, attrs_json, tags_json) in &rows {
+            let skills_ids: Option<String> = skills_json.as_ref().and_then(|json| {
+                let names: Vec<String> = serde_json::from_str(json).ok()?;
+                let ids: Vec<&String> = names.iter().filter_map(|n| skill_map.get(n)).collect();
+                if ids.is_empty() { None } else { serde_json::to_string(&ids).ok() }
+            });
+            let attrs_ids: Option<String> = attrs_json.as_ref().and_then(|json| {
+                let names: Vec<String> = serde_json::from_str(json).ok()?;
+                let ids: Vec<&String> = names.iter().filter_map(|n| attr_map.get(n)).collect();
+                if ids.is_empty() { None } else { serde_json::to_string(&ids).ok() }
+            });
+            let tags_ids: Option<String> = tags_json.as_ref().and_then(|json| {
+                let names: Vec<String> = serde_json::from_str(json).ok()?;
+                let ids: Vec<&String> = names.iter().filter_map(|n| tag_map.get(n)).collect();
+                if ids.is_empty() { None } else { serde_json::to_string(&ids).ok() }
+            });
+            conn.execute(
+                "UPDATE quest_completion SET skills = ?1, attributes = ?2, tags = ?3, snapshot_version = 2 WHERE id = ?4",
+                rusqlite::params![skills_ids, attrs_ids, tags_ids, cid],
+            ).expect("Failed to convert completion snapshot to IDs");
+        }
+
+        // Mark remaining rows (no snapshots) as version 2
+        conn.execute("UPDATE quest_completion SET snapshot_version = 2 WHERE snapshot_version = 1", [])
+            .expect("Failed to update snapshot_version");
     }
 }
 
@@ -1495,16 +1555,10 @@ pub fn check_saga_completion(conn: &Connection, saga_id: &str) -> Result<SagaCom
             }
         }
 
-        // Record bonus in completion history with last step's linked skills/attributes
+        // Record bonus in completion history with last step's linked skill/attribute IDs
         let last_step = &steps[steps.len() - 1];
-        let bonus_skill_names: Vec<String> = last_step.skill_ids.iter()
-            .filter_map(|sid| conn.query_row("SELECT name FROM skill WHERE id = ?1", rusqlite::params![sid], |r| r.get(0)).ok())
-            .collect();
-        let bonus_attr_names: Vec<String> = last_step.attribute_ids.iter()
-            .filter_map(|aid| conn.query_row("SELECT name FROM attribute WHERE id = ?1", rusqlite::params![aid], |r| r.get(0)).ok())
-            .collect();
-        let bonus_skills_json = if bonus_skill_names.is_empty() { None } else { serde_json::to_string(&bonus_skill_names).ok() };
-        let bonus_attrs_json = if bonus_attr_names.is_empty() { None } else { serde_json::to_string(&bonus_attr_names).ok() };
+        let bonus_skills_json = if last_step.skill_ids.is_empty() { None } else { serde_json::to_string(&last_step.skill_ids).ok() };
+        let bonus_attrs_json = if last_step.attribute_ids.is_empty() { None } else { serde_json::to_string(&last_step.attribute_ids).ok() };
         conn.execute(
             "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, skills, attributes) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![Uuid::new_v4().to_string(), format!("{} complete!", saga.name), now, bonus_xp, bonus_skills_json, bonus_attrs_json],
@@ -2467,6 +2521,30 @@ fn compute_overdue_ratio(q: &Quest, today: i64) -> f64 {
 }
 
 pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
+    // Build ID->name maps for resolving snapshots
+    let skill_names: std::collections::HashMap<String, String> = conn
+        .prepare("SELECT id, name FROM skill").map_err(|e| e.to_string())?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+    let attr_names: std::collections::HashMap<String, String> = conn
+        .prepare("SELECT id, name FROM attribute").map_err(|e| e.to_string())?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+    let tag_names: std::collections::HashMap<String, String> = conn
+        .prepare("SELECT id, name FROM tag").map_err(|e| e.to_string())?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    let resolve_ids = |json: Option<String>, map: &std::collections::HashMap<String, String>| -> Option<Vec<String>> {
+        json.and_then(|s| {
+            let ids: Vec<String> = serde_json::from_str(&s).ok()?;
+            let names: Vec<String> = ids.iter()
+                .filter_map(|id| map.get(id).cloned().or_else(|| Some("Unknown".into())))
+                .collect();
+            if names.is_empty() { None } else { Some(names) }
+        })
+    };
+
     let mut stmt = conn
         .prepare(
             "SELECT id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags, saga_name
@@ -2480,27 +2558,25 @@ pub fn get_completions(conn: &Connection) -> Result<Vec<Completion>, String> {
             let skills_json: Option<String> = row.get(7)?;
             let attrs_json: Option<String> = row.get(8)?;
             let tags_json: Option<String> = row.get(9)?;
-            Ok(Completion {
-                id: row.get(0)?,
-                quest_id: row.get(1)?,
-                quest_title: row.get(2)?,
-                completed_at: row.get(3)?,
-                xp_earned: row.get(4)?,
-                level_ups: Vec::new(),
-                xp_awards: Vec::new(),
-                difficulty: row.get(5)?,
-                cycle_days: row.get(6)?,
-                skills: skills_json.and_then(|s| serde_json::from_str(&s).ok()),
-                attributes: attrs_json.and_then(|s| serde_json::from_str(&s).ok()),
-                tags: tags_json.and_then(|s| serde_json::from_str(&s).ok()),
-                saga_name: row.get(10)?,
-            })
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                row.get(5)?, row.get(6)?, skills_json, attrs_json, tags_json, row.get(10)?))
         })
         .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<Result<Vec<(String, Option<String>, String, String, i64, Option<String>, Option<i32>, Option<String>, Option<String>, Option<String>, Option<String>)>, _>>()
         .map_err(|e| e.to_string())?;
 
-    Ok(completions)
+    Ok(completions.into_iter().map(|(id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills_json, attrs_json, tags_json, saga_name)| {
+        Completion {
+            id, quest_id, quest_title, completed_at, xp_earned,
+            level_ups: Vec::new(),
+            xp_awards: Vec::new(),
+            difficulty, cycle_days,
+            skills: resolve_ids(skills_json, &skill_names),
+            attributes: resolve_ids(attrs_json, &attr_names),
+            tags: resolve_ids(tags_json, &tag_names),
+            saga_name,
+        }
+    }).collect())
 }
 
 pub fn add_quest(conn: &Connection, q: NewQuest) -> Result<Quest, String> {
@@ -2665,11 +2741,8 @@ pub fn award_xp(conn: &Connection, quest_id: &str, xp: i64) -> Result<(), String
                 let skill_name: String = conn.query_row(
                     "SELECT name FROM skill WHERE id = ?1", rusqlite::params![sid], |r| r.get(0)
                 ).map_err(|e| e.to_string())?;
-                let attr_name: String = conn.query_row(
-                    "SELECT name FROM attribute WHERE id = ?1", rusqlite::params![aid], |r| r.get(0)
-                ).map_err(|e| e.to_string())?;
                 let title = format!("{} Level {}!", skill_name, level_after);
-                let attrs_json = serde_json::to_string(&vec![&attr_name]).ok();
+                let attrs_json = serde_json::to_string(&vec![aid]).ok();
                 conn.execute(
                     "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, attributes) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
                     rusqlite::params![Uuid::new_v4().to_string(), title, chrono_now(), attr_bump, attrs_json],
@@ -2758,31 +2831,31 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 
-    // Snapshot linked names for completion history
-    let snapshot_skill_names: Vec<String> = conn.prepare(
-        "SELECT s.name FROM quest_skill qs JOIN skill s ON s.id = qs.skill_id WHERE qs.quest_id = ?1"
+    // Snapshot linked IDs for completion history
+    let snapshot_skill_ids: Vec<String> = conn.prepare(
+        "SELECT skill_id FROM quest_skill WHERE quest_id = ?1"
     ).map_err(|e| e.to_string())?
     .query_map(rusqlite::params![quest_id], |row| row.get(0))
     .map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 
-    let snapshot_attr_names: Vec<String> = conn.prepare(
-        "SELECT a.name FROM quest_attribute qa JOIN attribute a ON a.id = qa.attribute_id WHERE qa.quest_id = ?1"
+    let snapshot_attr_ids: Vec<String> = conn.prepare(
+        "SELECT attribute_id FROM quest_attribute WHERE quest_id = ?1"
     ).map_err(|e| e.to_string())?
     .query_map(rusqlite::params![quest_id], |row| row.get(0))
     .map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 
-    let snapshot_tag_names: Vec<String> = conn.prepare(
-        "SELECT t.name FROM quest_tag qt JOIN tag t ON t.id = qt.tag_id WHERE qt.quest_id = ?1"
+    let snapshot_tag_ids: Vec<String> = conn.prepare(
+        "SELECT tag_id FROM quest_tag WHERE quest_id = ?1"
     ).map_err(|e| e.to_string())?
     .query_map(rusqlite::params![quest_id], |row| row.get(0))
     .map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 
-    let skills_json = serde_json::to_string(&snapshot_skill_names).ok();
-    let attrs_json = serde_json::to_string(&snapshot_attr_names).ok();
-    let tags_json = serde_json::to_string(&snapshot_tag_names).ok();
+    let skills_json = serde_json::to_string(&snapshot_skill_ids).ok();
+    let attrs_json = serde_json::to_string(&snapshot_attr_ids).ok();
+    let tags_json = serde_json::to_string(&snapshot_tag_ids).ok();
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
@@ -2864,6 +2937,25 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         }
     }
 
+    // Resolve IDs to names for display
+    let skill_name_map: std::collections::HashMap<&str, &str> = skill_levels_before.iter()
+        .map(|(id, name, _)| (id.as_str(), name.as_str())).collect();
+    let attr_name_map: std::collections::HashMap<&str, &str> = attr_levels_before.iter()
+        .map(|(id, name, _)| (id.as_str(), name.as_str())).collect();
+    let display_skill_names: Vec<String> = snapshot_skill_ids.iter()
+        .filter_map(|id| skill_name_map.get(id.as_str()).map(|n| n.to_string())).collect();
+    let display_attr_names: Vec<String> = snapshot_attr_ids.iter()
+        .filter_map(|id| attr_name_map.get(id.as_str()).map(|n| n.to_string())).collect();
+    let display_tag_names: Vec<String> = {
+        let mut names = Vec::new();
+        for tid in &snapshot_tag_ids {
+            if let Ok(name) = conn.query_row("SELECT name FROM tag WHERE id = ?1", rusqlite::params![tid], |r| r.get::<_, String>(0)) {
+                names.push(name);
+            }
+        }
+        names
+    };
+
     Ok(Completion {
         id: completion_id,
         quest_id: Some(quest_id),
@@ -2874,9 +2966,9 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         xp_awards,
         difficulty: Some(difficulty.as_str().to_string()),
         cycle_days: effective_cycle,
-        skills: Some(snapshot_skill_names),
-        attributes: Some(snapshot_attr_names),
-        tags: Some(snapshot_tag_names),
+        skills: Some(display_skill_names),
+        attributes: Some(display_attr_names),
+        tags: Some(display_tag_names),
         saga_name,
     })
 }
