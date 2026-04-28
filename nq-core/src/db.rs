@@ -4203,6 +4203,196 @@ pub fn add_saga_step_full(
     })
 }
 
+// --- XP Audit: derive totals from history and compare to cached ---
+
+#[derive(Serialize, Debug)]
+pub struct XpAuditRow {
+    pub entity_type: String,
+    pub name: String,
+    pub cached_xp: i64,
+    pub cached_level: i32,
+    pub derived_xp: i64,
+    pub derived_level: i32,
+    pub delta: i64,
+}
+
+#[derive(Serialize, Debug)]
+pub struct XpAuditResult {
+    pub cutoff_date: Option<String>,
+    pub total_completions: i64,
+    pub included_completions: i64,
+    pub excluded_completions: i64,
+    pub rows: Vec<XpAuditRow>,
+}
+
+pub fn audit_xp(conn: &Connection) -> Result<XpAuditResult, String> {
+    // Derive cutoff: earliest completion with snapshot data
+    let cutoff_date: Option<String> = conn.query_row(
+        "SELECT MIN(completed_at) FROM quest_completion WHERE difficulty IS NOT NULL",
+        [], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    let total_completions: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM quest_completion", [], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    let included_completions: i64 = match &cutoff_date {
+        Some(cutoff) => conn.query_row(
+            "SELECT COUNT(*) FROM quest_completion WHERE completed_at >= ?1",
+            rusqlite::params![cutoff], |row| row.get(0),
+        ).map_err(|e| e.to_string())?,
+        None => 0,
+    };
+
+    let mut rows = Vec::new();
+
+    // Character
+    let character = get_character(conn)?;
+    let derived_char_xp: i64 = match &cutoff_date {
+        Some(cutoff) => conn.query_row(
+            "SELECT COALESCE(SUM(xp_earned), 0) FROM quest_completion WHERE completed_at >= ?1",
+            rusqlite::params![cutoff], |row| row.get(0),
+        ).map_err(|e| e.to_string())?,
+        None => 0,
+    };
+    rows.push(XpAuditRow {
+        entity_type: "character".into(),
+        name: character.name.clone(),
+        cached_xp: character.xp,
+        cached_level: character.level,
+        derived_xp: derived_char_xp,
+        derived_level: level_from_xp(derived_char_xp, &LevelScale::Character).level,
+        delta: character.xp - derived_char_xp,
+    });
+
+    // Attributes
+    let attributes = get_attributes(conn)?;
+    for attr in &attributes {
+        let derived: i64 = match &cutoff_date {
+            Some(cutoff) => conn.query_row(
+                "SELECT COALESCE(SUM(c.xp_earned), 0) FROM quest_completion c, json_each(c.attributes) j WHERE j.value = ?1 AND c.completed_at >= ?2",
+                rusqlite::params![attr.id, cutoff], |row| row.get(0),
+            ).map_err(|e| e.to_string())?,
+            None => 0,
+        };
+        rows.push(XpAuditRow {
+            entity_type: "attribute".into(),
+            name: attr.name.clone(),
+            cached_xp: attr.xp,
+            cached_level: attr.level,
+            derived_xp: derived,
+            derived_level: level_from_xp(derived, &LevelScale::Attribute).level,
+            delta: attr.xp - derived,
+        });
+    }
+
+    // Skills
+    let skills = get_skills(conn)?;
+    for skill in &skills {
+        let derived: i64 = match &cutoff_date {
+            Some(cutoff) => conn.query_row(
+                "SELECT COALESCE(SUM(c.xp_earned), 0) FROM quest_completion c, json_each(c.skills) j WHERE j.value = ?1 AND c.completed_at >= ?2",
+                rusqlite::params![skill.id, cutoff], |row| row.get(0),
+            ).map_err(|e| e.to_string())?,
+            None => 0,
+        };
+        rows.push(XpAuditRow {
+            entity_type: "skill".into(),
+            name: skill.name.clone(),
+            cached_xp: skill.xp,
+            cached_level: skill.level,
+            derived_xp: derived,
+            derived_level: level_from_xp(derived, &LevelScale::Skill).level,
+            delta: skill.xp - derived,
+        });
+    }
+
+    Ok(XpAuditResult {
+        cutoff_date,
+        total_completions,
+        included_completions,
+        excluded_completions: total_completions - included_completions,
+        rows,
+    })
+}
+
+/// Backfill skill level-up bonus records for post-cutoff completions.
+/// Walks each skill's completions chronologically from 0 XP, detects level
+/// boundaries, and inserts attribute bonus records for any missing level-ups.
+pub fn backfill_levelup_bonuses(conn: &Connection) -> Result<Vec<String>, String> {
+    let cutoff_date: Option<String> = conn.query_row(
+        "SELECT MIN(completed_at) FROM quest_completion WHERE difficulty IS NOT NULL",
+        [], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    let cutoff = match cutoff_date {
+        Some(c) => c,
+        None => return Ok(vec!["No post-migration completions found.".into()]),
+    };
+
+    let skills = get_skills(conn)?;
+    let attr_bump = calculate_xp(&Difficulty::Moderate, &QuestType::OneOff, None);
+    let mut log: Vec<String> = Vec::new();
+    let mut total_inserted = 0;
+
+    for skill in &skills {
+        let attr_id = match &skill.attribute_id {
+            Some(aid) => aid.clone(),
+            None => continue,
+        };
+
+        // Get post-cutoff completions containing this skill ID, chronologically
+        let mut stmt = conn.prepare(
+            "SELECT c.xp_earned, c.completed_at
+             FROM quest_completion c, json_each(c.skills) j
+             WHERE j.value = ?1 AND c.completed_at >= ?2
+             ORDER BY c.completed_at ASC"
+        ).map_err(|e| e.to_string())?;
+
+        let rows: Vec<(i64, String)> = stmt.query_map(
+            rusqlite::params![skill.id, cutoff],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        let mut running_xp: i64 = 0;
+
+        for (xp_earned, completed_at) in &rows {
+            let level_before = level_from_xp(running_xp, &LevelScale::Skill).level;
+            running_xp += xp_earned;
+            let level_after = level_from_xp(running_xp, &LevelScale::Skill).level;
+
+            // Insert a bonus record for each level crossed
+            for new_level in (level_before + 1)..=level_after {
+                let title = format!("{} Level {}!", skill.name, new_level);
+
+                // Check if this bonus already exists
+                let exists: bool = conn.query_row(
+                    "SELECT COUNT(*) FROM quest_completion WHERE quest_title = ?1 AND quest_id IS NULL",
+                    rusqlite::params![title],
+                    |row| row.get::<_, i32>(0).map(|c| c > 0),
+                ).map_err(|e| e.to_string())?;
+
+                if !exists {
+                    let attrs_json = serde_json::to_string(&vec![&attr_id]).ok();
+                    conn.execute(
+                        "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, attributes) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![Uuid::new_v4().to_string(), title, completed_at, attr_bump, attrs_json],
+                    ).map_err(|e| e.to_string())?;
+                    log.push(format!("{} → {} +{} XP", title,
+                        conn.query_row("SELECT name FROM attribute WHERE id = ?1", rusqlite::params![attr_id], |r| r.get::<_, String>(0)).unwrap_or("?".into()),
+                        attr_bump));
+                    total_inserted += 1;
+                }
+            }
+        }
+    }
+
+    log.push(format!("Inserted {} level-up bonus records.", total_inserted));
+    Ok(log)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

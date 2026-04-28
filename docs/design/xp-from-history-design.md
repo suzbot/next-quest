@@ -70,35 +70,21 @@ The cutoff date is derived dynamically: `SELECT MIN(completed_at) FROM quest_com
 
 Each step is a vertical slice that can be tested independently.
 
-### Step 1: Migrate snapshots to IDs
+### Step 1: Migrate snapshots to IDs (done)
 
-- Add migration to convert existing name arrays to ID arrays in quest_completion
-- Update complete_quest to snapshot IDs
-- Update saga/campaign/level-up bonus code to snapshot IDs
-- Update get_completions to resolve IDs to names for display
-- Update renderCompletions to work with the new data shape (if needed)
-- **Test:** History UI still displays correctly with entity names, not UUIDs
+Completion records now store entity UUIDs instead of names. Migration converts existing name arrays on app launch. `get_completions` resolves IDs back to display names transparently.
 
-### Step 2: Build derived XP audit (no UI changes)
+### Step 2: Build derived XP audit + backfill (done)
 
-- Add `audit_xp` function to db.rs that computes derived XP for every entity using the queries above
-- Add CLI command: `nq audit xp` — outputs a comparison table:
-  ```
-  Entity          Current   Derived   Delta
-  Character         4200      4200       0
-  Health             850       720    -130
-  Cooking            300       300       0
-  ...
-  ```
-- **Test:** Run audit, examine deltas. Expected discrepancies:
-  - Pre-migration completions inflate character XP (NULL skills/attributes)
-  - Pre-migration skill level-up bonuses not recorded (attribute deltas)
+- `nq audit-xp` — compares cached vs derived XP/levels for all entities
+- `nq backfill-levelups` — replays post-cutoff completions per skill, detects level boundaries, inserts missing attribute bonus records. Idempotent.
+- Remaining deltas after backfill are expected — they represent pre-cutoff XP that can't be attributed.
 
-### Step 3: Verify pre-migration exclusion
+### Step 3: Verify pre-migration exclusion (done)
 
-- Re-run audit to confirm derived totals only count post-migration completions
-- Verify pre-migration completions still appear in history UI
-- **Test:** Audit deltas are zero (or near-zero). History list still shows old entries.
+- Audit confirms derived totals only count post-cutoff completions
+- Pre-migration completions remain visible in history UI
+- Deltas are stable and explainable
 
 ### Step 4: Wire display to derived totals
 

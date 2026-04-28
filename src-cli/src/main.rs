@@ -118,6 +118,10 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Compare cached XP totals against values derived from completion history
+    AuditXp,
+    /// Backfill skill level-up bonus records from completion history
+    BackfillLevelups,
 }
 
 // --- CLI output types (consistent snake_case) ---
@@ -352,6 +356,12 @@ fn run(command: Commands) -> Result<String, String> {
         }
         Commands::AddBatch { dry_run } => {
             cmd_add_batch(&conn, dry_run)
+        }
+        Commands::AuditXp => {
+            cmd_audit_xp(&conn)
+        }
+        Commands::BackfillLevelups => {
+            cmd_backfill_levelups(&conn)
         }
     }
 }
@@ -912,4 +922,14 @@ fn cmd_add_batch(
     });
 
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+fn cmd_audit_xp(conn: &nq_core::rusqlite::Connection) -> Result<String, String> {
+    let audit = db::audit_xp(conn)?;
+    serde_json::to_string_pretty(&audit).map_err(|e| e.to_string())
+}
+
+fn cmd_backfill_levelups(conn: &nq_core::rusqlite::Connection) -> Result<String, String> {
+    let log = db::backfill_levelup_bonuses(conn)?;
+    serde_json::to_string_pretty(&log).map_err(|e| e.to_string())
 }

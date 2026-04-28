@@ -383,6 +383,30 @@ nq list-history             # completion history with snapshot metadata
 
 ---
 
+## Diagnostics
+
+### audit-xp
+
+Compare cached XP totals (stored on entities) against values derived by summing completion history. Reports per-entity: cached XP/level, derived XP/level, and delta.
+
+```
+nq audit-xp
+```
+
+Pre-migration completions (before snapshot data was recorded) are excluded from derived totals. The cutoff date is computed dynamically as the earliest completion with snapshot data.
+
+### backfill-levelups
+
+Replay post-cutoff completion history to detect skill level-ups and insert missing attribute bonus records. Idempotent — safe to run multiple times.
+
+```
+nq backfill-levelups
+```
+
+When a skill levels up, its parent attribute receives a bonus (equivalent to a Moderate one-off quest). This bonus was not recorded in completion history until recently. This command retroactively creates those records for all post-cutoff level-ups that are missing.
+
+---
+
 ## What the CLI Does NOT Do
 
 - **Complete quests** — that's the user's action in the app
