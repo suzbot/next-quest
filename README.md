@@ -19,6 +19,13 @@ Built for people who struggle with task initiation, routine maintenance, and the
 
 For more detail, see the [Mechanics reference](docs/mechanics.md).
 
+### What's New in v1.0.0
+
+- **XP derived from history.** Character, attribute, and skill XP are now computed from completion records — no more cached running totals.
+- **Richer completion history.** Each entry shows difficulty, cycle, linked skills/attributes (in color), tags, and saga badges.
+
+See the [release notes](https://github.com/suzbot/next-quest/releases/tag/v1.0.0) for details.
+
 ### Keyboard Shortcuts
 
 **Quest List tab:**
