@@ -1033,6 +1033,10 @@ fn migrate(conn: &Connection) {
                 rusqlite::params![cid],
             ).expect("Failed to backfill character_id on completions");
         }
+
+        // Backfill level-up bonus records and sync cache (idempotent)
+        let _ = backfill_levelup_bonuses(conn);
+        let _ = recalculate_xp_cache(conn);
     }
 }
 
@@ -2787,33 +2791,34 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     let attrs_json = serde_json::to_string(&snapshot_attr_ids).ok();
     let tags_json = serde_json::to_string(&snapshot_tag_ids).ok();
 
-    // 2. Insert completion record into history
+    // 2. Insert completion, detect level-ups, sync cache — all in one transaction
     let completion_id = Uuid::new_v4().to_string();
     let completed_at = chrono_now();
 
     let char_id: String = conn.query_row("SELECT id FROM character LIMIT 1", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    conn.execute(
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    tx.execute(
         "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, difficulty, cycle_days, skills, attributes, tags, saga_name, character_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         rusqlite::params![completion_id, quest_id, quest_title, completed_at, xp_earned, difficulty.as_str(), effective_cycle, skills_json, attrs_json, tags_json, saga_name, char_id],
     ).map_err(|e| e.to_string())?;
 
-    // If one-off quest, deactivate it
-    conn.execute(
+    tx.execute(
         "UPDATE quest SET active = 0 WHERE id = ?1 AND quest_type = 'one_off'",
         rusqlite::params![quest_id],
     ).map_err(|e| e.to_string())?;
 
-    // Update stored last_completed
-    conn.execute(
+    tx.execute(
         "UPDATE quest SET last_completed = ?1 WHERE id = ?2",
         rusqlite::params![completed_at, quest_id],
     ).map_err(|e| e.to_string())?;
 
-    // 3. Read derived levels AFTER (history now includes the new record)
-    let char_after = get_character(conn)?;
-    let skills_after = get_skills(conn)?;
-    let attrs_after = get_attributes(conn)?;
+    // 3. Read derived levels AFTER (transaction sees the new record)
+    let char_after = get_character(&tx)?;
+    let skills_after = get_skills(&tx)?;
+    let attrs_after = get_attributes(&tx)?;
 
     // 4. Detect level-ups and insert bonus records for skill level-ups
     let mut level_ups = Vec::new();
@@ -2834,11 +2839,10 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
         if let Some(skill_b) = skills_before.iter().find(|s| s.id == skill_a.id) {
             if skill_a.level > skill_b.level {
                 level_ups.push(LevelUp { name: skill_a.name.clone(), new_level: skill_a.level });
-                // Insert level-up bonus for parent attribute
                 if let Some(ref aid) = skill_a.attribute_id {
                     let title = format!("{} Level {}!", skill_a.name, skill_a.level);
                     let bonus_attrs_json = serde_json::to_string(&vec![aid]).ok();
-                    conn.execute(
+                    tx.execute(
                         "INSERT INTO quest_completion (id, quest_id, quest_title, completed_at, xp_earned, attributes) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
                         rusqlite::params![Uuid::new_v4().to_string(), title, completed_at, attr_bump, bonus_attrs_json],
                     ).map_err(|e| e.to_string())?;
@@ -2848,7 +2852,9 @@ pub fn complete_quest(conn: &Connection, quest_id: String) -> Result<Completion,
     }
 
     // 5. Sync cache
-    recalculate_xp_cache(conn)?;
+    recalculate_xp_cache(&tx)?;
+
+    tx.commit().map_err(|e| e.to_string())?;
 
     // Build XP awards list for display
     let mut xp_awards = vec![XpAward { name: "Character".into(), xp: xp_earned, award_type: "character".into() }];
