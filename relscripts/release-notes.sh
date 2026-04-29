@@ -24,6 +24,7 @@ else
 fi
 
 # Arrays to hold categorized commits
+declare -a BREAKING
 declare -a FEATURES
 declare -a FIXES
 declare -a DOCS
@@ -31,21 +32,33 @@ declare -a OTHER
 
 # Parse conventional commits
 while IFS= read -r commit; do
-    if [[ $commit =~ ^feat(\(([^\)]+)\))?:\ (.+)$ ]]; then
+    if [[ $commit =~ ^feat(\(([^\)]+)\))?(!)?:\ (.+)$ ]]; then
         scope="${BASH_REMATCH[2]}"
-        message="${BASH_REMATCH[3]}"
+        bang="${BASH_REMATCH[3]}"
+        message="${BASH_REMATCH[4]}"
         if [ -n "$scope" ]; then
-            FEATURES+=("**${scope}:** ${message}")
+            formatted="**${scope}:** ${message}"
         else
-            FEATURES+=("${message}")
+            formatted="${message}"
         fi
-    elif [[ $commit =~ ^fix(\(([^\)]+)\))?:\ (.+)$ ]]; then
-        scope="${BASH_REMATCH[2]}"
-        message="${BASH_REMATCH[3]}"
-        if [ -n "$scope" ]; then
-            FIXES+=("**${scope}:** ${message}")
+        if [ "$bang" = "!" ]; then
+            BREAKING+=("${formatted}")
         else
-            FIXES+=("${message}")
+            FEATURES+=("${formatted}")
+        fi
+    elif [[ $commit =~ ^fix(\(([^\)]+)\))?(!)?:\ (.+)$ ]]; then
+        scope="${BASH_REMATCH[2]}"
+        bang="${BASH_REMATCH[3]}"
+        message="${BASH_REMATCH[4]}"
+        if [ -n "$scope" ]; then
+            formatted="**${scope}:** ${message}"
+        else
+            formatted="${message}"
+        fi
+        if [ "$bang" = "!" ]; then
+            BREAKING+=("${formatted}")
+        else
+            FIXES+=("${formatted}")
         fi
     elif [[ $commit =~ ^docs(\(([^\)]+)\))?:\ (.+)$ ]]; then
         scope="${BASH_REMATCH[2]}"
@@ -84,6 +97,14 @@ if [ -n "$PREVIOUS_TAG" ]; then
     NOTES+="## Changes since ${PREVIOUS_TAG}\n\n"
 else
     NOTES+="## Initial Release\n\n"
+fi
+
+if [ ${#BREAKING[@]} -gt 0 ]; then
+    NOTES+="### Breaking Changes\n\n"
+    for breaking in "${BREAKING[@]}"; do
+        NOTES+="- ${breaking}\n"
+    done
+    NOTES+="\n"
 fi
 
 if [ ${#FEATURES[@]} -gt 0 ]; then
