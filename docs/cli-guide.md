@@ -405,6 +405,14 @@ nq backfill-levelups
 
 When a skill levels up, its parent attribute receives a bonus (equivalent to a Moderate one-off quest). This bonus was not recorded in completion history until recently. This command retroactively creates those records for all post-cutoff level-ups that are missing.
 
+### recalculate
+
+Sync cached XP on entity tables (character, attributes, skills) to match derived totals from completion history. Use as a repair tool if cached values drift.
+
+```
+nq recalculate
+```
+
 ---
 
 ## What the CLI Does NOT Do

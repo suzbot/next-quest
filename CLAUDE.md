@@ -136,7 +136,7 @@ This is an ADHD productivity app being built by someone with ADHD. The developme
 ## Design Principles
 
 - **One quest at a time**: The app picks, the user acts. No list paralysis.
-- **No streaks, ever**: XP and levels only go up. No decay, no punishment for absence.
+- **No streaks, ever**: No decay, no punishment for absence. XP is derived from completion history — it changes only when completions are added or removed, never automatically.
 - **RPG framing**: Quests not tasks, grinding not chores, boss fights not "big goals."
 - **Don't become the problem**: The app must never become another system to manage. If a feature adds management overhead, cut it.
 - **Proportional solutions**: Match the size of the change to the size of the problem. Don't over-engineer, don't under-solve.

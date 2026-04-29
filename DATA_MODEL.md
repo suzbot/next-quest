@@ -50,16 +50,21 @@ A visible record that you did a quest at a specific time, or that a bonus was aw
 | xp_earned | Integer | XP awarded for this completion |
 | difficulty | String? | Snapshot of quest difficulty at completion time (e.g., "easy", "moderate"). NULL for bonus completions or pre-migration records. |
 | cycle_days | Integer? | Snapshot of effective cycle_days at completion time. NULL for one-off quests, bonus completions, or pre-migration records. Saga steps use the parent saga's cycle_days. |
-| skills | JSON String? | Snapshot of linked skill names at completion time (e.g., `["Cooking", "Healing"]`). NULL for bonus completions or pre-migration records. |
-| attributes | JSON String? | Snapshot of linked attribute names at completion time (e.g., `["Health"]`). NULL for bonus completions or pre-migration records. |
-| tags | JSON String? | Snapshot of linked tag/category names at completion time (e.g., `["Computer"]`). NULL for bonus completions or pre-migration records. |
+| skills | JSON String? | Snapshot of linked skill IDs at completion time. NULL for bonus completions or pre-migration records. Resolved to names at query time. |
+| attributes | JSON String? | Snapshot of linked attribute IDs at completion time. NULL for bonus completions or pre-migration records. Resolved to names at query time. |
+| tags | JSON String? | Snapshot of linked tag IDs at completion time. NULL for bonus completions or pre-migration records. Resolved to names at query time. |
+| saga_name | String? | Snapshot of parent saga name for saga step completions. NULL for regular quests and bonus entries. |
+| character_id | UUID? (text) | FK to Character. Set when this completion counts toward character XP. NULL for level-up bonus entries (which only award attribute XP). |
 
 **Rules:**
-- Completions snapshot the quest title, difficulty, and linked skills/attributes/tags so they remain self-contained after quest rename, relink, or deletion.
+- Completions are the source of truth for XP. Entity XP totals (character, attributes, skills) are derived by summing `xp_earned` from completions that reference each entity.
+- Completions snapshot linked entity IDs (not names) so XP derivation is rename-proof. Display names are resolved at query time.
 - Quests and completions are independent: deleting a quest orphans (not deletes) its completions.
-- Saga completion bonuses and campaign completion bonuses are also recorded as completions with `quest_id: NULL` and a descriptive title. These appear in the history list and count toward daily XP stats.
-- Individually deletable. Deleting a completion does NOT reduce XP — XP only goes up.
-- Completion date is editable via the pencil icon on the history list. Changing the date does not affect XP.
+- Saga completion bonuses, campaign completion bonuses, and skill level-up bonuses are recorded as completions with `quest_id: NULL` and a descriptive title.
+- `character_id` controls which completions count toward character XP and daily stats. Quest completions, saga bonuses, and campaign bonuses set it. Skill level-up bonuses do not (they only award attribute XP).
+- Individually deletable. Deleting a completion reduces derived XP — history is the source of truth.
+- Completion date is editable via the pencil icon on the history list.
+- Pre-migration completions (NULL difficulty/skills/attributes) are excluded from XP derivation but remain visible in the history list. The cutoff date is computed dynamically as the earliest completion with snapshot data.
 
 ### Character
 The player's RPG avatar. Exactly one row, seeded on first launch.
@@ -250,18 +255,20 @@ Deleting a saga orphans its accomplishments.
 ### XP Calculation
 XP earned per completion: `base * difficulty_mult * cycle_mult`, rounded.
 
-- **Base:** 10
-- **Difficulty multiplier:** Trivial=1, Easy=2, Fair=4, Hard=7, Epic=12
+- **Base:** 5
+- **Difficulty multiplier:** Trivial=1, Easy=5, Fair=10, Hard=20, Epic=40
 - **Cycle multiplier:** One-off=3, Recurring=sqrt(cycle_days)
 
 ### XP Distribution
-On quest completion, the calculated XP is awarded to:
-1. **Character** — always
-2. **Linked attributes** — each gets the full XP amount
-3. **Linked skills** — each gets the full XP amount
+On quest completion, the calculated XP is recorded in a completion record that lists which entities receive it:
+1. **Character** — via `character_id` on the completion record
+2. **Linked attributes** — via `attributes` JSON array of attribute IDs
+3. **Linked skills** — via `skills` JSON array of skill IDs
+
+Entity XP totals are derived by summing `xp_earned` from completions that reference each entity. Cached XP on entity tables is synced after each completion for compatibility.
 
 ### Skill Level-Up Bonus
-When a skill levels up from an XP award, its parent attribute receives a 70 XP bump.
+When a skill levels up from an XP award, its parent attribute receives a bonus equal to a Moderate one-off: `base(5) * moderate(10) * one-off(3) = 150` XP. This is recorded as a separate completion entry with `character_id: NULL` (attribute-only — does not count toward character XP or daily stats).
 
 ### Level Curve
 Fibonacci-style progression with different seeds per scale:

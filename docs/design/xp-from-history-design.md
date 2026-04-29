@@ -43,7 +43,7 @@ Completions from before the skill/attribute snapshot migration have NULL for ski
 ### Character XP
 ```sql
 SELECT COALESCE(SUM(xp_earned), 0) FROM quest_completion
-WHERE completed_at >= ?1  -- snapshot cutoff date
+WHERE character_id IS NOT NULL AND completed_at >= ?1  -- cutoff date
 ```
 
 ### Attribute XP
@@ -51,7 +51,7 @@ WHERE completed_at >= ?1  -- snapshot cutoff date
 SELECT COALESCE(SUM(c.xp_earned), 0)
 FROM quest_completion c, json_each(c.attributes) j
 WHERE j.value = ?1  -- attribute ID
-AND c.completed_at >= ?2  -- snapshot cutoff date
+AND c.completed_at >= ?2  -- cutoff date
 ```
 
 ### Skill XP
@@ -59,12 +59,14 @@ AND c.completed_at >= ?2  -- snapshot cutoff date
 SELECT COALESCE(SUM(c.xp_earned), 0)
 FROM quest_completion c, json_each(c.skills) j
 WHERE j.value = ?1  -- skill ID
-AND c.completed_at >= ?2  -- snapshot cutoff date
+AND c.completed_at >= ?2  -- cutoff date
 ```
 
-The cutoff date is derived dynamically: `SELECT MIN(completed_at) FROM quest_completion WHERE difficulty IS NOT NULL`. Everything before the cutoff is visible in history but excluded from XP totals — avoids the problem of bonus completions (saga/campaign/level-up) having NULL difficulty. Works correctly for any user regardless of when they started.
+**Cutoff date:** Derived dynamically as `SELECT MIN(completed_at) FROM quest_completion WHERE difficulty IS NOT NULL`. Falls back to `MIN(completed_at)` for new users with no pre-migration data. Everything before the cutoff is visible in history but excluded from XP totals.
 
-`json_each(NULL)` produces no rows, so post-cutoff completions with NULL skill/attribute arrays (like campaign bonuses that only award to character) naturally contribute 0 to attribute/skill sums.
+**`character_id`:** Controls which completions count toward character XP and daily stats. Quest completions, saga bonuses, and campaign bonuses set it. Skill level-up bonuses leave it NULL (they only award attribute XP). This models the same behavior the user sees on screen: "+25 Character, +25 Cooking" — the completion lists its XP recipients.
+
+`json_each(NULL)` produces no rows, so completions with NULL skill/attribute arrays naturally contribute 0 to those entity sums.
 
 ## Implementation Steps
 
@@ -86,51 +88,65 @@ Completion records now store entity UUIDs instead of names. Migration converts e
 - Pre-migration completions remain visible in history UI
 - Deltas are stable and explainable
 
-### Step 4: Wire display to derived totals
+### Step 4: Wire display to derived totals (done)
 
-Two systems, two roles:
-
-**Derived totals (source of truth for display):**
-- `get_character` computes character XP as `SUM(xp_earned)` from all completions
+**Derived totals (source of truth for all display):**
+- `get_character` computes character XP as `SUM(xp_earned) WHERE character_id IS NOT NULL`
 - `get_attributes` computes each attribute's XP as `SUM(xp_earned)` from completions containing that attribute ID
 - `get_skills` computes each skill's XP as `SUM(xp_earned)` from completions containing that skill ID
+- `get_xp_stats` (best day, avg, today) uses the same `character_id IS NOT NULL` filter
 - All levels, XP bars, and level-related display derive from these sums
-- This is what the user sees everywhere: character tab, quest giver, balance bonus calculation
 
-**Cached running totals (internal, for completion-time logic):**
-- `award_xp` continues updating `character.xp`, `attribute.xp`, `skill.xp` directly
-- These cached values are used **only** within the `complete_quest` transaction for:
-  1. Skill level-up detection (compare before/after to decide whether to create a level-up bonus record)
-  2. Balance bonus scoring in the quest selector (reads attribute/skill levels to nudge underleveled quests)
-- The cache drifts from derived totals between recalculations — this is fine because it's only used for relative comparisons (did a level boundary get crossed? is this skill below average?), not absolute display
+**`character_id` column:** Each completion lists which entities receive its XP. Quest completions, saga bonuses, and campaign bonuses set `character_id` (the character's UUID). Skill level-up bonuses leave it NULL — they only award attribute XP. This keeps level-up bonuses from inflating character totals and daily stats.
 
-**Reconciliation:**
-- Add a `recalculate_xp_cache` function that resets all entity XP to match derived totals
-- Run once at migration time to align cache with history after pre-migration deletions
-- Available as a repair tool (`nq recalculate`) if cache ever drifts meaningfully
-- Could optionally run on app startup, but probably unnecessary — cache only drifts if completions are manually deleted, and even then the impact is limited to level-up detection timing
+**Completion flow (insert first, detect after):**
+
+All XP-producing paths follow the same pattern:
+1. Snapshot derived levels **before** (via `get_character`/`get_attributes`/`get_skills`)
+2. Insert the completion record into history
+3. Read derived levels **after** (history now includes the new record)
+4. Compare before/after → detect level-ups
+5. For each skill level-up, insert a level-up bonus completion record
+6. Sync the cached XP on entities to match derived totals
+
+This replaces the old `award_xp` approach which updated cached XP, detected level-ups from the cache, then inserted the completion record. The new flow is simpler: history is always written first, and everything reads from it.
+
+Three functions follow this pattern:
+- **`complete_quest`** — inserts quest completion, detects character/skill/attribute level-ups
+- **`check_saga_completion`** — inserts saga bonus completion, detects level-ups
+- **`check_campaign_progress`** — inserts campaign bonus completion, detects level-ups
+
+**`award_xp` is removed.** Its responsibilities are split:
+- Cache updates → replaced by `sync_xp_cache` (called at the end of each completion path)
+- Level-up detection → moved to after completion record insertion, using derived totals
+- Level-up bonus insertion → moved to the same post-insertion detection step
+
+**Cache sync (`sync_xp_cache`):**
+- After all completion records are inserted, update `character.xp`, `attribute.xp`, `skill.xp` to match derived totals
+- This keeps the cache in sync for any code that reads entity tables directly
+- Available as a standalone CLI tool (`nq recalculate`) for repair
 
 **What changes in the read path:**
-- `get_character`: replaces `SELECT xp FROM character` with the SUM query
-- `get_attributes`: replaces `SELECT xp FROM attribute` with per-attribute SUM queries
-- `get_skills`: replaces `SELECT xp FROM skill` with per-skill SUM queries
+- `get_character`: derives XP from history SUM
+- `get_attributes`: derives each attribute's XP from history SUM
+- `get_skills`: derives each skill's XP from history SUM
 - Level calculation (`level_from_xp`) is unchanged — it takes an XP value regardless of source
+- Quest selector scoring uses derived totals (via `get_attributes`/`get_skills`)
 
 **What does NOT change:**
-- `award_xp` — still updates cached totals and detects level-ups
-- `complete_quest` — still calls award_xp, still creates completion records with snapshots
-- Quest selector scoring — reads from cached totals (balance bonus), which is acceptable since exact precision isn't needed for relative scoring
 - XP formula — `xp_earned` is stamped at completion time and never recalculated
+- Completion record structure — same snapshots (skill/attribute/tag IDs, difficulty, cycle)
+- `reset_character` — deletes all completions and zeroes the cache (single operation, single button)
 
 **Test:**
 - Levels and XP bars match the step 2 audit numbers
 - Completing a quest still shows correct XP feedback and triggers level-up detection
-- Deleting a completion now reduces displayed XP (intentional — history is truth)
-- Balance bonus scoring still works (uses cache, doesn't need exact parity)
+- Deleting a completion reduces displayed XP (history is truth)
+- Level-up bonuses add to attribute XP but not character XP or daily stats
+- Balance bonus scoring works from derived totals
 
 ## Out of Scope
 
 - Changing the XP formula itself (that's a separate tuning exercise)
 - Retroactive formula changes (stamped xp_earned is preserved as-is)
-- Removing the cached running totals entirely (keep as cache for now, evaluate later)
-- Running recalculation automatically on startup (can add later if drift becomes a problem)
+- Running cache sync automatically on startup (can add later if needed)

@@ -122,6 +122,8 @@ enum Commands {
     AuditXp,
     /// Backfill skill level-up bonus records from completion history
     BackfillLevelups,
+    /// Sync cached XP on entities to match derived totals from history
+    Recalculate,
 }
 
 // --- CLI output types (consistent snake_case) ---
@@ -362,6 +364,10 @@ fn run(command: Commands) -> Result<String, String> {
         }
         Commands::BackfillLevelups => {
             cmd_backfill_levelups(&conn)
+        }
+        Commands::Recalculate => {
+            let result = db::recalculate_xp_cache(&conn)?;
+            Ok(serde_json::json!({"ok": true, "result": result}).to_string())
         }
     }
 }

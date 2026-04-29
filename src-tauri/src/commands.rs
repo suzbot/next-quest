@@ -419,12 +419,6 @@ pub fn reset_quests(state: State<DbState>) -> Result<(), String> {
     db::reset_quests(&conn)
 }
 
-#[tauri::command]
-pub fn reset_completions(state: State<DbState>) -> Result<(), String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::reset_completions(&conn)
-}
-
 // --- Quest Selection ---
 
 #[tauri::command]

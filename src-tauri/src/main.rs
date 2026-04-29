@@ -78,7 +78,6 @@ fn main() {
             commands::set_quest_links,
             commands::reset_character,
             commands::reset_quests,
-            commands::reset_completions,
             commands::get_quest_scores,
             commands::get_next_quest,
             commands::start_timer,

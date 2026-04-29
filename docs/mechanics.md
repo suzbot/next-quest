@@ -152,10 +152,10 @@ Your **character** is your overall RPG avatar. It levels up from all quest XP.
 
 ## Completion History
 
-The history list on the Quest List tab shows every quest completion and bonus entry, newest first. Each entry records the quest title, XP earned, and the date it was completed.
+The history list on the Character tab shows every quest completion and bonus entry, newest first. Each entry shows the quest title, XP earned, difficulty, cycle, linked skills/attributes/tags (in color), and saga badge for saga steps.
 
-- **Edit date:** Click the pencil icon next to a completion's date to change when it was recorded. Does not affect XP.
-- **Delete:** Click "Del" to remove a completion from the visible history. Does not reduce XP — XP only goes up.
+- **Edit date:** Click the pencil icon next to a completion's date to change when it was recorded.
+- **Delete:** Click "Del" to remove a completion from history. This reduces XP totals — completion history is the source of truth for all XP.
 
 ## Quest Scoring
 
@@ -296,9 +296,9 @@ On completion, final XP is awarded to:
 
 Quests with no links earn only character XP.
 
-### XP Is Permanent
+### XP Is Derived from History
 
-XP is tallied at completion and never subtracted. Deleting a completion removes it from the visible history but does not reduce XP totals.
+All XP totals (character, attributes, skills) are derived from completion history. Deleting a completion reduces XP. There is no decay or punishment for absence — XP only changes when completions are added or removed.
 
 ### Saga Step XP
 
@@ -318,7 +318,7 @@ Seeds: 150, 300. Level 2 at 150 XP, level 5 at 1,650 XP, level 10 at 21,300 XP.
 
 ### Skill Level-Up Bonus
 
-When a skill levels up, its parent attribute receives an XP bump equal to the base XP of a Fair one-off quest (currently 150 XP).
+When a skill levels up, its parent attribute receives an XP bump equal to the base XP of a Fair one-off quest (currently 150 XP). This is recorded as a separate completion entry that counts toward the attribute but not toward character XP or daily stats.
 
 ## Levels
 

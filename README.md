@@ -12,7 +12,7 @@ Built for people who struggle with task initiation, routine maintenance, and the
 - **Smart surfacing.** Multi-factor algorithm surfaces tasks as quests by weighing time past due, importance, time of day, list position, user responses, and more.
 - **Only Three Things.** Routine tasks, side quests, and bigger undertakings are each offered one at a time by their own quest giver.
 - **Encounters.** Timed overlay interrupts hyperfocus with tasks from across all three quest givers.
-- **No punishment.** XP only goes up. Miss a day? Quests resurface naturally. No failure for breaking a streak.
+- **No punishment.** No decay, no streaks. Miss a day? Quests resurface naturally. XP is derived from your completion history.
 - **RPG progression.** XP flows to your character, reflecting your actual attainments in personal values (attributes) and directional goals (skills).
 - **Sagas.** Multi-step goals revealed one step at a time.
 - **Campaigns.** Define achievements that are meaningful to you, track progress across quests and sagas, and commemorate accomplishments on your character.
